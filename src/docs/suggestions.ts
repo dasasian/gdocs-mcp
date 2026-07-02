@@ -207,6 +207,39 @@ export function resolveRegionText(
   return text;
 }
 
+export interface Conflict {
+  insertionId: string;
+  deletionId: string;
+  text: string;
+}
+
+// A true conflict: a run tagged as BOTH an accepted insertion and an accepted
+// deletion (from two different suggestions) — one suggestion inserts text inside
+// a region another suggestion deletes, and both are being accepted. That's
+// contradictory; resolveRegionText keeps the inserted text (insertion-precedence),
+// which is deterministic but not something to resolve silently (#11).
+export function detectConflicts(
+  runs: TaggedRun[],
+  start: number,
+  end: number,
+  decisions: Map<string, 'accept' | 'reject'>,
+): Conflict[] {
+  const out: Conflict[] = [];
+  for (const r of runs) {
+    if (r.start < start || r.end > end) continue;
+    if (
+      r.insertionId &&
+      r.deletionId &&
+      r.insertionId !== r.deletionId &&
+      decisions.get(r.insertionId) === 'accept' &&
+      decisions.get(r.deletionId) === 'accept'
+    ) {
+      out.push({ insertionId: r.insertionId, deletionId: r.deletionId, text: r.text.trim() });
+    }
+  }
+  return out;
+}
+
 // A region we're about to replace must not contain a style-only suggestion —
 // a delete+insert would silently drop it.
 function regionHasStyleSuggestion(runs: TaggedRun[], start: number, end: number): boolean {
@@ -294,6 +327,8 @@ export interface ApplyManyResult {
   status: 'ok' | 'error' | 'incomplete';
   resolved?: number;
   errors?: string[];
+  /** Overlapping insert-inside-delete conflicts that were auto-resolved (insertion kept). */
+  conflicts?: (Conflict & { note: string })[];
 }
 
 // Resolve several suggestions in ONE atomic batchUpdate. Required for clusters:
@@ -345,7 +380,14 @@ export async function applySuggestions(
   if (errors.length) return { status: 'incomplete', errors };
 
   const requests: docs_v1.Schema$Request[] = [];
+  const conflicts: (Conflict & { note: string })[] = [];
   for (const c of [...touched].sort((a, b) => b.start - a.start)) {
+    for (const cf of detectConflicts(runs, c.start, c.end, decisions)) {
+      conflicts.push({
+        ...cf,
+        note: `Insertion ${cf.insertionId} ("${cf.text}") sits inside deletion ${cf.deletionId}; accepting both is contradictory. Kept the inserted text (insertion-precedence). Flag this to the user — it is not a clean merge.`,
+      });
+    }
     requests.push(...regionRequests(runs, c, decisions, tabId));
   }
   await clients.docs.documents.batchUpdate({
@@ -355,5 +397,5 @@ export async function applySuggestions(
       writeControl: doc.revisionId ? { requiredRevisionId: doc.revisionId } : undefined,
     },
   });
-  return { status: 'ok', resolved: decisions.size };
+  return { status: 'ok', resolved: decisions.size, ...(conflicts.length ? { conflicts } : {}) };
 }

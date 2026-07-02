@@ -12,6 +12,8 @@ import {
   applySuggestions,
   clusterSuggestions,
   resolveRegionText,
+  detectConflicts,
+  collectRuns,
 } from '../src/docs/suggestions.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -301,5 +303,56 @@ describe('applySuggestion — style metadata on edit runs (#7 regression)', () =
     const res = await applySuggestion(clientsFor(doc, batchUpdate), 'd', 's1', 'accept', 'insert: "new"');
     expect(res.status).toBe('ok');
     expect(batchUpdate).toHaveBeenCalledTimes(1);
+  });
+});
+
+// An overlapping insert-inside-delete: run 'bbb' is s2's insertion AND inside s1's
+// deletion. s1 spans [1,7), s2 spans [4,10) -> they cluster; accepting both is a conflict.
+const conflictDoc = () =>
+  docFromRuns([
+    { content: 'aaa', start: 1, del: 's1' },
+    { content: 'bbb', start: 4, ins: 's2', del: 's1' },
+    { content: 'ccc', start: 7, ins: 's2' },
+  ]);
+
+describe('detectConflicts (#11)', () => {
+  it('flags an accepted insertion that sits inside an accepted deletion', () => {
+    const runs = collectRuns(conflictDoc());
+    const c = detectConflicts(runs, 1, 10, new Map([['s1', 'accept'], ['s2', 'accept']]));
+    expect(c).toEqual([{ insertionId: 's2', deletionId: 's1', text: 'bbb' }]);
+  });
+
+  it('is not a conflict when the deletion is rejected', () => {
+    const runs = collectRuns(conflictDoc());
+    expect(detectConflicts(runs, 1, 10, new Map([['s1', 'reject'], ['s2', 'accept']]))).toEqual([]);
+  });
+
+  it('is not a conflict when the insertion is rejected', () => {
+    const runs = collectRuns(conflictDoc());
+    expect(detectConflicts(runs, 1, 10, new Map([['s1', 'accept'], ['s2', 'reject']]))).toEqual([]);
+  });
+});
+
+describe('applySuggestions — surfaces conflicts (#11)', () => {
+  it('resolves atomically but reports the auto-resolved conflict', async () => {
+    const batchUpdate = vi.fn().mockResolvedValue({});
+    const res = await applySuggestions(clientsFor(conflictDoc(), batchUpdate), 'd', [
+      { suggestionId: 's1', decision: 'accept' },
+      { suggestionId: 's2', decision: 'accept' },
+    ]);
+    expect(res.status).toBe('ok');
+    expect(batchUpdate).toHaveBeenCalledTimes(1);
+    expect(res.conflicts).toHaveLength(1);
+    expect(res.conflicts?.[0]).toMatchObject({ insertionId: 's2', deletionId: 's1', text: 'bbb' });
+    expect(res.conflicts?.[0].note).toContain('contradictory');
+  });
+
+  it('reports no conflicts for a clean (non-overlapping) cluster', async () => {
+    const res = await applySuggestions(clientsFor(clusterDoc()), 'd', [
+      { suggestionId: 's1', decision: 'accept' },
+      { suggestionId: 's2', decision: 'accept' },
+    ]);
+    expect(res.status).toBe('ok');
+    expect(res.conflicts).toBeUndefined();
   });
 });

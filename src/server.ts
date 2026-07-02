@@ -291,7 +291,7 @@ export function createServer(): McpServer {
     {
       title: 'Accept/reject multiple suggestions atomically',
       description:
-        'Resolve several suggestions in ONE atomic update — required for suggestions that overlap or adjoin each other (a "cluster"), which cannot be resolved one at a time without corrupting neighbours. You MUST include every suggestion in any cluster you touch; a partially-resolved cluster is refused (status "incomplete"). Copy each suggestion\'s `preview` from list_suggestions into its `expectedChange` (verified before applying).',
+        'Resolve several suggestions in ONE atomic update — required for suggestions that overlap or adjoin each other (a "cluster"), which cannot be resolved one at a time without corrupting neighbours. You MUST include every suggestion in any cluster you touch; a partially-resolved cluster is refused (status "incomplete"). Copy each suggestion\'s `preview` from list_suggestions into its `expectedChange` (verified before applying). If the result includes a `conflicts` array, two suggestions genuinely conflicted (one inserts text inside another\'s deletion, both accepted) — it was auto-resolved by keeping the insertion; surface this to the user as NOT a clean merge.',
       inputSchema: {
         documentId: z.string().describe('Google Doc id'),
         documentTitle: z.string().describe("The document's title, from list_suggestions. Shown for confirmation only."),
