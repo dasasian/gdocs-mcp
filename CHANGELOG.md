@@ -8,7 +8,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Planned
 - Tier-2: code blocks embedded in markdown (tables and images now supported).
-- Optional best-effort suggestion attribution via comment correlation.
+
+(Suggestion attribution is not planned — no API path exists; see [docs/limitations.md](docs/limitations.md).)
 
 ## [0.1.0] — Unreleased (alpha)
 

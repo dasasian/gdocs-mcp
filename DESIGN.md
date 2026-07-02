@@ -4,6 +4,8 @@ An MCP server that lets an AI agent (Claude Code) treat a Google Doc **like a lo
 
 The goal is not broad Workspace automation. It is the specific, unoccupied quadrant: **suggestion- and comment-aware, file-like editing of Google Docs for an AI agent.**
 
+> This doc is the design *reasoning* (the empirical findings behind each decision). For a consolidated, user-facing list of what Google's APIs won't allow — and how the server works around or surfaces each — see **[docs/limitations.md](docs/limitations.md)**.
+
 ---
 
 ## 1. Core model — the Doc *is* the file

@@ -105,19 +105,21 @@ Every doc tool accepts an optional `account` (override the default) and, where r
 
 ## Known limitations
 
-These are Google-API constraints, not bugs:
+These are **Google-API constraints, not bugs** — the highlights are below; the complete reference (with the API reason and the workaround for each) is in **[docs/limitations.md](docs/limitations.md)**.
 
-- **Suggestion attribution is unavailable.** The Docs API exposes no author or timestamp for suggestions, so they're listed in document order, not by "latest" or author.
-- **Comment author email** is not returned by Drive — display name only.
-- **Creating suggestions** is not possible via any API (only reading/resolving). `apply_suggestion` resolves; it cannot propose.
-- **API-created comments** are not anchored to specific text.
-- **Images are inline only.** Floating / text-wrapped images (with exact x,y positioning) cannot be created via the Docs API — only inline placement, sizing, and left/center/right alignment. Whole-table page alignment is likewise unsupported.
-- **Markdown rendering coverage.** `create_doc` / `overwrite_doc` render headings, paragraphs, inline styling, bullet/ordered lists, and **tables** (inline formatting in cells + column alignment, round-tripping via `read_doc`; edit cells surgically with `edit_doc`, reshape with the row/column tools). Also renders **block images** (`![alt](src)` on its own line) — remote URLs, or **local files** (pass `baseDir`, the folder to resolve relative paths against; the server uploads the image to Drive, embeds it, and cleans up, leaving your `.md` untouched). Images don't round-trip as URLs (the source link isn't recoverable), but `read_doc` marks each image's position as `![](image:<objectId>)`, and `download_images` pulls the actual bytes to a local folder — so you can go the other way too (Doc → markdown + local images), the inverse of publishing. **Caveat:** Google **downscales embedded images to ≤ 2048 px on the long edge and re-encodes them**, so a pulled image is a visually-identical but *lossy, re-encoded* copy — **not** byte-identical to your local original (a 2390 px PNG comes back as 2048 px, a different checksum). Keep your local files as the quality source of truth; pull is for recovering images you don't have locally. **Change tracking:** `create_doc`/`overwrite_doc` return each image's `{ src, objectId }`, and `download_images` returns a `sha256` per image — so an agent can keep a small sidecar (`objectId → local file + hashes`) and tell when either side has changed (Google won't let you tag or checksum-match the image itself, so the mapping must be *recorded*, not inferred). Not yet rendered from markdown: code blocks. Deeper table styling (merged cells, colors, widths) is a Doc-side concern via `insert_table`/`format_doc` — reading such a table back flattens those to a plain markdown table. Images can't reliably reproduce their URL on read-back.
+- **Can't *create* suggestions.** No API writes in suggestion mode — every edit is direct (live text). `apply_suggestion` only resolves existing ones. Tools that write say so.
+- **No suggestion attribution** (author/timestamp) — suggestions are listed in document order.
+- **Comments** created via the API aren't anchored to text, and Drive returns author *name* only (no email).
+- **Images are inline only** (no floating/x,y positioning), and Google downscales/re-encodes embedded images, so pulled copies aren't byte-identical.
+- **Markdown can't express computed style** (spacing, fonts, colors) or deep table styling — read it with `inspect_style`, set it with `format_doc`/`set_table_style`. Code blocks aren't rendered from markdown yet (roadmap).
+
+See **[docs/limitations.md](docs/limitations.md)** for the full table, including how each is mitigated or surfaced.
 
 ## Roadmap
 
-- **Tier-2 block rendering** in the markdown writer — tables, images, and code blocks *embedded in* pushed markdown (the standalone `insert_table` / `insert_image` tools already exist).
-- Optional best-effort suggestion attribution via comment correlation.
+- **Code blocks** in the markdown writer — the remaining Tier-2 block type (tables and images already render; standalone `insert_table` / `insert_image` tools exist too).
+
+> Suggestion attribution (author/timestamp) is **not** on the roadmap — it has no API path for typical suggestions (see [docs/limitations.md](docs/limitations.md)).
 
 > The "manuscript sync" use case (chapter files ⇄ tabs, reviewing suggestions, merging) is intentionally **not** a server feature — an AI agent orchestrates it over these primitives. See [DESIGN.md](DESIGN.md) §10b.
 
