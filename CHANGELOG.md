@@ -7,7 +7,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Planned
-- Tier-2 block rendering in the markdown writer (tables, images, code blocks embedded in markdown).
+- Tier-2 block rendering: images and code blocks embedded in markdown (tables now supported).
 - Optional best-effort suggestion attribution via comment correlation.
 
 ## [0.1.0] — Unreleased (alpha)
@@ -15,6 +15,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release. A Model Context Protocol server that lets an AI agent treat a Google Doc like a local file.
 
 ### Added
+- **Markdown tables** — plain pipe tables render on create/overwrite and round-trip via read_doc.
 - **In-session project defaults** — set_project_default / get_project_config write and read a project's .gdocs-mcp.json (default account + folder) without editing files by hand.
 - **Drive navigation** — `list_folder` (browse a folder) and `search_drive` (find files/folders by name).
 - **Folders** — `create_doc` accepts a `folder` (URL or id) to create in place; `move_doc` relocates an existing doc.

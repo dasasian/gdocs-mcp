@@ -74,7 +74,7 @@ export function renderMarkdown(doc: docs_v1.Schema$Document, opts: RenderOpts = 
     const para = el.paragraph;
     if (!para) {
       flushList();
-      if (el.table) blocks.push('<!-- [table omitted — not yet supported] -->');
+      if (el.table) blocks.push(renderTable(el.table, opts));
       continue;
     }
     const line = renderParagraph(para, opts);
@@ -93,7 +93,9 @@ export function renderMarkdown(doc: docs_v1.Schema$Document, opts: RenderOpts = 
       listBuf.push(`${indent}${marker} ${line}`);
     } else {
       flushList();
-      blocks.push(line);
+      // Skip empty paragraphs — in markdown blank lines are just block separators,
+      // and Docs adds empty paragraphs around tables (placeholders, trailing para).
+      if (line !== '') blocks.push(line);
     }
   }
   flushList();
@@ -120,6 +122,30 @@ function renderParagraph(para: docs_v1.Schema$Paragraph, opts: RenderOpts): stri
     return `<p style="text-align:${css}">${inline}</p>`;
   }
   return inline;
+}
+
+// A table cell's text (plain, single line), pipes escaped. Multi-paragraph cells
+// are joined with a space (narrow scope — plain tables).
+function renderCell(cell: docs_v1.Schema$TableCell, opts: RenderOpts): string {
+  let s = '';
+  for (const el of cell.content ?? []) {
+    for (const pe of el.paragraph?.elements ?? []) {
+      if (pe.textRun) s += renderRun(pe.textRun, opts);
+    }
+  }
+  return s.replace(/\n/g, ' ').replace(/\|/g, '\\|').trim();
+}
+
+// Docs table -> markdown pipe table. Row 0 is the header (markdown convention).
+function renderTable(table: docs_v1.Schema$Table, opts: RenderOpts): string {
+  const rows = (table.tableRows ?? []).map((row) => (row.tableCells ?? []).map((cell) => renderCell(cell, opts)));
+  if (!rows.length) return '';
+  const cols = Math.max(...rows.map((r) => r.length));
+  const pad = (r: string[]): string[] => [...r, ...Array(cols - r.length).fill('')];
+  const line = (cells: string[]): string => `| ${pad(cells).join(' | ')} |`;
+  const out = [line(rows[0]), `| ${Array(cols).fill('---').join(' | ')} |`];
+  for (let i = 1; i < rows.length; i++) out.push(line(rows[i]));
+  return out.join('\n');
 }
 
 function renderRun(run: docs_v1.Schema$TextRun, opts: RenderOpts): string {

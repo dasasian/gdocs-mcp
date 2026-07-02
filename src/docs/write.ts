@@ -12,10 +12,22 @@ import { HEADING_BY_LEVEL } from './markdown-spec.js';
 type Block =
   | { type: 'heading'; level: number; text: string }
   | { type: 'paragraph'; text: string }
-  | { type: 'list'; ordered: boolean; items: { level: number; text: string }[] };
+  | { type: 'list'; ordered: boolean; items: { level: number; text: string }[] }
+  | { type: 'table'; rows: string[][] };
 
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
 const LIST_RE = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+
+const isTableRow = (l: string): boolean => l.trim().startsWith('|');
+// A separator line is only dashes/colons/pipes/spaces, with at least one dash.
+const isTableSep = (l: string): boolean => l.includes('-') && /^[\s|:-]+$/.test(l.trim());
+
+function splitRow(line: string): string[] {
+  let t = line.trim();
+  if (t.startsWith('|')) t = t.slice(1);
+  if (t.endsWith('|')) t = t.slice(0, -1);
+  return t.split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'));
+}
 
 export function parseBlocks(md: string): Block[] {
   const lines = md.replace(/\r\n/g, '\n').split('\n');
@@ -31,6 +43,18 @@ export function parseBlocks(md: string): Block[] {
     if (h) {
       blocks.push({ type: 'heading', level: h[1].length, text: h[2].trim() });
       i++;
+      continue;
+    }
+    // Table: a row line immediately followed by a separator line.
+    if (isTableRow(line) && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+      const header = splitRow(line);
+      i += 2; // consume header + separator
+      const body: string[][] = [];
+      while (i < lines.length && isTableRow(lines[i]) && !isTableSep(lines[i])) {
+        body.push(splitRow(lines[i]));
+        i++;
+      }
+      blocks.push({ type: 'table', rows: [header, ...body] });
       continue;
     }
     if (LIST_RE.test(line)) {
@@ -65,16 +89,27 @@ interface InlineOp {
   fields: string[];
 }
 
+// A table can't be part of the text blob (it's structural). We emit a placeholder
+// paragraph where it goes and record its position; the caller inserts the real
+// table there afterward (see document.ts renderMarkdownInto).
+export interface TablePlacement {
+  index: number;
+  rows: string[][];
+}
+
+export interface BuiltContent {
+  requests: docs_v1.Schema$Request[];
+  text: string;
+  tables: TablePlacement[];
+}
+
 // Build the requests to render `blocks` starting at `startIndex` (within `tabId`).
-export function buildContentRequests(
-  blocks: Block[],
-  startIndex: number,
-  tabId?: string,
-): { requests: docs_v1.Schema$Request[]; text: string } {
+export function buildContentRequests(blocks: Block[], startIndex: number, tabId?: string): BuiltContent {
   let text = '';
   const headingOps: { start: number; end: number; level: number }[] = [];
   const inlineOps: InlineOp[] = [];
   const listOps: { start: number; end: number; ordered: boolean }[] = [];
+  const tables: TablePlacement[] = [];
   const abs = (off: number): number => startIndex + off;
 
   const addInline = (lineContentStart: number, content: string): string => {
@@ -99,6 +134,11 @@ export function buildContentRequests(
       if (block.type === 'heading') {
         headingOps.push({ start: abs(lineStart), end: abs(lineStart + plain.length + 1), level: block.level });
       }
+    } else if (block.type === 'table') {
+      // Placeholder paragraph where the table will be inserted; also serves as the
+      // trailing paragraph a table needs.
+      tables.push({ index: abs(text.length), rows: block.rows });
+      text += '\n';
     } else {
       const listStart = text.length;
       for (const item of block.items) {
@@ -112,7 +152,7 @@ export function buildContentRequests(
   }
 
   const requests: docs_v1.Schema$Request[] = [];
-  if (!text) return { requests, text };
+  if (!text) return { requests, text, tables };
   requests.push({ insertText: { location: { index: startIndex, tabId }, text } });
   for (const h of headingOps) {
     requests.push({
@@ -135,13 +175,9 @@ export function buildContentRequests(
       },
     });
   }
-  return { requests, text };
+  return { requests, text, tables };
 }
 
-export function markdownToRequests(
-  markdown: string,
-  startIndex: number,
-  tabId?: string,
-): { requests: docs_v1.Schema$Request[]; text: string } {
+export function markdownToRequests(markdown: string, startIndex: number, tabId?: string): BuiltContent {
   return buildContentRequests(parseBlocks(markdown), startIndex, tabId);
 }

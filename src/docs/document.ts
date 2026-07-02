@@ -5,6 +5,65 @@ import { parseSuggestions } from './suggestions.js';
 import { markdownToRequests } from './write.js';
 import { findProjectConfig } from '../auth/accounts.js';
 
+// Insert a table at `index` and fill its cells (descending so inserts don't shift
+// later cells). Cell text is plain in this narrow first cut.
+async function insertTableAt(
+  clients: GoogleClients,
+  documentId: string,
+  index: number,
+  rows: string[][],
+  tabId?: string,
+): Promise<void> {
+  const R = rows.length;
+  const C = Math.max(...rows.map((r) => r.length));
+  if (R === 0 || C === 0) return;
+  await clients.docs.documents.batchUpdate({
+    documentId,
+    requestBody: { requests: [{ insertTable: { location: { index, tabId }, rows: R, columns: C } }] },
+  });
+  const after = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
+  const tableEl = contentOf(after, tabId)
+    .filter((e) => e.table && (e.startIndex ?? 0) >= index)
+    .sort((a, b) => (a.startIndex ?? 0) - (b.startIndex ?? 0))[0];
+  if (!tableEl?.table?.tableRows) return;
+  const inserts: { index: number; text: string }[] = [];
+  tableEl.table.tableRows.forEach((row, r) =>
+    row.tableCells?.forEach((cell, c) => {
+      const txt = rows[r]?.[c];
+      const idx = cell.content?.[0]?.startIndex;
+      if (txt && idx != null) inserts.push({ index: idx, text: txt });
+    }),
+  );
+  inserts.sort((a, b) => b.index - a.index);
+  if (inserts.length) {
+    await clients.docs.documents.batchUpdate({
+      documentId,
+      requestBody: { requests: inserts.map((i) => ({ insertText: { location: { index: i.index, tabId }, text: i.text } })) },
+    });
+  }
+}
+
+// Render markdown into a doc/tab: insert the text (with table placeholders), then
+// insert each table at its placeholder position (descending so indices stay valid).
+async function renderMarkdownInto(
+  clients: GoogleClients,
+  documentId: string,
+  markdown: string,
+  opts: { tabId?: string; preRequests?: docs_v1.Schema$Request[]; requiredRevisionId?: string } = {},
+): Promise<void> {
+  const { requests, tables } = markdownToRequests(markdown, 1, opts.tabId);
+  const all = [...(opts.preRequests ?? []), ...requests];
+  if (all.length) {
+    await clients.docs.documents.batchUpdate({
+      documentId,
+      requestBody: { requests: all, writeControl: opts.requiredRevisionId ? { requiredRevisionId: opts.requiredRevisionId } : undefined },
+    });
+  }
+  for (const t of [...tables].sort((a, b) => b.index - a.index)) {
+    await insertTableAt(clients, documentId, t.index, t.rows, opts.tabId);
+  }
+}
+
 // Extract a Drive file/folder id from a URL (…/folders/ID, …/d/ID) or a raw id.
 export function parseDriveId(input: string): string {
   const m = /\/(?:folders|d)\/([a-zA-Z0-9_-]+)/.exec(input);
@@ -38,10 +97,7 @@ export async function createDoc(
     documentId = created.data.documentId!;
   }
 
-  if (content) {
-    const { requests } = markdownToRequests(content, 1);
-    if (requests.length) await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests } });
-  }
+  if (content) await renderMarkdownInto(clients, documentId, content);
   return { documentId, title, ...(folderId ? { folderId } : {}) };
 }
 
@@ -106,13 +162,13 @@ export async function overwriteDoc(
 
   const tabContent = contentOf(doc, tabId);
   const end = tabContent[tabContent.length - 1]?.endIndex ?? 2;
-  const requests: docs_v1.Schema$Request[] = [];
-  if (end > 2) requests.push({ deleteContentRange: { range: { startIndex: 1, endIndex: end - 1, tabId } } });
-  requests.push(...markdownToRequests(content, 1, tabId).requests);
+  const preRequests: docs_v1.Schema$Request[] =
+    end > 2 ? [{ deleteContentRange: { range: { startIndex: 1, endIndex: end - 1, tabId } } }] : [];
 
-  await clients.docs.documents.batchUpdate({
-    documentId,
-    requestBody: { requests, writeControl: doc.revisionId ? { requiredRevisionId: doc.revisionId } : undefined },
+  await renderMarkdownInto(clients, documentId, content, {
+    tabId,
+    preRequests,
+    requiredRevisionId: doc.revisionId ?? undefined,
   });
   return { status: 'ok' };
 }

@@ -45,4 +45,28 @@ describe('parseBlocks', () => {
   it('keeps inline markup intact for later parsing', () => {
     expect(parseBlocks('A **b** c')).toEqual([{ type: 'paragraph', text: 'A **b** c' }]);
   });
+
+  it('parses a table (consuming the separator row)', () => {
+    const blocks = parseBlocks('| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |');
+    expect(blocks).toEqual([
+      {
+        type: 'table',
+        rows: [
+          ['A', 'B'],
+          ['1', '2'],
+          ['3', '4'],
+        ],
+      },
+    ]);
+  });
+
+  it('separates a table from surrounding paragraphs', () => {
+    const blocks = parseBlocks('before\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\nafter');
+    expect(blocks.map((b) => b.type)).toEqual(['paragraph', 'table', 'paragraph']);
+  });
+
+  it('unescapes pipes in cells', () => {
+    const blocks = parseBlocks('| a \\| b | c |\n|---|---|\n| 1 | 2 |');
+    expect(blocks[0]).toMatchObject({ rows: [['a | b', 'c'], ['1', '2']] });
+  });
 });
