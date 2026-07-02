@@ -89,6 +89,7 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 | `apply_suggestion` | Accept or reject a suggestion |
 | `insert_image` | Insert an inline image (URL) — position, size, left/center/right align |
 | `insert_table` | Insert a rows×columns table — optional data fill, column widths, header shading |
+| `insert_row` / `delete_row` / `insert_column` / `delete_column` | Table structure ops (surgical — locate the table by cell text) |
 | `list_comments` / `add_comment` / `reply_comment` / `resolve_comment` | Comment threads |
 | `list_tabs` / `add_tab` / `rename_tab` / `delete_tab` | Tab structure |
 | `list_folder` / `search_drive` | Browse a Drive folder / search files+folders by name |
@@ -107,7 +108,7 @@ These are Google-API constraints, not bugs:
 - **Creating suggestions** is not possible via any API (only reading/resolving). `apply_suggestion` resolves; it cannot propose.
 - **API-created comments** are not anchored to specific text.
 - **Images are inline only.** Floating / text-wrapped images (with exact x,y positioning) cannot be created via the Docs API — only inline placement, sizing, and left/center/right alignment. Whole-table page alignment is likewise unsupported.
-- **Markdown rendering coverage.** `create_doc` / `overwrite_doc` render headings, paragraphs, inline styling, bullet/ordered lists, and **tables** (incl. inline formatting in cells; round-tripping via `read_doc`). Not yet rendered from markdown: images and code blocks (use `insert_image` for images). Rich table formatting (merged cells, colors, widths) is a Doc-side concern via `insert_table`/`format_doc` — reading such a table back flattens it to a plain markdown table. Images can't reliably reproduce their URL on read-back.
+- **Markdown rendering coverage.** `create_doc` / `overwrite_doc` render headings, paragraphs, inline styling, bullet/ordered lists, and **tables** (inline formatting in cells + column alignment, round-tripping via `read_doc`; edit cells surgically with `edit_doc`, reshape with the row/column tools). Not yet rendered from markdown: images and code blocks (use `insert_image` for images). Deeper table styling (merged cells, colors, widths) is a Doc-side concern via `insert_table`/`format_doc` — reading such a table back flattens those to a plain markdown table. Images can't reliably reproduce their URL on read-back.
 
 ## Roadmap
 

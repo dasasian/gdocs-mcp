@@ -102,6 +102,81 @@ export interface TableOptions {
   headerShade?: string; // hex bg color for row 0, e.g. "#f1f3f4"
 }
 
+// ---- Table structure ops (surgical: preserve the rest of the table) ----
+
+function cellTextOf(cell: docs_v1.Schema$TableCell): string {
+  let s = '';
+  for (const el of cell.content ?? []) {
+    for (const pe of el.paragraph?.elements ?? []) if (pe.textRun?.content) s += pe.textRun.content;
+  }
+  return s.trim();
+}
+
+interface CellLoc {
+  tableStartIndex: number;
+  rowIndex: number;
+  columnIndex: number;
+}
+
+// Find the first table cell whose text contains `cellText`.
+function locateCell(doc: docs_v1.Schema$Document, cellText: string, tabId?: string): CellLoc | null {
+  for (const el of contentOf(doc, tabId)) {
+    const rows = el.table?.tableRows;
+    if (!rows || el.startIndex == null) continue;
+    for (let r = 0; r < rows.length; r++) {
+      const cells = rows[r].tableCells ?? [];
+      for (let c = 0; c < cells.length; c++) {
+        if (cellTextOf(cells[c]).includes(cellText)) {
+          return { tableStartIndex: el.startIndex, rowIndex: r, columnIndex: c };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+export interface StructureResult {
+  status: 'ok' | 'not_found';
+  message?: string;
+  location?: { rowIndex: number; columnIndex: number };
+}
+
+async function tableOp(
+  clients: GoogleClients,
+  documentId: string,
+  cellText: string,
+  tab: string | undefined,
+  build: (tcl: docs_v1.Schema$TableCellLocation) => docs_v1.Schema$Request,
+): Promise<StructureResult> {
+  const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
+  const tabId = resolveTabId(doc, tab);
+  const loc = locateCell(doc, cellText, tabId);
+  if (!loc) return { status: 'not_found', message: `no table cell containing "${cellText}"` };
+  const tcl: docs_v1.Schema$TableCellLocation = {
+    tableStartLocation: { index: loc.tableStartIndex, tabId },
+    rowIndex: loc.rowIndex,
+    columnIndex: loc.columnIndex,
+  };
+  await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests: [build(tcl)] } });
+  return { status: 'ok', location: { rowIndex: loc.rowIndex, columnIndex: loc.columnIndex } };
+}
+
+export function insertRow(clients: GoogleClients, documentId: string, cellText: string, opts: { below?: boolean; tab?: string } = {}) {
+  return tableOp(clients, documentId, cellText, opts.tab, (tcl) => ({ insertTableRow: { tableCellLocation: tcl, insertBelow: opts.below ?? true } }));
+}
+
+export function deleteRow(clients: GoogleClients, documentId: string, cellText: string, opts: { tab?: string } = {}) {
+  return tableOp(clients, documentId, cellText, opts.tab, (tcl) => ({ deleteTableRow: { tableCellLocation: tcl } }));
+}
+
+export function insertColumn(clients: GoogleClients, documentId: string, cellText: string, opts: { right?: boolean; tab?: string } = {}) {
+  return tableOp(clients, documentId, cellText, opts.tab, (tcl) => ({ insertTableColumn: { tableCellLocation: tcl, insertRight: opts.right ?? true } }));
+}
+
+export function deleteColumn(clients: GoogleClients, documentId: string, cellText: string, opts: { tab?: string } = {}) {
+  return tableOp(clients, documentId, cellText, opts.tab, (tcl) => ({ deleteTableColumn: { tableCellLocation: tcl } }));
+}
+
 export async function insertTable(
   clients: GoogleClients,
   documentId: string,

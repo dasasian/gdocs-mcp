@@ -8,7 +8,7 @@ import { readDoc } from './docs/read.js';
 import { editDoc } from './docs/edit.js';
 import { createDoc, overwriteDoc, renameDoc, moveDoc, listTabs, addTab, renameTab, deleteTab } from './docs/document.js';
 import { formatDoc } from './docs/format.js';
-import { insertImage, insertTable } from './docs/objects.js';
+import { insertImage, insertTable, insertRow, deleteRow, insertColumn, deleteColumn } from './docs/objects.js';
 import { listPermissions, shareDoc, unshareDoc, setLinkAccess } from './drive/sharing.js';
 import { listFolder, searchDrive } from './drive/files.js';
 
@@ -349,6 +349,60 @@ export function createServer(): McpServer {
     async ({ documentId, name, account }) => {
       const clients = await clientsForAccount(account);
       return json(await renameDoc(clients, documentId, name));
+    },
+  );
+
+  const cellArg = { cell: z.string().describe('text identifying a cell in the target table') };
+
+  server.registerTool(
+    'insert_row',
+    {
+      title: 'Insert a table row',
+      description: 'Insert a row into the table containing the given cell text. Preserves the rest of the table.',
+      inputSchema: { documentId: z.string(), ...cellArg, below: z.boolean().optional().describe('insert below (default) vs above'), ...tabArg, ...accountArg },
+    },
+    async ({ documentId, cell, below, tab, account }) => {
+      const clients = await clientsForAccount(account);
+      return json(await insertRow(clients, documentId, cell, { below, tab }));
+    },
+  );
+
+  server.registerTool(
+    'delete_row',
+    {
+      title: 'Delete a table row',
+      description: 'Delete the row containing the given cell text.',
+      inputSchema: { documentId: z.string(), ...cellArg, ...tabArg, ...accountArg },
+    },
+    async ({ documentId, cell, tab, account }) => {
+      const clients = await clientsForAccount(account);
+      return json(await deleteRow(clients, documentId, cell, { tab }));
+    },
+  );
+
+  server.registerTool(
+    'insert_column',
+    {
+      title: 'Insert a table column',
+      description: 'Insert a column into the table containing the given cell text.',
+      inputSchema: { documentId: z.string(), ...cellArg, right: z.boolean().optional().describe('insert to the right (default) vs left'), ...tabArg, ...accountArg },
+    },
+    async ({ documentId, cell, right, tab, account }) => {
+      const clients = await clientsForAccount(account);
+      return json(await insertColumn(clients, documentId, cell, { right, tab }));
+    },
+  );
+
+  server.registerTool(
+    'delete_column',
+    {
+      title: 'Delete a table column',
+      description: 'Delete the column containing the given cell text.',
+      inputSchema: { documentId: z.string(), ...cellArg, ...tabArg, ...accountArg },
+    },
+    async ({ documentId, cell, tab, account }) => {
+      const clients = await clientsForAccount(account);
+      return json(await deleteColumn(clients, documentId, cell, { tab }));
     },
   );
 
