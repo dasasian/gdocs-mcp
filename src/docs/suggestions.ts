@@ -91,14 +91,28 @@ function isContiguous(spans: Span[]): boolean {
   return true;
 }
 
+// Short human-readable summary of a suggestion, independent of accept/reject.
+// Callers echo this back into apply_suggestion (as `expectedChange`) so the
+// permission prompt shows what's actually being resolved instead of a bare id,
+// and so a stale/wrong id gets caught before anything is applied.
+export function formatSuggestionPreview(s: Pick<Suggestion, 'type' | 'before' | 'after'>): string {
+  const before = s.before.trim();
+  const after = s.after.trim();
+  if (s.type === 'insertion') return `insert: "${after}"`;
+  if (s.type === 'deletion') return `delete: "${before}"`;
+  if (s.type === 'replacement') return `"${before}" → "${after}"`;
+  return '(style change)';
+}
+
 export async function listSuggestions(
   clients: GoogleClients,
   documentId: string,
   tab?: string,
-): Promise<{ revisionId: string; suggestions: Suggestion[] }> {
+): Promise<{ revisionId: string; title: string; suggestions: (Suggestion & { preview: string })[] }> {
   const doc = await getDocInline(clients, documentId);
   const tabId = resolveTabId(doc, tab);
-  return { revisionId: doc.revisionId ?? '', suggestions: parseSuggestions(doc, tabId) };
+  const suggestions = parseSuggestions(doc, tabId).map((s) => ({ ...s, preview: formatSuggestionPreview(s) }));
+  return { revisionId: doc.revisionId ?? '', title: doc.title ?? '', suggestions };
 }
 
 // Resolve a suggestion by reconstructing its tagged span (spike-validated):
@@ -122,14 +136,23 @@ export async function applySuggestion(
   documentId: string,
   suggestionId: string,
   decision: 'accept' | 'reject',
+  expectedChange: string,
   tab?: string,
-): Promise<{ status: 'ok' | 'not_found' | 'unsupported'; message?: string }> {
+): Promise<{ status: 'ok' | 'not_found' | 'unsupported' | 'stale'; message?: string }> {
   const doc = await getDocInline(clients, documentId);
   const tabId = resolveTabId(doc, tab);
   const s = parseSuggestions(doc, tabId).find((x) => x.id === suggestionId);
   if (!s) return { status: 'not_found', message: `suggestion ${suggestionId} not found (may be already resolved)` };
   if (s.type === 'style') return { status: 'unsupported', message: 'style-only suggestions are not yet resolvable' };
   if (!s.contiguous) return { status: 'unsupported', message: 'non-contiguous suggestion span' };
+
+  const actual = formatSuggestionPreview(s);
+  if (actual !== expectedChange) {
+    return {
+      status: 'stale',
+      message: `expectedChange did not match the live suggestion (expected "${expectedChange}", found "${actual}"). The doc may have changed since list_suggestions, or this id belongs to a different suggestion. Re-run list_suggestions and retry with the current preview.`,
+    };
+  }
 
   await clients.docs.documents.batchUpdate({
     documentId,
