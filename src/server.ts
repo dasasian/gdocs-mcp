@@ -220,7 +220,7 @@ export function createServer(): McpServer {
     {
       title: 'List suggestions in a doc',
       description:
-        'List pending suggestions (tracked changes) in a Google Doc as before→after diffs, in document order. Note: the Docs API exposes no author or timestamp for suggestions.',
+        'List pending suggestions (tracked changes) in a Google Doc as before→after diffs, in document order. Returns the doc `title` and, per suggestion, a human-readable `preview` — pass these verbatim as documentTitle/expectedChange to apply_suggestion. Note: the Docs API exposes no author or timestamp for suggestions.',
       inputSchema: { documentId: z.string().describe('Google Doc id'), ...tabArg, ...accountArg },
     },
     async ({ documentId, tab, account }) => {
