@@ -76,7 +76,7 @@ Prefer it available in **every** project? Register once at user scope: `claude m
 | `edit_doc` | Replace a unique text snippet (string-anchored, markup-tolerant; new text supports inline markdown) |
 | `format_doc` | Style an existing snippet in place: bold/italic/underline/strikethrough, color, font size/family, link, alignment |
 | `overwrite_doc` | Replace a doc/tab body with markdown-rendered content — guarded against orphaning comments/suggestions |
-| `create_doc` / `rename_doc` | Create (from markdown) / rename a doc |
+| `create_doc` / `rename_doc` / `move_doc` | Create (from markdown, optionally in a folder) / rename / move a doc to a folder |
 | `list_suggestions` | Pending suggestions as `before → after` diffs |
 | `apply_suggestion` | Accept or reject a suggestion |
 | `insert_image` | Insert an inline image (URL) — position, size, left/center/right align |

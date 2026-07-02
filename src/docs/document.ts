@@ -4,18 +4,59 @@ import { contentOf, resolveTabId } from './structure.js';
 import { parseSuggestions } from './suggestions.js';
 import { markdownToRequests } from './write.js';
 
+// Extract a Drive file/folder id from a URL (…/folders/ID, …/d/ID) or a raw id.
+export function parseDriveId(input: string): string {
+  const m = /\/(?:folders|d)\/([a-zA-Z0-9_-]+)/.exec(input);
+  if (m) return m[1];
+  return input.trim().replace(/[?#].*$/, '');
+}
+
 export async function createDoc(
   clients: GoogleClients,
   title: string,
   content?: string,
-): Promise<{ documentId: string; title: string }> {
-  const created = await clients.docs.documents.create({ requestBody: { title } });
-  const documentId = created.data.documentId!;
+  opts: { folder?: string } = {},
+): Promise<{ documentId: string; title: string; folderId?: string }> {
+  let documentId: string;
+  let folderId: string | undefined;
+
+  if (opts.folder) {
+    // Create the doc directly in the folder via the Drive API.
+    folderId = parseDriveId(opts.folder);
+    const created = await clients.drive.files.create({
+      requestBody: { name: title, mimeType: 'application/vnd.google-apps.document', parents: [folderId] },
+      fields: 'id',
+      supportsAllDrives: true,
+    });
+    documentId = created.data.id!;
+  } else {
+    const created = await clients.docs.documents.create({ requestBody: { title } });
+    documentId = created.data.documentId!;
+  }
+
   if (content) {
     const { requests } = markdownToRequests(content, 1);
     if (requests.length) await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests } });
   }
-  return { documentId, title: created.data.title ?? title };
+  return { documentId, title, ...(folderId ? { folderId } : {}) };
+}
+
+// Move an existing doc into a folder (by folder URL or id).
+export async function moveDoc(
+  clients: GoogleClients,
+  documentId: string,
+  folder: string,
+): Promise<{ documentId: string; folderId: string; parents: string[] }> {
+  const folderId = parseDriveId(folder);
+  const meta = await clients.drive.files.get({ fileId: documentId, fields: 'parents', supportsAllDrives: true });
+  const res = await clients.drive.files.update({
+    fileId: documentId,
+    addParents: folderId,
+    removeParents: (meta.data.parents ?? []).join(','),
+    fields: 'id,parents',
+    supportsAllDrives: true,
+  });
+  return { documentId, folderId, parents: res.data.parents ?? [] };
 }
 
 // Rename = change the Drive file name (which is the doc title).

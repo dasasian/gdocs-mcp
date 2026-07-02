@@ -6,7 +6,7 @@ import { listSuggestions, applySuggestion } from './docs/suggestions.js';
 import { listComments, addComment, replyComment, resolveComment } from './drive/comments.js';
 import { readDoc } from './docs/read.js';
 import { editDoc } from './docs/edit.js';
-import { createDoc, overwriteDoc, renameDoc, listTabs, addTab, renameTab, deleteTab } from './docs/document.js';
+import { createDoc, overwriteDoc, renameDoc, moveDoc, listTabs, addTab, renameTab, deleteTab } from './docs/document.js';
 import { formatDoc } from './docs/format.js';
 import { insertImage, insertTable } from './docs/objects.js';
 import { listPermissions, shareDoc, unshareDoc, setLinkAccess } from './drive/sharing.js';
@@ -258,12 +258,30 @@ export function createServer(): McpServer {
     {
       title: 'Create a new Google Doc',
       description:
-        'Create a new Google Doc with a title and optional initial content. Content is rendered as markdown (headings, paragraphs, bold/italic/links, bullet + ordered lists).',
-      inputSchema: { title: z.string(), content: z.string().optional(), ...accountArg },
+        'Create a new Google Doc with a title and optional initial content (rendered as markdown). Optionally place it in a Drive folder (by folder URL or id); otherwise it goes to My Drive root.',
+      inputSchema: {
+        title: z.string(),
+        content: z.string().optional(),
+        folder: z.string().optional().describe('Drive folder URL or id to create the doc in'),
+        ...accountArg,
+      },
     },
-    async ({ title, content, account }) => {
+    async ({ title, content, folder, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await createDoc(clients, title, content));
+      return json(await createDoc(clients, title, content, { folder }));
+    },
+  );
+
+  server.registerTool(
+    'move_doc',
+    {
+      title: 'Move a doc to a folder',
+      description: 'Move an existing Google Doc into a Drive folder (by folder URL or id).',
+      inputSchema: { documentId: z.string(), folder: z.string().describe('Drive folder URL or id'), ...accountArg },
+    },
+    async ({ documentId, folder, account }) => {
+      const clients = await clientsForAccount(account);
+      return json(await moveDoc(clients, documentId, folder));
     },
   );
 
