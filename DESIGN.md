@@ -212,6 +212,26 @@ The only thing the server genuinely owed this use case was a **mechanical** cont
 
 ---
 
+### 10c. Image publish/pull + change tracking (agent-orchestrated)
+
+Images publish one-way cleanly (local `![](file)` → embedded in the Doc, `.md` read-only) but don't round-trip as URLs, and Google **downscales to ≤2048px + re-encodes** on embed — so a pulled image is a lossy copy, not the original, and it can't be checksum-matched or API-tagged with a source marker. Identity/change-tracking must therefore be **recorded**, not inferred.
+
+The server provides the fingerprints; the agent owns the record:
+- `create_doc`/`overwrite_doc` return `images: [{ src, objectId }]` (publish side).
+- `download_images` returns `sha256` per image (doc side).
+- `read_doc` marks image positions as `![](image:<objectId>)`.
+
+**Tracking lives inline in the markdown as an HTML comment** (self-contained, no sidecar; the writer ignores all HTML comments so they never render into the Doc):
+
+```markdown
+![Palk Strait…](The%20Car…png) <!-- gdocs img=kix.abc loc=5615d43b doc=abddc34b -->
+```
+- `img` = Doc image objectId (the stable anchor)
+- `loc` = hash of the local file at last sync → detect local edits (or lean on git)
+- `doc` = hash of the Doc's (downscaled) copy at last sync → detect doc-side edits
+
+The agent maintains these (writes on publish/pull, compares on demand): local drift = `hash(file) ≠ loc`; doc drift = objectId gone, or `download sha256 ≠ doc`. Only the comment-ignoring in the writer is server code; the rest is orchestration and degrades gracefully (no comment → just publish/download).
+
 ## 11. Auth, scopes, setup
 
 - **Scopes:** `https://www.googleapis.com/auth/documents` + `https://www.googleapis.com/auth/drive` (full restricted scope). `drive.file` is **insufficient** — it can't open arbitrary docs by ID, only app-created/picker-picked files.

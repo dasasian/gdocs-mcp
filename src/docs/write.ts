@@ -20,8 +20,9 @@ type Block =
 
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
 const LIST_RE = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
-// A whole line that is just an image: ![alt](src)
-const IMAGE_RE = /^!\[([^\]]*)\]\(([^)]+)\)\s*$/;
+// A whole line that is just an image: ![alt](src), with an optional trailing
+// HTML comment (e.g. gdocs tracking metadata) that we ignore.
+const IMAGE_RE = /^!\[([^\]]*)\]\(([^)]+)\)\s*(?:<!--.*?-->)?\s*$/;
 
 const isTableRow = (l: string): boolean => l.trim().startsWith('|');
 // A separator line is only dashes/colons/pipes/spaces, with at least one dash.
@@ -55,6 +56,13 @@ export function parseBlocks(md: string): Block[] {
     const line = lines[i];
     if (line.trim() === '') {
       i++;
+      continue;
+    }
+    // Skip HTML comments (standalone line or block) — used for tracking metadata,
+    // not document content, so they must not render into the Doc.
+    if (line.trim().startsWith('<!--')) {
+      while (i < lines.length && !lines[i].includes('-->')) i++;
+      i++; // consume the closing line
       continue;
     }
     const h = HEADING_RE.exec(line);

@@ -86,4 +86,15 @@ describe('parseBlocks', () => {
     const blocks = parseBlocks('intro\n\n![](x.png)\n\noutro');
     expect(blocks.map((b) => b.type)).toEqual(['paragraph', 'image', 'paragraph']);
   });
+
+  it('ignores html comments (standalone and trailing on an image)', () => {
+    expect(parseBlocks('<!-- gdocs doc=1abc -->\n\nHi.')).toEqual([{ type: 'paragraph', text: 'Hi.' }]);
+    expect(parseBlocks('![a](p.png) <!-- gdocs img=kix.abc doc=abdd -->')).toEqual([
+      { type: 'image', alt: 'a', src: 'p.png' },
+    ]);
+  });
+
+  it('skips multi-line html comment blocks', () => {
+    expect(parseBlocks('<!--\nmeta\nmeta2\n-->\nText.')).toEqual([{ type: 'paragraph', text: 'Text.' }]);
+  });
 });
