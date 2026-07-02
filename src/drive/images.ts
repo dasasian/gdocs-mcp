@@ -1,4 +1,5 @@
 import { createReadStream, mkdirSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { GoogleClients } from '../google/clients.js';
 import { inlineObjectsOf, resolveTabId } from '../docs/structure.js';
@@ -59,6 +60,7 @@ export interface DownloadedImage {
   filename: string;
   path: string;
   bytes: number;
+  sha256: string; // hash of the downloaded (Doc-side) bytes, for change detection
 }
 
 // Download every embedded image in a doc to `destDir`. Uses the image's ephemeral
@@ -88,7 +90,8 @@ export async function downloadImages(
     const filename = `image-${n}.${extFromBytes(buf)}`;
     const filePath = path.join(destDir, filename);
     writeFileSync(filePath, buf);
-    out.push({ objectId, filename, path: filePath, bytes: buf.length });
+    const sha256 = createHash('sha256').update(buf).digest('hex');
+    out.push({ objectId, filename, path: filePath, bytes: buf.length, sha256 });
   }
   return out;
 }

@@ -15,6 +15,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release. A Model Context Protocol server that lets an AI agent treat a Google Doc like a local file.
 
 ### Added
+- **Image change-tracking hooks** — create_doc/overwrite_doc return each embedded image's { src, objectId }; download_images returns a sha256 per image. Enables an agent-maintained objectId→file sidecar to detect local/doc-side changes.
 - **Image pull** — read_doc marks image positions as `![](image:<objectId>)` and download_images saves a doc's embedded images to a local folder (with the objectId→file mapping), enabling Doc→markdown+images (the inverse of publish).
 - **Markdown images** — block images (`![alt](src)`) render on create/overwrite: remote URLs directly, and local files via a `baseDir` (uploaded to Drive, embedded, temp upload cleaned up; your .md is left unchanged).
 - **Markdown tables** — render on create/overwrite and round-trip via read_doc, including inline formatting in cells and column alignment (:---/:---:/---:). edit_doc edits cell text surgically; insert_row/delete_row/insert_column/delete_column reshape tables while preserving the rest.

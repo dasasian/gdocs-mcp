@@ -19,28 +19,29 @@ async function insertImagePlacement(
   src: string,
   baseDir: string | undefined,
   tabId?: string,
-): Promise<string | null> {
-  if (/^https?:\/\//i.test(src)) {
-    await clients.docs.documents.batchUpdate({
-      documentId,
-      requestBody: { requests: [{ insertInlineImage: { location: { index, tabId }, uri: src } }] },
-    });
-    return null;
-  }
-  const decoded = decodeURIComponent(src);
-  const absPath = nodePath.isAbsolute(decoded) ? decoded : baseDir ? nodePath.resolve(baseDir, decoded) : null;
-  if (!absPath) return `image "${src}" is a local path but no baseDir was provided; skipped`;
-  if (!existsSync(absPath)) return `image not found: ${absPath}; skipped`;
-  const { uri, cleanup } = await uploadImageForInsert(clients, absPath);
-  try {
-    await clients.docs.documents.batchUpdate({
+): Promise<{ objectId?: string; warning?: string }> {
+  const embed = async (uri: string): Promise<string | undefined> => {
+    const r = await clients.docs.documents.batchUpdate({
       documentId,
       requestBody: { requests: [{ insertInlineImage: { location: { index, tabId }, uri } }] },
     });
+    const reply = r.data.replies?.[0] as { insertInlineImage?: { objectId?: string } } | undefined;
+    return reply?.insertInlineImage?.objectId ?? undefined;
+  };
+
+  if (/^https?:\/\//i.test(src)) {
+    return { objectId: await embed(src) };
+  }
+  const decoded = decodeURIComponent(src);
+  const absPath = nodePath.isAbsolute(decoded) ? decoded : baseDir ? nodePath.resolve(baseDir, decoded) : null;
+  if (!absPath) return { warning: `image "${src}" is a local path but no baseDir was provided; skipped` };
+  if (!existsSync(absPath)) return { warning: `image not found: ${absPath}; skipped` };
+  const { uri, cleanup } = await uploadImageForInsert(clients, absPath);
+  try {
+    return { objectId: await embed(uri) };
   } finally {
     await cleanup();
   }
-  return null;
 }
 
 // Insert a table at `index` and fill its cells (descending so inserts don't shift
@@ -132,7 +133,7 @@ async function renderMarkdownInto(
   documentId: string,
   markdown: string,
   opts: { tabId?: string; preRequests?: docs_v1.Schema$Request[]; requiredRevisionId?: string; baseDir?: string } = {},
-): Promise<{ warnings: string[] }> {
+): Promise<{ warnings: string[]; images: { src: string; objectId: string }[] }> {
   const { requests, tables, images } = markdownToRequests(markdown, 1, opts.tabId);
   const all = [...(opts.preRequests ?? []), ...requests];
   if (all.length) {
@@ -143,18 +144,20 @@ async function renderMarkdownInto(
   }
   // Structural inserts (tables + images) descending by index so earlier indices stay valid.
   const warnings: string[] = [];
+  const imageMap: { src: string; objectId: string }[] = [];
   const placements: { index: number; run: () => Promise<void> }[] = [
     ...tables.map((t) => ({ index: t.index, run: () => insertTableAt(clients, documentId, t.index, t.rows, t.aligns, opts.tabId) })),
     ...images.map((im) => ({
       index: im.index,
       run: async () => {
-        const w = await insertImagePlacement(clients, documentId, im.index, im.src, opts.baseDir, opts.tabId);
-        if (w) warnings.push(w);
+        const res = await insertImagePlacement(clients, documentId, im.index, im.src, opts.baseDir, opts.tabId);
+        if (res.warning) warnings.push(res.warning);
+        if (res.objectId) imageMap.push({ src: im.src, objectId: res.objectId });
       },
     })),
   ].sort((a, b) => b.index - a.index);
   for (const p of placements) await p.run();
-  return { warnings };
+  return { warnings, images: imageMap };
 }
 
 // Extract a Drive file/folder id from a URL (…/folders/ID, …/d/ID) or a raw id.
@@ -169,7 +172,7 @@ export async function createDoc(
   title: string,
   content?: string,
   opts: { folder?: string; baseDir?: string } = {},
-): Promise<{ documentId: string; title: string; folderId?: string; warnings?: string[] }> {
+): Promise<{ documentId: string; title: string; folderId?: string; warnings?: string[]; images?: { src: string; objectId: string }[] }> {
   let documentId: string;
   let folderId: string | undefined;
 
@@ -191,8 +194,15 @@ export async function createDoc(
   }
 
   let warnings: string[] = [];
-  if (content) ({ warnings } = await renderMarkdownInto(clients, documentId, content, { baseDir: opts.baseDir }));
-  return { documentId, title, ...(folderId ? { folderId } : {}), ...(warnings.length ? { warnings } : {}) };
+  let images: { src: string; objectId: string }[] = [];
+  if (content) ({ warnings, images } = await renderMarkdownInto(clients, documentId, content, { baseDir: opts.baseDir }));
+  return {
+    documentId,
+    title,
+    ...(folderId ? { folderId } : {}),
+    ...(warnings.length ? { warnings } : {}),
+    ...(images.length ? { images } : {}),
+  };
 }
 
 // Move an existing doc into a folder (by folder URL or id).
@@ -235,7 +245,7 @@ export async function overwriteDoc(
   documentId: string,
   content: string,
   opts: { force?: boolean; tab?: string; baseDir?: string } = {},
-): Promise<{ status: 'ok' | 'blocked'; message?: string; warnings?: string[] }> {
+): Promise<{ status: 'ok' | 'blocked'; message?: string; warnings?: string[]; images?: { src: string; objectId: string }[] }> {
   const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
   const tabId = resolveTabId(doc, opts.tab);
 
@@ -259,13 +269,13 @@ export async function overwriteDoc(
   const preRequests: docs_v1.Schema$Request[] =
     end > 2 ? [{ deleteContentRange: { range: { startIndex: 1, endIndex: end - 1, tabId } } }] : [];
 
-  const { warnings } = await renderMarkdownInto(clients, documentId, content, {
+  const { warnings, images } = await renderMarkdownInto(clients, documentId, content, {
     tabId,
     preRequests,
     requiredRevisionId: doc.revisionId ?? undefined,
     baseDir: opts.baseDir,
   });
-  return { status: 'ok', ...(warnings.length ? { warnings } : {}) };
+  return { status: 'ok', ...(warnings.length ? { warnings } : {}), ...(images.length ? { images } : {}) };
 }
 
 // Tab CRUD. The live Docs API supports these (verified), but googleapis@144's
