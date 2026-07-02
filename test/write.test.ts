@@ -56,8 +56,14 @@ describe('parseBlocks', () => {
           ['1', '2'],
           ['3', '4'],
         ],
+        aligns: [null, null],
       },
     ]);
+  });
+
+  it('captures column alignment from the separator', () => {
+    const blocks = parseBlocks('| A | B | C |\n| :--- | :---: | ---: |\n| 1 | 2 | 3 |');
+    expect(blocks[0]).toMatchObject({ aligns: ['left', 'center', 'right'] });
   });
 
   it('separates a table from surrounding paragraphs', () => {

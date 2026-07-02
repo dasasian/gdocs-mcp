@@ -9,11 +9,13 @@ import { HEADING_BY_LEVEL } from './markdown-spec.js';
 // descending order (it consumes the leading \t used for nesting, which shifts
 // indices after it). Tier 1: headings, paragraphs, inline, bullet/ordered lists.
 
+export type CellAlign = 'left' | 'center' | 'right';
+
 type Block =
   | { type: 'heading'; level: number; text: string }
   | { type: 'paragraph'; text: string }
   | { type: 'list'; ordered: boolean; items: { level: number; text: string }[] }
-  | { type: 'table'; rows: string[][] };
+  | { type: 'table'; rows: string[][]; aligns: (CellAlign | null)[] };
 
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
 const LIST_RE = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
@@ -27,6 +29,19 @@ function splitRow(line: string): string[] {
   if (t.startsWith('|')) t = t.slice(1);
   if (t.endsWith('|')) t = t.slice(0, -1);
   return t.split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'));
+}
+
+// Per-column alignment from a separator row: :--- left, :---: center, ---: right.
+function parseAligns(sepLine: string): (CellAlign | null)[] {
+  return splitRow(sepLine).map((c) => {
+    const t = c.trim();
+    const l = t.startsWith(':');
+    const r = t.endsWith(':');
+    if (l && r) return 'center';
+    if (r) return 'right';
+    if (l) return 'left';
+    return null;
+  });
 }
 
 export function parseBlocks(md: string): Block[] {
@@ -48,13 +63,14 @@ export function parseBlocks(md: string): Block[] {
     // Table: a row line immediately followed by a separator line.
     if (isTableRow(line) && i + 1 < lines.length && isTableSep(lines[i + 1])) {
       const header = splitRow(line);
+      const aligns = parseAligns(lines[i + 1]);
       i += 2; // consume header + separator
       const body: string[][] = [];
       while (i < lines.length && isTableRow(lines[i]) && !isTableSep(lines[i])) {
         body.push(splitRow(lines[i]));
         i++;
       }
-      blocks.push({ type: 'table', rows: [header, ...body] });
+      blocks.push({ type: 'table', rows: [header, ...body], aligns });
       continue;
     }
     if (LIST_RE.test(line)) {
@@ -95,6 +111,7 @@ interface InlineOp {
 export interface TablePlacement {
   index: number;
   rows: string[][];
+  aligns: (CellAlign | null)[];
 }
 
 export interface BuiltContent {
@@ -137,7 +154,7 @@ export function buildContentRequests(blocks: Block[], startIndex: number, tabId?
     } else if (block.type === 'table') {
       // Placeholder paragraph where the table will be inserted; also serves as the
       // trailing paragraph a table needs.
-      tables.push({ index: abs(text.length), rows: block.rows });
+      tables.push({ index: abs(text.length), rows: block.rows, aligns: block.aligns });
       text += '\n';
     } else {
       const listStart = text.length;

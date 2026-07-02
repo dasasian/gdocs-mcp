@@ -148,14 +148,41 @@ function renderCell(cell: docs_v1.Schema$TableCell, opts: RenderOpts): string {
   return s.replace(/\n/g, ' ').replace(/\|/g, '\\|').trim();
 }
 
-// Docs table -> markdown pipe table. Row 0 is the header (markdown convention).
+function cellAlign(cell: docs_v1.Schema$TableCell): 'center' | 'right' | null {
+  const a = cell.content?.[0]?.paragraph?.paragraphStyle?.alignment;
+  if (a === 'CENTER') return 'center';
+  if (a === 'END') return 'right';
+  return null;
+}
+
+// Docs table -> markdown pipe table. Row 0 is the header (markdown convention);
+// column alignment is emitted in the separator row (:--- / :---: / ---:).
 function renderTable(table: docs_v1.Schema$Table, opts: RenderOpts): string {
-  const rows = (table.tableRows ?? []).map((row) => (row.tableCells ?? []).map((cell) => renderCell(cell, opts)));
+  const tableRows = table.tableRows ?? [];
+  const rows = tableRows.map((row) => (row.tableCells ?? []).map((cell) => renderCell(cell, opts)));
   if (!rows.length) return '';
   const cols = Math.max(...rows.map((r) => r.length));
   const pad = (r: string[]): string[] => [...r, ...Array(cols - r.length).fill('')];
   const line = (cells: string[]): string => `| ${pad(cells).join(' | ')} |`;
-  const out = [line(rows[0]), `| ${Array(cols).fill('---').join(' | ')} |`];
+
+  // Per-column alignment: first non-default cell wins.
+  const seps: string[] = [];
+  for (let c = 0; c < cols; c++) {
+    let a: 'center' | 'right' | null = null;
+    for (const row of tableRows) {
+      const cell = row.tableCells?.[c];
+      if (cell) {
+        const ca = cellAlign(cell);
+        if (ca) {
+          a = ca;
+          break;
+        }
+      }
+    }
+    seps.push(a === 'center' ? ':---:' : a === 'right' ? '---:' : '---');
+  }
+
+  const out = [line(rows[0]), `| ${seps.join(' | ')} |`];
   for (let i = 1; i < rows.length; i++) out.push(line(rows[i]));
   return out.join('\n');
 }

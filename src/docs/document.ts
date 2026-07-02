@@ -8,11 +8,14 @@ import { findProjectConfig } from '../auth/accounts.js';
 
 // Insert a table at `index` and fill its cells (descending so inserts don't shift
 // later cells). Cell text is plain in this narrow first cut.
+const PARA_ALIGN: Record<'center' | 'right', string> = { center: 'CENTER', right: 'END' };
+
 async function insertTableAt(
   clients: GoogleClients,
   documentId: string,
   index: number,
   rows: string[][],
+  aligns: ('left' | 'center' | 'right' | null)[],
   tabId?: string,
 ): Promise<void> {
   const R = rows.length;
@@ -57,6 +60,32 @@ async function insertTableAt(
     }
   }
   if (requests.length) await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests } });
+
+  // Apply column alignment (center/right) to every cell's paragraph. Re-fetch so
+  // indices are current; paragraph-style ops don't change length.
+  if (aligns.some((a) => a === 'center' || a === 'right')) {
+    const aligned = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
+    const tableEl2 = contentOf(aligned, tabId)
+      .filter((e) => e.table && (e.startIndex ?? 0) >= index)
+      .sort((a, b) => (a.startIndex ?? 0) - (b.startIndex ?? 0))[0];
+    const alignReqs: docs_v1.Schema$Request[] = [];
+    tableEl2?.table?.tableRows?.forEach((row) =>
+      row.tableCells?.forEach((cell, c) => {
+        const a = aligns[c];
+        const para = cell.content?.[0];
+        if ((a === 'center' || a === 'right') && para?.startIndex != null) {
+          alignReqs.push({
+            updateParagraphStyle: {
+              range: { startIndex: para.startIndex, endIndex: para.endIndex ?? para.startIndex + 1, tabId },
+              paragraphStyle: { alignment: PARA_ALIGN[a] },
+              fields: 'alignment',
+            },
+          });
+        }
+      }),
+    );
+    if (alignReqs.length) await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests: alignReqs } });
+  }
 }
 
 // Render markdown into a doc/tab: insert the text (with table placeholders), then
@@ -76,7 +105,7 @@ async function renderMarkdownInto(
     });
   }
   for (const t of [...tables].sort((a, b) => b.index - a.index)) {
-    await insertTableAt(clients, documentId, t.index, t.rows, opts.tabId);
+    await insertTableAt(clients, documentId, t.index, t.rows, t.aligns, opts.tabId);
   }
 }
 
