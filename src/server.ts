@@ -234,18 +234,25 @@ export function createServer(): McpServer {
     {
       title: 'Accept or reject a suggestion',
       description:
-        'Resolve a pending suggestion by id (from list_suggestions): accept keeps the proposed text, reject keeps the original. Cleanly removes the suggestion.',
+        'Resolve a pending suggestion by id (from list_suggestions): accept keeps the proposed text, reject keeps the original. Cleanly removes the suggestion. ' +
+        'Always call list_suggestions first and copy its `title` and the suggestion\'s `preview` verbatim into documentTitle/expectedChange — this is what a human reviewing the tool call sees, and it is also checked against the live suggestion before applying, so a stale or wrong id is rejected instead of silently resolved.',
       inputSchema: {
         documentId: z.string().describe('Google Doc id'),
+        documentTitle: z.string().describe("The document's title, from list_suggestions' `title` field. Shown for confirmation only."),
         suggestionId: z.string().describe('suggestion id from list_suggestions'),
+        expectedChange: z
+          .string()
+          .describe(
+            "The suggestion's `preview` string, copied exactly from list_suggestions. Shown for confirmation, and must match the live suggestion or the call is rejected.",
+          ),
         decision: z.enum(['accept', 'reject']),
         ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, suggestionId, decision, tab, account }) => {
+    async ({ documentId, documentTitle: _documentTitle, suggestionId, expectedChange, decision, tab, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await applySuggestion(clients, documentId, suggestionId, decision, tab));
+      return json(await applySuggestion(clients, documentId, suggestionId, decision, expectedChange, tab));
     },
   );
 
