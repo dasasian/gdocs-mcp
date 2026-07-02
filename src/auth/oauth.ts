@@ -31,6 +31,17 @@ export async function addAccount(): Promise<string> {
           const url = new URL(req.url ?? '', redirectUri);
           const code = url.searchParams.get('code');
           const err = url.searchParams.get('error');
+
+          // Ignore stray requests (e.g. the browser fetching /favicon.ico) that
+          // aren't the actual OAuth redirect — only the real callback carries a
+          // `code` or `error` param. Closing the server on the first request
+          // regardless of that lost the race against the real redirect.
+          if (!err && !code) {
+            res.writeHead(404);
+            res.end();
+            return;
+          }
+
           res.writeHead(200, { 'Content-Type': 'text/plain' });
           res.end(err ? `Auth error: ${err}` : 'Authorized. You can close this tab.');
           httpServer.close();
