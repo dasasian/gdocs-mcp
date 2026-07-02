@@ -10,6 +10,7 @@ import { createDoc, overwriteDoc, renameDoc, moveDoc, listTabs, addTab, renameTa
 import { formatDoc } from './docs/format.js';
 import { insertImage, insertTable } from './docs/objects.js';
 import { listPermissions, shareDoc, unshareDoc, setLinkAccess } from './drive/sharing.js';
+import { listFolder, searchDrive } from './drive/files.js';
 
 function json(data: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
@@ -315,6 +316,39 @@ export function createServer(): McpServer {
     async ({ documentId, name, account }) => {
       const clients = await clientsForAccount(account);
       return json(await renameDoc(clients, documentId, name));
+    },
+  );
+
+  server.registerTool(
+    'list_folder',
+    {
+      title: 'List a Drive folder',
+      description: 'List the files and subfolders directly inside a Drive folder (by URL or id). Defaults to My Drive root.',
+      inputSchema: {
+        folder: z.string().optional().describe('folder URL or id (default My Drive root)'),
+        ...accountArg,
+      },
+    },
+    async ({ folder, account }) => {
+      const clients = await clientsForAccount(account);
+      return json(await listFolder(clients, folder));
+    },
+  );
+
+  server.registerTool(
+    'search_drive',
+    {
+      title: 'Search Drive by name',
+      description: 'Find files/folders whose name contains the query. Optionally restrict to folders or documents.',
+      inputSchema: {
+        query: z.string(),
+        type: z.enum(['folder', 'document', 'any']).optional().describe('restrict results (default any)'),
+        ...accountArg,
+      },
+    },
+    async ({ query, type, account }) => {
+      const clients = await clientsForAccount(account);
+      return json(await searchDrive(clients, query, type ?? 'any'));
     },
   );
 

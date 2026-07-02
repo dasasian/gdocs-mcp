@@ -3,27 +3,35 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { CLIENT_SECRET_PATH, TOKENS_DIR, PROJECT_DEFAULT_ACCOUNT } from '../config.js';
 
-// A project can pin its default account with a `.gdocs-mcp.json` file
-// ({ "account": "you@example.com" }) instead of repeating a full .mcp.json entry.
-// We search upward from the working directory (like .git / package.json discovery),
-// so it works whether the server is launched at the project root or a subdirectory.
-export function findProjectAccount(fromDir: string = process.cwd()): string | undefined {
+export interface ProjectConfig {
+  account?: string;
+  folder?: string; // default Drive folder (URL or id) for new docs
+}
+
+// A project can pin defaults with a `.gdocs-mcp.json` file
+// ({ "account": "you@example.com", "folder": "…" }) instead of repeating a full
+// .mcp.json entry. We search upward from the working directory (like .git /
+// package.json discovery), so it works from the project root or a subdirectory.
+export function findProjectConfig(fromDir: string = process.cwd()): ProjectConfig {
   let dir = fromDir;
   for (;;) {
     const p = path.join(dir, '.gdocs-mcp.json');
     if (existsSync(p)) {
       try {
-        const cfg = JSON.parse(readFileSync(p, 'utf8')) as { account?: string };
-        if (cfg.account) return cfg.account;
+        const cfg = JSON.parse(readFileSync(p, 'utf8')) as ProjectConfig;
+        return { account: cfg.account, folder: cfg.folder };
       } catch {
-        // ignore a malformed file and keep looking / fall through
+        return {}; // ignore a malformed file
       }
-      return undefined;
     }
     const parent = path.dirname(dir);
-    if (parent === dir) return undefined;
+    if (parent === dir) return {};
     dir = parent;
   }
+}
+
+export function findProjectAccount(fromDir: string = process.cwd()): string | undefined {
+  return findProjectConfig(fromDir).account;
 }
 
 export interface ClientSecret {

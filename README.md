@@ -66,7 +66,13 @@ In a project's `.mcp.json` (Claude Code) or equivalent:
 
 `GDOCS_DEFAULT_ACCOUNT` sets which authorized account this project uses by default — so a work project and a personal project can point at different accounts without re-authorizing. Any tool call can override it with an `account` argument.
 
-Prefer it available in **every** project? Register once at user scope: `claude mcp add gdocs -s user -e GDOCS_DEFAULT_ACCOUNT=you@example.com -- gdocs-mcp`. Then a project that needs a *different* account just drops a `.gdocs-mcp.json` (`{ "account": "work@company.com" }`) — no need to repeat the server config. See [docs/setup.md](docs/setup.md) for the full resolution order.
+Prefer it available in **every** project? Register once at user scope: `claude mcp add gdocs -s user -e GDOCS_DEFAULT_ACCOUNT=you@example.com -- gdocs-mcp`. Then a project can pin its own defaults with a `.gdocs-mcp.json` — both the account and a default folder for new docs:
+
+```json
+{ "account": "work@company.com", "folder": "https://drive.google.com/drive/folders/…" }
+```
+
+With a `folder` set, `create_doc` files new docs there automatically (an explicit `folder` argument still overrides). See [docs/setup.md](docs/setup.md) for the full resolution order.
 
 ## Tools
 
@@ -83,6 +89,7 @@ Prefer it available in **every** project? Register once at user scope: `claude m
 | `insert_table` | Insert a rows×columns table — optional data fill, column widths, header shading |
 | `list_comments` / `add_comment` / `reply_comment` / `resolve_comment` | Comment threads |
 | `list_tabs` / `add_tab` / `rename_tab` / `delete_tab` | Tab structure |
+| `list_folder` / `search_drive` | Browse a Drive folder / search files+folders by name |
 | `list_permissions` / `share_doc` / `unshare_doc` / `set_link_access` | Sharing |
 | `list_accounts` | Authorized Google accounts |
 

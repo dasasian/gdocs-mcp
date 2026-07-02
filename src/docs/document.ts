@@ -3,6 +3,7 @@ import type { GoogleClients } from '../google/clients.js';
 import { contentOf, resolveTabId } from './structure.js';
 import { parseSuggestions } from './suggestions.js';
 import { markdownToRequests } from './write.js';
+import { findProjectConfig } from '../auth/accounts.js';
 
 // Extract a Drive file/folder id from a URL (…/folders/ID, …/d/ID) or a raw id.
 export function parseDriveId(input: string): string {
@@ -20,9 +21,12 @@ export async function createDoc(
   let documentId: string;
   let folderId: string | undefined;
 
-  if (opts.folder) {
+  // Explicit folder arg wins; else fall back to the project's default folder.
+  const folder = opts.folder ?? findProjectConfig().folder;
+
+  if (folder) {
     // Create the doc directly in the folder via the Drive API.
-    folderId = parseDriveId(opts.folder);
+    folderId = parseDriveId(folder);
     const created = await clients.drive.files.create({
       requestBody: { name: title, mimeType: 'application/vnd.google-apps.document', parents: [folderId] },
       fields: 'id',

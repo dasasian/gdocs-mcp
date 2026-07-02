@@ -15,8 +15,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release. A Model Context Protocol server that lets an AI agent treat a Google Doc like a local file.
 
 ### Added
+- **Drive navigation** — `list_folder` (browse a folder) and `search_drive` (find files/folders by name).
 - **Folders** — `create_doc` accepts a `folder` (URL or id) to create in place; `move_doc` relocates an existing doc.
-- **Per-project account** — `.gdocs-mcp.json` (`{ "account": "…" }`) overrides the default per folder, discovered up from the working directory.
+- **Per-project defaults** — `.gdocs-mcp.json` (`{ "account": "…", "folder": "…" }`) sets a default account *and* a default folder for new docs, discovered up from the working directory.
 - **Reading** — `read_doc` (markdown + inline HTML; `clean` / `tracked` / `accepted` / `rejected` modes).
 - **Editing** — `edit_doc` (string-anchored, markup-tolerant; `new_string` renders inline markdown + HTML), `overwrite_doc` (markdown-rendered, tab-aware, guarded), `create_doc` (markdown), `rename_doc`.
 - **Formatting** — `format_doc` (bold/italic/underline/strikethrough, color, font size/family, link, alignment).
