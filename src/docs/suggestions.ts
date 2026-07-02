@@ -144,7 +144,11 @@ export function collectRuns(doc: docs_v1.Schema$Document, tabId?: string): Tagge
     for (const pe of el.paragraph?.elements ?? []) {
       const run = pe.textRun;
       if (!run?.content) continue;
-      const styleIds = Object.keys(run.suggestedTextStyleChanges ?? {});
+      // Google attaches suggestedTextStyleChanges to normal insertion/deletion runs
+      // too; a *style-only* suggestion is a style change on a run that is NOT being
+      // inserted or deleted. Only those count as style ids here.
+      const isEdit = (run.suggestedInsertionIds?.length ?? 0) > 0 || (run.suggestedDeletionIds?.length ?? 0) > 0;
+      const styleIds = isEdit ? [] : Object.keys(run.suggestedTextStyleChanges ?? {});
       runs.push({
         start: pe.startIndex ?? 0,
         end: pe.endIndex ?? 0,

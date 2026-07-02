@@ -280,3 +280,26 @@ describe('applySuggestions — atomic cluster resolution (#7)', () => {
     expect(batchUpdate).not.toHaveBeenCalled();
   });
 });
+
+describe('applySuggestion — style metadata on edit runs (#7 regression)', () => {
+  it('resolves an insertion run that also carries suggestedTextStyleChanges (not treated as style-only)', async () => {
+    const doc = {
+      revisionId: 'r',
+      body: {
+        content: [
+          {
+            paragraph: {
+              elements: [
+                { startIndex: 1, endIndex: 4, textRun: { content: 'new', suggestedInsertionIds: ['s1'], suggestedTextStyleChanges: { s1: {} } } },
+              ],
+            },
+          },
+        ],
+      },
+    } as unknown as docs_v1.Schema$Document;
+    const batchUpdate = vi.fn().mockResolvedValue({});
+    const res = await applySuggestion(clientsFor(doc, batchUpdate), 'd', 's1', 'accept', 'insert: "new"');
+    expect(res.status).toBe('ok');
+    expect(batchUpdate).toHaveBeenCalledTimes(1);
+  });
+});
