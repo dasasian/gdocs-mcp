@@ -11,6 +11,7 @@ import { formatDoc } from './docs/format.js';
 import { insertImage, insertTable, insertRow, deleteRow, insertColumn, deleteColumn } from './docs/objects.js';
 import { listPermissions, shareDoc, unshareDoc, setLinkAccess } from './drive/sharing.js';
 import { listFolder, searchDrive } from './drive/files.js';
+import { downloadImages } from './drive/images.js';
 
 function json(data: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
@@ -145,6 +146,25 @@ export function createServer(): McpServer {
     async ({ documentId, target_string, style, tab, account }) => {
       const clients = await clientsForAccount(account);
       return json(await formatDoc(clients, documentId, target_string, style, { tab }));
+    },
+  );
+
+  server.registerTool(
+    'download_images',
+    {
+      title: 'Download a doc’s images',
+      description:
+        'Download every embedded image in a Google Doc to a local folder. Returns the objectId→filename mapping, which correlates with read_doc’s `![](image:<objectId>)` markers so you can rewrite them to local paths (the inverse of publishing).',
+      inputSchema: {
+        documentId: z.string(),
+        dir: z.string().describe('absolute local folder to save images into (created if missing)'),
+        ...tabArg,
+        ...accountArg,
+      },
+    },
+    async ({ documentId, dir, tab, account }) => {
+      const clients = await clientsForAccount(account);
+      return json(await downloadImages(clients, documentId, dir, tab));
     },
   );
 

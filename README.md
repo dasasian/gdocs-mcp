@@ -88,6 +88,7 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 | `list_suggestions` | Pending suggestions as `before → after` diffs |
 | `apply_suggestion` | Accept or reject a suggestion |
 | `insert_image` | Insert an inline image (URL) — position, size, left/center/right align |
+| `download_images` | Download a doc’s embedded images to a local folder (pairs with `read_doc`’s image markers — the inverse of publishing) |
 | `insert_table` | Insert a rows×columns table — optional data fill, column widths, header shading |
 | `insert_row` / `delete_row` / `insert_column` / `delete_column` | Table structure ops (surgical — locate the table by cell text) |
 | `list_comments` / `add_comment` / `reply_comment` / `resolve_comment` | Comment threads |
@@ -108,7 +109,7 @@ These are Google-API constraints, not bugs:
 - **Creating suggestions** is not possible via any API (only reading/resolving). `apply_suggestion` resolves; it cannot propose.
 - **API-created comments** are not anchored to specific text.
 - **Images are inline only.** Floating / text-wrapped images (with exact x,y positioning) cannot be created via the Docs API — only inline placement, sizing, and left/center/right alignment. Whole-table page alignment is likewise unsupported.
-- **Markdown rendering coverage.** `create_doc` / `overwrite_doc` render headings, paragraphs, inline styling, bullet/ordered lists, and **tables** (inline formatting in cells + column alignment, round-tripping via `read_doc`; edit cells surgically with `edit_doc`, reshape with the row/column tools). Also renders **block images** (`![alt](src)` on its own line) — remote URLs, or **local files** (pass `baseDir`, the folder to resolve relative paths against; the server uploads the image to Drive, embeds it, and cleans up, leaving your `.md` untouched). Images are write-oriented — `read_doc` can't reproduce the source URL, so they don't round-trip. Not yet rendered from markdown: code blocks. Deeper table styling (merged cells, colors, widths) is a Doc-side concern via `insert_table`/`format_doc` — reading such a table back flattens those to a plain markdown table. Images can't reliably reproduce their URL on read-back.
+- **Markdown rendering coverage.** `create_doc` / `overwrite_doc` render headings, paragraphs, inline styling, bullet/ordered lists, and **tables** (inline formatting in cells + column alignment, round-tripping via `read_doc`; edit cells surgically with `edit_doc`, reshape with the row/column tools). Also renders **block images** (`![alt](src)` on its own line) — remote URLs, or **local files** (pass `baseDir`, the folder to resolve relative paths against; the server uploads the image to Drive, embeds it, and cleans up, leaving your `.md` untouched). Images don't round-trip as URLs (the source link isn't recoverable), but `read_doc` marks each image's position as `![](image:<objectId>)`, and `download_images` pulls the actual bytes to a local folder — so you can go the other way too (Doc → markdown + local images), the inverse of publishing. Not yet rendered from markdown: code blocks. Deeper table styling (merged cells, colors, widths) is a Doc-side concern via `insert_table`/`format_doc` — reading such a table back flattens those to a plain markdown table. Images can't reliably reproduce their URL on read-back.
 
 ## Roadmap
 

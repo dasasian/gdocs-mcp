@@ -55,3 +55,15 @@ export function listsOf(
   }
   return doc.lists ?? {};
 }
+
+// The inlineObjects map (id -> InlineObject) for the active tab / legacy body.
+export function inlineObjectsOf(
+  doc: docs_v1.Schema$Document,
+  tabId?: string,
+): Record<string, docs_v1.Schema$InlineObject> {
+  if (doc.tabs && doc.tabs.length) {
+    const tab = tabId ? findTab(doc, tabId) : doc.tabs[0];
+    return tab?.documentTab?.inlineObjects ?? {};
+  }
+  return doc.inlineObjects ?? {};
+}

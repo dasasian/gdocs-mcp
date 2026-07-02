@@ -118,6 +118,10 @@ function renderParagraph(para: docs_v1.Schema$Paragraph, opts: RenderOpts): stri
   let inline = '';
   for (const pe of para.elements ?? []) {
     if (pe.textRun) inline += renderRun(pe.textRun, opts);
+    else if (pe.inlineObjectElement?.inlineObjectId) {
+      // Embedded image: mark its position + object id (download_images resolves it).
+      inline += `![](image:${pe.inlineObjectElement.inlineObjectId})`;
+    }
   }
   inline = inline.replace(/\n$/, ''); // drop the paragraph-mark newline
 
