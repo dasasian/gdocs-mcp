@@ -8,6 +8,7 @@ import { readDoc } from './docs/read.js';
 import { editDoc } from './docs/edit.js';
 import { createDoc, overwriteDoc, renameDoc, moveDoc, listTabs, addTab, renameTab, deleteTab } from './docs/document.js';
 import { formatDoc } from './docs/format.js';
+import { inspectStyle } from './docs/inspect.js';
 import { insertImage, insertTable, insertRow, deleteRow, insertColumn, deleteColumn } from './docs/objects.js';
 import { listPermissions, shareDoc, unshareDoc, setLinkAccess } from './drive/sharing.js';
 import { listFolder, searchDrive } from './drive/files.js';
@@ -128,7 +129,7 @@ export function createServer(): McpServer {
     {
       title: 'Format text in a doc',
       description:
-        'Apply styling to an existing unique text snippet in place (no content change): bold/italic/underline/strikethrough, color (hex), fontSize (pt), fontFamily, link, and paragraph alignment. NOTE: a direct style change, not a tracked suggestion.',
+        'Apply styling to an existing unique text snippet in place (no content change): bold/italic/underline/strikethrough, color (hex), fontSize (pt), fontFamily, link, paragraph alignment, and paragraph spacing (spaceBefore/spaceAfter in pt, lineSpacing %). Use inspect_style first to read current spacing/fonts. NOTE: a direct style change, not a tracked suggestion.',
       inputSchema: {
         documentId: z.string().describe('Google Doc id'),
         target_string: z.string().describe('exact text to style (quote a unique slice from read_doc)'),
@@ -143,6 +144,9 @@ export function createServer(): McpServer {
             fontFamily: z.string().optional(),
             link: z.string().optional().describe('url'),
             align: z.enum(['left', 'center', 'right', 'justify']).optional(),
+            spaceBefore: z.number().optional().describe('points of space above the paragraph'),
+            spaceAfter: z.number().optional().describe('points of space below the paragraph'),
+            lineSpacing: z.number().optional().describe('percent of single spacing (100=single, 150=1.5x)'),
           })
           .describe('styles to apply'),
         ...tabArg,
@@ -152,6 +156,25 @@ export function createServer(): McpServer {
     async ({ documentId, target_string, style, tab, account }) => {
       const clients = await clientsForAccount(account);
       return json(await formatDoc(clients, documentId, target_string, style, { tab }));
+    },
+  );
+
+  server.registerTool(
+    'inspect_style',
+    {
+      title: 'Inspect computed style at a text anchor',
+      description:
+        'Read the effective (inherited-resolved) style at a unique text snippet — read_doc’s markdown can’t express these. Returns paragraph style (namedStyleType, alignment, spaceBefore/spaceAfter in pt, lineSpacing %, and whether spacing is inherited) and text style (bold/italic/underline/strikethrough, fontSize pt, fontFamily, color hex, link). Use it to diagnose things markdown hides — e.g. an unexpected gap between paragraphs is spacing (spaceAfter>0), not a blank line, and is fixed with format_doc’s spaceAfter, not edit_doc.',
+      inputSchema: {
+        documentId: z.string(),
+        target_string: z.string().describe('exact text to inspect (quote a unique slice from read_doc)'),
+        ...tabArg,
+        ...accountArg,
+      },
+    },
+    async ({ documentId, target_string, tab, account }) => {
+      const clients = await clientsForAccount(account);
+      return json(await inspectStyle(clients, documentId, target_string, { tab }));
     },
   );
 

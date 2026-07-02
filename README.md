@@ -82,7 +82,8 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 |---|---|
 | `read_doc` | Read as markdown + inline HTML. Modes: `clean` · `tracked` (`<ins>/<del>`) · `accepted` · `rejected` |
 | `edit_doc` | Replace a unique text snippet (string-anchored, markup-tolerant; new text supports inline markdown) |
-| `format_doc` | Style an existing snippet in place: bold/italic/underline/strikethrough, color, font size/family, link, alignment |
+| `format_doc` | Style an existing snippet in place: bold/italic/underline/strikethrough, color, font size/family, link, alignment, paragraph spacing (before/after/line) |
+| `inspect_style` | Read the computed (inherited-resolved) style at a text anchor — paragraph spacing, alignment, fonts, colors that markdown can't show |
 | `overwrite_doc` | Replace a doc/tab body with markdown-rendered content — guarded against orphaning comments/suggestions |
 | `create_doc` / `rename_doc` / `move_doc` | Create (from markdown, optionally in a folder) / rename / move a doc to a folder |
 | `list_suggestions` | Pending suggestions as `before → after` diffs |

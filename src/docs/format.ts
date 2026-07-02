@@ -22,6 +22,9 @@ export interface FormatStyle {
   fontFamily?: string;
   link?: string; // url
   align?: 'left' | 'center' | 'right' | 'justify';
+  spaceBefore?: number; // points of space above the paragraph
+  spaceAfter?: number; // points of space below the paragraph
+  lineSpacing?: number; // percent of single spacing (100 = single, 150 = 1.5x)
 }
 
 export interface FormatResult {
@@ -94,11 +97,31 @@ export async function formatDoc(
     requests.push({ updateTextStyle: { range, textStyle, fields: fields.join(',') } });
     applied.push(...fields);
   }
+  // Paragraph-level properties (alignment + spacing) share one updateParagraphStyle request.
+  const paragraphStyle: docs_v1.Schema$ParagraphStyle = {};
+  const pFields: string[] = [];
   if (style.align !== undefined) {
-    requests.push({
-      updateParagraphStyle: { range, paragraphStyle: { alignment: ALIGN[style.align] }, fields: 'alignment' },
-    });
+    paragraphStyle.alignment = ALIGN[style.align];
+    pFields.push('alignment');
     applied.push('alignment');
+  }
+  if (style.spaceBefore !== undefined) {
+    paragraphStyle.spaceAbove = { magnitude: style.spaceBefore, unit: 'PT' };
+    pFields.push('spaceAbove');
+    applied.push('spaceBefore');
+  }
+  if (style.spaceAfter !== undefined) {
+    paragraphStyle.spaceBelow = { magnitude: style.spaceAfter, unit: 'PT' };
+    pFields.push('spaceBelow');
+    applied.push('spaceAfter');
+  }
+  if (style.lineSpacing !== undefined) {
+    paragraphStyle.lineSpacing = style.lineSpacing;
+    pFields.push('lineSpacing');
+    applied.push('lineSpacing');
+  }
+  if (pFields.length) {
+    requests.push({ updateParagraphStyle: { range, paragraphStyle, fields: pFields.join(',') } });
   }
 
   if (!requests.length) return { status: 'empty', message: 'no style fields provided' };

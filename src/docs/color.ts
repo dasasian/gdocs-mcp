@@ -12,3 +12,13 @@ export function hexToRgb(input: string): docs_v1.Schema$RgbColor {
   const n = parseInt(full, 16);
   return { red: ((n >> 16) & 255) / 255, green: ((n >> 8) & 255) / 255, blue: (n & 255) / 255 };
 }
+
+// A Docs RgbColor (0..1 channels) back to #rrggbb. undefined => undefined (absent color).
+export function rgbToHex(rgb: docs_v1.Schema$RgbColor | undefined): string | undefined {
+  if (!rgb) return undefined;
+  const ch = (v: number | null | undefined) =>
+    Math.round((v ?? 0) * 255)
+      .toString(16)
+      .padStart(2, '0');
+  return `#${ch(rgb.red)}${ch(rgb.green)}${ch(rgb.blue)}`;
+}
