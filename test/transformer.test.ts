@@ -26,6 +26,23 @@ describe('project', () => {
     expect(p.text).toBe('abcd');
     expect(p.map).toEqual([5, 6, 10, 11]);
   });
+
+  it('descends into table cells (so edit_doc can target them)', () => {
+    const cell = (content: string, start: number): docs_v1.Schema$TableCell => ({
+      content: [para([run(content, start)])],
+    });
+    const d: docs_v1.Schema$Document = {
+      body: {
+        content: [
+          para([run('intro ', 1)]),
+          { table: { tableRows: [{ tableCells: [cell('A', 10), cell('B', 20)] }] } },
+        ],
+      },
+    };
+    const p = project(d);
+    expect(p.text).toBe('intro AB');
+    expect(p.map).toEqual([1, 2, 3, 4, 5, 6, 10, 20]);
+  });
 });
 
 describe('renderMarkdown', () => {

@@ -107,7 +107,7 @@ These are Google-API constraints, not bugs:
 - **Creating suggestions** is not possible via any API (only reading/resolving). `apply_suggestion` resolves; it cannot propose.
 - **API-created comments** are not anchored to specific text.
 - **Images are inline only.** Floating / text-wrapped images (with exact x,y positioning) cannot be created via the Docs API — only inline placement, sizing, and left/center/right alignment. Whole-table page alignment is likewise unsupported.
-- **Markdown rendering coverage.** `create_doc` / `overwrite_doc` render headings, paragraphs, inline styling, bullet/ordered lists, and **plain tables** (round-tripping via `read_doc`). Not yet rendered from markdown: images and code blocks (use `insert_image` for images). Rich table formatting (merged cells, colors, widths) is a Doc-side concern via `insert_table`/`format_doc` — reading such a table back flattens it to a plain markdown table. Images can't reliably reproduce their URL on read-back.
+- **Markdown rendering coverage.** `create_doc` / `overwrite_doc` render headings, paragraphs, inline styling, bullet/ordered lists, and **tables** (incl. inline formatting in cells; round-tripping via `read_doc`). Not yet rendered from markdown: images and code blocks (use `insert_image` for images). Rich table formatting (merged cells, colors, widths) is a Doc-side concern via `insert_table`/`format_doc` — reading such a table back flattens it to a plain markdown table. Images can't reliably reproduce their URL on read-back.
 
 ## Roadmap
 

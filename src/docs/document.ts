@@ -3,6 +3,7 @@ import type { GoogleClients } from '../google/clients.js';
 import { contentOf, resolveTabId } from './structure.js';
 import { parseSuggestions } from './suggestions.js';
 import { markdownToRequests } from './write.js';
+import { parseInline, segmentTextStyle } from './inline.js';
 import { findProjectConfig } from '../auth/accounts.js';
 
 // Insert a table at `index` and fill its cells (descending so inserts don't shift
@@ -26,21 +27,36 @@ async function insertTableAt(
     .filter((e) => e.table && (e.startIndex ?? 0) >= index)
     .sort((a, b) => (a.startIndex ?? 0) - (b.startIndex ?? 0))[0];
   if (!tableEl?.table?.tableRows) return;
-  const inserts: { index: number; text: string }[] = [];
+  // Collect cell (index, markdown) descending so inserts don't shift later cells.
+  const cells: { index: number; md: string }[] = [];
   tableEl.table.tableRows.forEach((row, r) =>
     row.tableCells?.forEach((cell, c) => {
-      const txt = rows[r]?.[c];
+      const md = rows[r]?.[c];
       const idx = cell.content?.[0]?.startIndex;
-      if (txt && idx != null) inserts.push({ index: idx, text: txt });
+      if (md && idx != null) cells.push({ index: idx, md });
     }),
   );
-  inserts.sort((a, b) => b.index - a.index);
-  if (inserts.length) {
-    await clients.docs.documents.batchUpdate({
-      documentId,
-      requestBody: { requests: inserts.map((i) => ({ insertText: { location: { index: i.index, tabId }, text: i.text } })) },
-    });
+  cells.sort((a, b) => b.index - a.index);
+
+  // Render each cell's inline markdown (bold/italic/code/links) into the cell.
+  const requests: docs_v1.Schema$Request[] = [];
+  for (const cell of cells) {
+    const segs = parseInline(cell.md);
+    const plain = segs.map((s) => s.text).join('');
+    if (!plain) continue;
+    requests.push({ insertText: { location: { index: cell.index, tabId }, text: plain } });
+    let off = 0;
+    for (const seg of segs) {
+      const { textStyle, fields } = segmentTextStyle(seg);
+      if (fields.length) {
+        requests.push({
+          updateTextStyle: { range: { startIndex: cell.index + off, endIndex: cell.index + off + seg.text.length, tabId }, textStyle, fields: fields.join(',') },
+        });
+      }
+      off += seg.text.length;
+    }
   }
+  if (requests.length) await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests } });
 }
 
 // Render markdown into a doc/tab: insert the text (with table placeholders), then

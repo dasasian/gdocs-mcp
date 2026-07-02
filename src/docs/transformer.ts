@@ -30,22 +30,34 @@ export interface Projection {
 }
 
 // Docs indices are UTF-16 code units and JS strings are UTF-16, so per-run
-// offsets align directly with Docs indices.
+// offsets align directly with Docs indices. Descends into table cells so
+// edit_doc can target (and surgically edit) cell text.
 export function project(doc: docs_v1.Schema$Document, tabId?: string): Projection {
-  let text = '';
+  const chars: string[] = [];
   const map: number[] = [];
-  for (const el of contentOf(doc, tabId)) {
-    for (const pe of el.paragraph?.elements ?? []) {
-      const content = pe.textRun?.content;
-      if (!content) continue;
-      const start = pe.startIndex ?? 0;
-      for (let i = 0; i < content.length; i++) {
-        text += content[i];
-        map.push(start + i);
+  const walk = (content: docs_v1.Schema$StructuralElement[] | undefined): void => {
+    for (const el of content ?? []) {
+      if (el.paragraph) {
+        for (const pe of el.paragraph.elements ?? []) {
+          const c = pe.textRun?.content;
+          if (!c) continue;
+          const start = pe.startIndex ?? 0;
+          for (let i = 0; i < c.length; i++) {
+            chars.push(c[i]);
+            map.push(start + i);
+          }
+        }
+      } else if (el.table) {
+        for (const row of el.table.tableRows ?? []) {
+          for (const cell of row.tableCells ?? []) {
+            walk(cell.content ?? undefined);
+          }
+        }
       }
     }
-  }
-  return { text, map };
+  };
+  walk(contentOf(doc, tabId));
+  return { text: chars.join(''), map };
 }
 
 export interface RenderOpts {
