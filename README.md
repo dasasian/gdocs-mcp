@@ -93,6 +93,7 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 | `download_images` | Download a doc’s embedded images to a local folder (pairs with `read_doc`’s image markers — the inverse of publishing) |
 | `insert_table` | Insert a rows×columns table — optional data fill, column widths, header shading |
 | `insert_row` / `delete_row` / `insert_column` / `delete_column` | Table structure ops (surgical — locate the table by cell text) |
+| `set_table_style` | Style an existing table (located by cell text): cell padding, background, column widths — scope table/row/column/cell |
 | `list_comments` / `add_comment` / `reply_comment` / `resolve_comment` | Comment threads |
 | `list_tabs` / `add_tab` / `rename_tab` / `delete_tab` | Tab structure |
 | `list_folder` / `search_drive` | Browse a Drive folder / search files+folders by name |

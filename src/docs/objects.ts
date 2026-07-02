@@ -177,6 +177,145 @@ export function deleteColumn(clients: GoogleClients, documentId: string, cellTex
   return tableOp(clients, documentId, cellText, opts.tab, (tcl) => ({ deleteTableColumn: { tableCellLocation: tcl } }));
 }
 
+// Locate a table (and the matched cell's position + the table's dimensions) by
+// the text of any one of its cells — same anchor pattern as insertRow/deleteRow.
+interface TableLoc {
+  tableStart: number;
+  rows: number;
+  cols: number;
+  rowIndex: number;
+  columnIndex: number;
+}
+
+function locateTable(doc: docs_v1.Schema$Document, cellText: string, tabId?: string): TableLoc | null {
+  for (const el of contentOf(doc, tabId)) {
+    const rowsArr = el.table?.tableRows;
+    if (!rowsArr || el.startIndex == null) continue;
+    for (let r = 0; r < rowsArr.length; r++) {
+      const cells = rowsArr[r].tableCells ?? [];
+      for (let c = 0; c < cells.length; c++) {
+        if (cellTextOf(cells[c]).includes(cellText)) {
+          return {
+            tableStart: el.startIndex,
+            rows: rowsArr.length,
+            cols: rowsArr[0].tableCells?.length ?? cells.length,
+            rowIndex: r,
+            columnIndex: c,
+          };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+export interface TableStyleOptions {
+  tab?: string;
+  /** which cells padding/background apply to; default 'table' (the whole table). */
+  scope?: 'table' | 'row' | 'column' | 'cell';
+  /** cell padding in points (any subset). */
+  padding?: { left?: number; right?: number; top?: number; bottom?: number };
+  /** cell background as hex, e.g. "#f1f3f4". */
+  backgroundColor?: string;
+  /** set specific column widths (points), by column index. */
+  columnWidths?: { index: number; width: number }[];
+}
+
+export interface TableStyleResult {
+  status: 'ok' | 'not_found' | 'empty';
+  message?: string;
+  applied?: string[];
+  table?: { rows: number; columns: number; matchedCell: { rowIndex: number; columnIndex: number } };
+}
+
+// Edit style/layout of an EXISTING table (#8): cell padding, background, column
+// widths — reusing the same request types insert_table builds, but against a
+// located table rather than a freshly-created one.
+export async function setTableStyle(
+  clients: GoogleClients,
+  documentId: string,
+  cellText: string,
+  opts: TableStyleOptions = {},
+): Promise<TableStyleResult> {
+  const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
+  const tabId = resolveTabId(res.data, opts.tab);
+  const loc = locateTable(res.data, cellText, tabId);
+  if (!loc) return { status: 'not_found', message: `no table cell containing "${cellText}"` };
+
+  const scope = opts.scope ?? 'table';
+  const tableStartLocation = { index: loc.tableStart, tabId };
+  const requests: docs_v1.Schema$Request[] = [];
+  const applied: string[] = [];
+
+  // Build the padding/background cell style, if requested.
+  const cellStyle: docs_v1.Schema$TableCellStyle = {};
+  const cellFields: string[] = [];
+  const dim = (v: number) => ({ magnitude: v, unit: 'PT' });
+  if (opts.padding) {
+    const p = opts.padding;
+    if (p.left !== undefined) (cellStyle.paddingLeft = dim(p.left)), cellFields.push('paddingLeft');
+    if (p.right !== undefined) (cellStyle.paddingRight = dim(p.right)), cellFields.push('paddingRight');
+    if (p.top !== undefined) (cellStyle.paddingTop = dim(p.top)), cellFields.push('paddingTop');
+    if (p.bottom !== undefined) (cellStyle.paddingBottom = dim(p.bottom)), cellFields.push('paddingBottom');
+  }
+  if (opts.backgroundColor !== undefined) {
+    cellStyle.backgroundColor = { color: { rgbColor: hexToRgb(opts.backgroundColor) } };
+    cellFields.push('backgroundColor');
+  }
+
+  if (cellFields.length) {
+    // Cover the requested scope with one tableRange.
+    const range =
+      scope === 'row'
+        ? { rowIndex: loc.rowIndex, columnIndex: 0, rowSpan: 1, columnSpan: loc.cols }
+        : scope === 'column'
+          ? { rowIndex: 0, columnIndex: loc.columnIndex, rowSpan: loc.rows, columnSpan: 1 }
+          : scope === 'cell'
+            ? { rowIndex: loc.rowIndex, columnIndex: loc.columnIndex, rowSpan: 1, columnSpan: 1 }
+            : { rowIndex: 0, columnIndex: 0, rowSpan: loc.rows, columnSpan: loc.cols };
+    requests.push({
+      updateTableCellStyle: {
+        tableRange: {
+          tableCellLocation: { tableStartLocation, rowIndex: range.rowIndex, columnIndex: range.columnIndex },
+          rowSpan: range.rowSpan,
+          columnSpan: range.columnSpan,
+        },
+        tableCellStyle: cellStyle,
+        fields: cellFields.join(','),
+      },
+    });
+    applied.push(...cellFields.map((f) => `${scope}:${f}`));
+  }
+
+  for (const cw of opts.columnWidths ?? []) {
+    if (cw.index < 0 || cw.index >= loc.cols) continue;
+    requests.push({
+      updateTableColumnProperties: {
+        tableStartLocation,
+        columnIndices: [cw.index],
+        tableColumnProperties: { widthType: 'FIXED_WIDTH', width: dim(cw.width) },
+        fields: 'width,widthType',
+      },
+    });
+    applied.push(`width:col${cw.index}`);
+  }
+
+  if (!requests.length) return { status: 'empty', message: 'no style fields provided' };
+
+  await clients.docs.documents.batchUpdate({
+    documentId,
+    requestBody: {
+      requests,
+      writeControl: res.data.revisionId ? { requiredRevisionId: res.data.revisionId } : undefined,
+    },
+  });
+  return {
+    status: 'ok',
+    applied,
+    table: { rows: loc.rows, columns: loc.cols, matchedCell: { rowIndex: loc.rowIndex, columnIndex: loc.columnIndex } },
+  };
+}
+
 export async function insertTable(
   clients: GoogleClients,
   documentId: string,

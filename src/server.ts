@@ -9,7 +9,7 @@ import { editDoc } from './docs/edit.js';
 import { createDoc, overwriteDoc, renameDoc, moveDoc, listTabs, addTab, renameTab, deleteTab } from './docs/document.js';
 import { formatDoc } from './docs/format.js';
 import { inspectStyle } from './docs/inspect.js';
-import { insertImage, insertTable, insertRow, deleteRow, insertColumn, deleteColumn } from './docs/objects.js';
+import { insertImage, insertTable, insertRow, deleteRow, insertColumn, deleteColumn, setTableStyle } from './docs/objects.js';
 import { listPermissions, shareDoc, unshareDoc, setLinkAccess } from './drive/sharing.js';
 import { listFolder, searchDrive } from './drive/files.js';
 import { downloadImages } from './drive/images.js';
@@ -490,6 +490,40 @@ export function createServer(): McpServer {
     async ({ documentId, cell, tab, account }) => {
       const clients = await clientsForAccount(account);
       return json(await deleteColumn(clients, documentId, cell, { tab }));
+    },
+  );
+
+  server.registerTool(
+    'set_table_style',
+    {
+      title: 'Style an existing table',
+      description:
+        'Edit style/layout of an existing table (located by any cell’s text): cell padding (pt), background color (hex), and column widths (pt). scope selects which cells padding/background hit — table (default), row, column, or cell (the row/column of the matched cell). Fixes e.g. thin left padding that clips the first letter of cells. A direct edit, not a tracked suggestion.',
+      inputSchema: {
+        documentId: z.string(),
+        cell: z.string().describe('text of any cell in the target table (locates the table)'),
+        scope: z.enum(['table', 'row', 'column', 'cell']).optional().describe('default table'),
+        padding: z
+          .object({
+            left: z.number().optional(),
+            right: z.number().optional(),
+            top: z.number().optional(),
+            bottom: z.number().optional(),
+          })
+          .optional()
+          .describe('cell padding in points'),
+        backgroundColor: z.string().optional().describe('hex, e.g. #f1f3f4'),
+        columnWidths: z
+          .array(z.object({ index: z.number(), width: z.number() }))
+          .optional()
+          .describe('set specific column widths (points) by column index'),
+        ...tabArg,
+        ...accountArg,
+      },
+    },
+    async ({ documentId, cell, scope, padding, backgroundColor, columnWidths, tab, account }) => {
+      const clients = await clientsForAccount(account);
+      return json(await setTableStyle(clients, documentId, cell, { scope, padding, backgroundColor, columnWidths, tab }));
     },
   );
 
