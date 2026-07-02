@@ -11,6 +11,15 @@ npm run typecheck   # tsc --noEmit
 npm test            # vitest
 ```
 
+To use your source build like the published package — the `gdocs-mcp` binary for both the CLI (`gdocs-mcp add-account`) and as the `.mcp.json` `command` — link it once:
+
+```sh
+npm link            # or: npm install -g .
+gdocs-mcp add-account
+```
+
+`npm link` symlinks the binary to `dist/index.js`, so it stays current across rebuilds. (Without linking you can always invoke it directly: `node dist/index.js add-account`.)
+
 You'll need your own Google Cloud OAuth client to run against the live API — see [docs/setup.md](docs/setup.md). Tests that don't touch the network (parsers, transformer, matchers) run without any credentials.
 
 ## Project shape

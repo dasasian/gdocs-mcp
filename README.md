@@ -25,8 +25,11 @@ Or from source (during alpha):
 ```sh
 git clone https://github.com/dasasian/gdocs-mcp && cd gdocs-mcp
 npm install && npm run build
-# then point your MCP client at: node /abs/path/to/gdocs-mcp/dist/index.js
+npm link   # makes `gdocs-mcp` available globally, same as the published package
 ```
+
+Then follow the setup below exactly as an installed user would. (`npm link` symlinks the
+`gdocs-mcp` binary to your build; see [CONTRIBUTING.md](CONTRIBUTING.md) for the dev workflow.)
 
 ## Setup
 

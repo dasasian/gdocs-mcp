@@ -40,7 +40,7 @@ Or in the [Cloud Console](https://console.cloud.google.com): create a project, t
 gdocs-mcp add-account
 ```
 
-> Running from source (not `npm install -g`)? Replace `gdocs-mcp` with `node /abs/path/to/gdocs-mcp/dist/index.js` in the commands below and in `.mcp.json`.
+> Running from source (not `npm install -g`)? Run `npm link` once after building — then `gdocs-mcp` works everywhere, exactly as below. (Or, without linking, replace `gdocs-mcp` with `node /abs/path/to/gdocs-mcp/dist/index.js` in the commands and in `.mcp.json`.)
 
 This opens a browser for consent (you'll see the "unverified app" notice — choose *Advanced → continue*). The token is stored under `~/.config/googledocs-mcp/tokens/<email>.json`. Repeat for each account.
 
