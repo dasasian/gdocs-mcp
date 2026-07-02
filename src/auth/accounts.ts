@@ -1,5 +1,5 @@
 import { readFile, readdir } from 'node:fs/promises';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { CLIENT_SECRET_PATH, TOKENS_DIR, PROJECT_DEFAULT_ACCOUNT } from '../config.js';
 
@@ -32,6 +32,34 @@ export function findProjectConfig(fromDir: string = process.cwd()): ProjectConfi
 
 export function findProjectAccount(fromDir: string = process.cwd()): string | undefined {
   return findProjectConfig(fromDir).account;
+}
+
+// Path of an existing `.gdocs-mcp.json` (walking up), if any.
+export function findProjectConfigPath(fromDir: string = process.cwd()): string | undefined {
+  let dir = fromDir;
+  for (;;) {
+    const p = path.join(dir, '.gdocs-mcp.json');
+    if (existsSync(p)) return p;
+    const parent = path.dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
+// Write/merge project defaults. Updates an existing `.gdocs-mcp.json` up the tree,
+// else creates one in `fromDir` (the project root, i.e. the server's cwd).
+export function setProjectConfig(
+  patch: ProjectConfig,
+  fromDir: string = process.cwd(),
+): { path: string; config: ProjectConfig } {
+  const existingPath = findProjectConfigPath(fromDir);
+  const targetPath = existingPath ?? path.join(fromDir, '.gdocs-mcp.json');
+  const current: ProjectConfig = existingPath ? findProjectConfig(fromDir) : {};
+  const config: ProjectConfig = { ...current };
+  if (patch.account !== undefined) config.account = patch.account;
+  if (patch.folder !== undefined) config.folder = patch.folder;
+  writeFileSync(targetPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o644 });
+  return { path: targetPath, config };
 }
 
 export interface ClientSecret {

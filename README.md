@@ -74,6 +74,8 @@ Prefer it available in **every** project? Register once at user scope: `claude m
 
 With a `folder` set, `create_doc` files new docs there automatically (an explicit `folder` argument still overrides). See [docs/setup.md](docs/setup.md) for the full resolution order.
 
+You don't have to edit that file by hand — just tell the agent *"make damithsc@gmail.com my default account for this project"* or *"make my Manuscripts folder the default here,"* and it writes the `.gdocs-mcp.json` for you via `set_project_default` (searching for the folder by name if needed).
+
 ## Tools
 
 | Tool | Description |
@@ -92,6 +94,7 @@ With a `folder` set, `create_doc` files new docs there automatically (an explici
 | `list_folder` / `search_drive` | Browse a Drive folder / search files+folders by name |
 | `list_permissions` / `share_doc` / `unshare_doc` / `set_link_access` | Sharing |
 | `list_accounts` | Authorized Google accounts |
+| `set_project_default` / `get_project_config` | Set/show this project’s default account + folder (writes `.gdocs-mcp.json`) |
 
 Every doc tool accepts an optional `account` (override the default) and, where relevant, a `tab` (target a tab by id or title).
 

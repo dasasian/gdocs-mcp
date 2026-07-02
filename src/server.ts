@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { clientsForAccount } from './google/clients.js';
-import { listAccounts } from './auth/accounts.js';
+import { listAccounts, findProjectConfig, findProjectConfigPath, setProjectConfig } from './auth/accounts.js';
 import { listSuggestions, applySuggestion } from './docs/suggestions.js';
 import { listComments, addComment, replyComment, resolveComment } from './drive/comments.js';
 import { readDoc } from './docs/read.js';
@@ -41,6 +41,39 @@ export function createServer(): McpServer {
       inputSchema: {},
     },
     async () => json({ accounts: await listAccounts() }),
+  );
+
+  server.registerTool(
+    'set_project_default',
+    {
+      title: 'Set this project’s default account/folder',
+      description:
+        'Write this project’s defaults to a .gdocs-mcp.json in the current working directory (or update an existing one up the tree). Set a default account and/or a default folder (URL or id) for new docs. To set a folder by name, search_drive for it first and pass its id.',
+      inputSchema: {
+        account: z.string().optional().describe('default Google account email (must be authorized)'),
+        folder: z.string().optional().describe('default Drive folder (URL or id) for new docs'),
+      },
+    },
+    async ({ account, folder }) => {
+      if (account) {
+        const accts = await listAccounts();
+        if (!accts.includes(account)) {
+          return json({ error: `Account "${account}" is not authorized. Run \`gdocs-mcp add-account\` first.`, authorized: accts });
+        }
+      }
+      const { path, config } = setProjectConfig({ account, folder });
+      return json({ ok: true, path, config });
+    },
+  );
+
+  server.registerTool(
+    'get_project_config',
+    {
+      title: 'Show this project’s gdocs defaults',
+      description: 'Show the effective .gdocs-mcp.json defaults (account/folder) for the current working directory, and where the file is.',
+      inputSchema: {},
+    },
+    async () => json({ path: findProjectConfigPath() ?? null, config: findProjectConfig() }),
   );
 
   server.registerTool(
