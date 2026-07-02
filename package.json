@@ -1,0 +1,37 @@
+{
+  "name": "@dasasian/gdocs-mcp",
+  "version": "0.1.0",
+  "description": "An MCP server that lets an AI agent treat a Google Doc like a local file — read, edit, review suggestions, and manage comments, across multiple Google accounts.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "gdocs-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "google-auth-library": "^9.14.0",
+    "googleapis": "^144.0.0",
+    "open": "^10.1.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}
