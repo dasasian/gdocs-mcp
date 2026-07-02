@@ -83,6 +83,19 @@ Account resolution, highest priority first:
 3. `GDOCS_DEFAULT_ACCOUNT` (env, from `.mcp.json`)
 4. the sole authorized account, if only one
 
+## Applying changes
+
+The server is a long-running process, but it reads your **data** (tokens, `.gdocs-mcp.json`) from disk on every call. So most changes apply instantly — you only restart for **new server code**.
+
+| Change | Restart the MCP client? |
+|---|---|
+| Default account or folder (`set_project_default`, or editing `.gdocs-mcp.json`) | No — next tool call uses it |
+| Newly authorized account (`gdocs-mcp add-account`) | No — the token store is read live |
+| Upgrading the server (`npm update -g @dasasian/gdocs-mcp`) | **Yes** |
+| From source: `git pull` → `npm run build` | **Yes** (and rebuild — the server runs `dist/`, not the source) |
+
+In short: day to day you never restart; only when you deliberately upgrade the server.
+
 ## Troubleshooting
 
 - **`invalid_grant` / token expired after a week** — your consent screen is still in *Testing*. Set it to *In production* (step 2) and re-run `add-account`.

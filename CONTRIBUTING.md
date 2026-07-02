@@ -20,6 +20,8 @@ gdocs-mcp add-account
 
 `npm link` symlinks the binary to `dist/index.js`, so it stays current across rebuilds. (Without linking you can always invoke it directly: `node dist/index.js add-account`.)
 
+When iterating on server code, remember it's a long-running process: after a change, `npm run build` and **restart your MCP client** to load it. Data changes (tokens, `.gdocs-mcp.json`) are read live and need no restart — see [docs/setup.md](docs/setup.md#applying-changes).
+
 You'll need your own Google Cloud OAuth client to run against the live API — see [docs/setup.md](docs/setup.md). Tests that don't touch the network (parsers, transformer, matchers) run without any credentials.
 
 ## Project shape
