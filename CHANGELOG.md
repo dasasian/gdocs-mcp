@@ -14,6 +14,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Initial release. A Model Context Protocol server that lets an AI agent treat a Google Doc like a local file.
 
+### Fixed
+- **Clustered-suggestion corruption (#7)** — resolving overlapping/adjacent/interleaved suggestions one at a time could silently corrupt neighbours while reporting success. apply_suggestion now refuses a clustered suggestion (status `cluster`); a new **apply_suggestions** resolves a whole cluster atomically (compute the region text from raw runs + a decision per member, replace in one batchUpdate). Isolated non-contiguous suggestions now also resolve correctly.
+
 ### Added
 - **Image change-tracking hooks** — create_doc/overwrite_doc return each embedded image's { src, objectId }; download_images returns a sha256 per image. Enables an agent-maintained objectId→file sidecar to detect local/doc-side changes.
 - **Image pull** — read_doc marks image positions as `![](image:<objectId>)` and download_images saves a doc's embedded images to a local folder (with the objectId→file mapping), enabling Doc→markdown+images (the inverse of publish).

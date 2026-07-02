@@ -2,7 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { clientsForAccount } from './google/clients.js';
 import { listAccounts, findProjectConfig, findProjectConfigPath, setProjectConfig } from './auth/accounts.js';
-import { listSuggestions, applySuggestion } from './docs/suggestions.js';
+import { listSuggestions, applySuggestion, applySuggestions } from './docs/suggestions.js';
 import { listComments, addComment, replyComment, resolveComment } from './drive/comments.js';
 import { readDoc } from './docs/read.js';
 import { editDoc } from './docs/edit.js';
@@ -235,7 +235,8 @@ export function createServer(): McpServer {
       title: 'Accept or reject a suggestion',
       description:
         'Resolve a pending suggestion by id (from list_suggestions): accept keeps the proposed text, reject keeps the original. Cleanly removes the suggestion. ' +
-        'Always call list_suggestions first and copy its `title` and the suggestion\'s `preview` verbatim into documentTitle/expectedChange — this is what a human reviewing the tool call sees, and it is also checked against the live suggestion before applying, so a stale or wrong id is rejected instead of silently resolved.',
+        'Always call list_suggestions first and copy its `title` and the suggestion\'s `preview` verbatim into documentTitle/expectedChange — this is what a human reviewing the tool call sees, and it is also checked against the live suggestion before applying, so a stale or wrong id is rejected instead of silently resolved. ' +
+        'If the suggestion overlaps or adjoins others (a cluster), this returns status "cluster" with the members — resolve them together via apply_suggestions instead (resolving a cluster one-at-a-time corrupts neighbours).',
       inputSchema: {
         documentId: z.string().describe('Google Doc id'),
         documentTitle: z.string().describe("The document's title, from list_suggestions' `title` field. Shown for confirmation only."),
@@ -253,6 +254,34 @@ export function createServer(): McpServer {
     async ({ documentId, documentTitle: _documentTitle, suggestionId, expectedChange, decision, tab, account }) => {
       const clients = await clientsForAccount(account);
       return json(await applySuggestion(clients, documentId, suggestionId, decision, expectedChange, tab));
+    },
+  );
+
+  server.registerTool(
+    'apply_suggestions',
+    {
+      title: 'Accept/reject multiple suggestions atomically',
+      description:
+        'Resolve several suggestions in ONE atomic update — required for suggestions that overlap or adjoin each other (a "cluster"), which cannot be resolved one at a time without corrupting neighbours. You MUST include every suggestion in any cluster you touch; a partially-resolved cluster is refused (status "incomplete"). Copy each suggestion\'s `preview` from list_suggestions into its `expectedChange` (verified before applying).',
+      inputSchema: {
+        documentId: z.string().describe('Google Doc id'),
+        documentTitle: z.string().describe("The document's title, from list_suggestions. Shown for confirmation only."),
+        resolutions: z
+          .array(
+            z.object({
+              suggestionId: z.string(),
+              decision: z.enum(['accept', 'reject']),
+              expectedChange: z.string().describe("the suggestion's `preview` from list_suggestions"),
+            }),
+          )
+          .describe('one entry per suggestion to resolve'),
+        ...tabArg,
+        ...accountArg,
+      },
+    },
+    async ({ documentId, documentTitle: _documentTitle, resolutions, tab, account }) => {
+      const clients = await clientsForAccount(account);
+      return json(await applySuggestions(clients, documentId, resolutions, tab));
     },
   );
 

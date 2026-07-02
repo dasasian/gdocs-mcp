@@ -115,20 +115,118 @@ export async function listSuggestions(
   return { revisionId: doc.revisionId ?? '', title: doc.title ?? '', suggestions };
 }
 
-// Resolve a suggestion by reconstructing its tagged span (spike-validated):
-// accept => final text is `after`; reject => `before`. Delete the span, reinsert
-// the chosen text as a direct edit — this strips the suggestion tag cleanly.
-function buildResolveRequests(
-  s: Suggestion,
-  decision: 'accept' | 'reject',
+// ---- Cluster-aware resolution (fixes #7) ----
+//
+// The naive resolve (delete a suggestion's span, insert its chosen text) is only
+// safe when that suggestion is ISOLATED. When suggestions overlap, abut, or
+// interleave (a non-contiguous suggestion spans across its neighbours), resolving
+// one at a time via separate batchUpdates shifts indices and merges/re-tags the
+// neighbours — silently corrupting them while every call reports success.
+//
+// Fix: treat overlapping/touching suggestions as a CLUSTER that must be resolved
+// together, atomically. For a cluster region we compute the final plain text from
+// the raw runs + a decision per member (accept keeps insertions & drops deletions;
+// reject the reverse; untagged text is kept), then delete the whole region and
+// insert that text in one shot — no interleaving, no inheritance, no per-call drift.
+
+export interface TaggedRun {
+  start: number;
+  end: number;
+  text: string;
+  insertionId?: string;
+  deletionId?: string;
+  styleIds?: string[];
+}
+
+export function collectRuns(doc: docs_v1.Schema$Document, tabId?: string): TaggedRun[] {
+  const runs: TaggedRun[] = [];
+  for (const el of contentOf(doc, tabId)) {
+    for (const pe of el.paragraph?.elements ?? []) {
+      const run = pe.textRun;
+      if (!run?.content) continue;
+      const styleIds = Object.keys(run.suggestedTextStyleChanges ?? {});
+      runs.push({
+        start: pe.startIndex ?? 0,
+        end: pe.endIndex ?? 0,
+        text: run.content,
+        insertionId: run.suggestedInsertionIds?.[0],
+        deletionId: run.suggestedDeletionIds?.[0],
+        ...(styleIds.length ? { styleIds } : {}),
+      });
+    }
+  }
+  return runs;
+}
+
+export interface Cluster {
+  ids: string[];
+  start: number;
+  end: number;
+}
+
+// Group suggestions whose spans overlap or touch. Style-only suggestions have no
+// text span (excluded here; handled via regionHasStyleSuggestion).
+export function clusterSuggestions(suggestions: Suggestion[]): Cluster[] {
+  const spatial = suggestions.filter((s) => s.type !== 'style' && Number.isFinite(s.start));
+  const sorted = [...spatial].sort((a, b) => a.start - b.start);
+  const clusters: Cluster[] = [];
+  for (const s of sorted) {
+    const last = clusters[clusters.length - 1];
+    if (last && s.start <= last.end) {
+      last.end = Math.max(last.end, s.end);
+      last.ids.push(s.id);
+    } else {
+      clusters.push({ ids: [s.id], start: s.start, end: s.end });
+    }
+  }
+  return clusters;
+}
+
+// Final plain text for a region given a decision per suggestion.
+export function resolveRegionText(
+  runs: TaggedRun[],
+  start: number,
+  end: number,
+  decisions: Map<string, 'accept' | 'reject'>,
+): string {
+  let text = '';
+  for (const r of runs) {
+    if (r.start < start || r.end > end) continue;
+    if (r.insertionId) {
+      if (decisions.get(r.insertionId) === 'accept') text += r.text;
+    } else if (r.deletionId) {
+      if (decisions.get(r.deletionId) === 'reject') text += r.text;
+    } else {
+      text += r.text;
+    }
+  }
+  return text;
+}
+
+// A region we're about to replace must not contain a style-only suggestion —
+// a delete+insert would silently drop it.
+function regionHasStyleSuggestion(runs: TaggedRun[], start: number, end: number): boolean {
+  return runs.some((r) => r.start >= start && r.end <= end && (r.styleIds?.length ?? 0) > 0);
+}
+
+function regionRequests(
+  runs: TaggedRun[],
+  cluster: Cluster,
+  decisions: Map<string, 'accept' | 'reject'>,
   tabId?: string,
 ): docs_v1.Schema$Request[] {
-  const finalText = decision === 'accept' ? s.after : s.before;
+  const finalText = resolveRegionText(runs, cluster.start, cluster.end, decisions);
   const requests: docs_v1.Schema$Request[] = [
-    { deleteContentRange: { range: { startIndex: s.start, endIndex: s.end, tabId } } },
+    { deleteContentRange: { range: { startIndex: cluster.start, endIndex: cluster.end, tabId } } },
   ];
-  if (finalText) requests.push({ insertText: { location: { index: s.start, tabId }, text: finalText } });
+  if (finalText) requests.push({ insertText: { location: { index: cluster.start, tabId }, text: finalText } });
   return requests;
+}
+
+export interface ApplyResult {
+  status: 'ok' | 'not_found' | 'unsupported' | 'stale' | 'cluster';
+  message?: string;
+  cluster?: { suggestionId: string; preview: string }[];
 }
 
 export async function applySuggestion(
@@ -138,13 +236,13 @@ export async function applySuggestion(
   decision: 'accept' | 'reject',
   expectedChange: string,
   tab?: string,
-): Promise<{ status: 'ok' | 'not_found' | 'unsupported' | 'stale'; message?: string }> {
+): Promise<ApplyResult> {
   const doc = await getDocInline(clients, documentId);
   const tabId = resolveTabId(doc, tab);
-  const s = parseSuggestions(doc, tabId).find((x) => x.id === suggestionId);
+  const suggestions = parseSuggestions(doc, tabId);
+  const s = suggestions.find((x) => x.id === suggestionId);
   if (!s) return { status: 'not_found', message: `suggestion ${suggestionId} not found (may be already resolved)` };
   if (s.type === 'style') return { status: 'unsupported', message: 'style-only suggestions are not yet resolvable' };
-  if (!s.contiguous) return { status: 'unsupported', message: 'non-contiguous suggestion span' };
 
   const actual = formatSuggestionPreview(s);
   if (actual !== expectedChange) {
@@ -154,12 +252,104 @@ export async function applySuggestion(
     };
   }
 
+  const clusters = clusterSuggestions(suggestions);
+  const cluster = clusters.find((c) => c.ids.includes(suggestionId));
+  if (!cluster) return { status: 'not_found', message: `suggestion ${suggestionId} has no resolvable text span` };
+
+  if (cluster.ids.length > 1) {
+    const byId = new Map(suggestions.map((x) => [x.id, x]));
+    return {
+      status: 'cluster',
+      message: `This suggestion overlaps or adjoins ${cluster.ids.length - 1} other pending suggestion(s); resolving it alone would corrupt them. Use apply_suggestions with a decision for every suggestion listed below.`,
+      cluster: cluster.ids.map((id) => ({ suggestionId: id, preview: formatSuggestionPreview(byId.get(id)!) })),
+    };
+  }
+
+  const runs = collectRuns(doc, tabId);
+  if (regionHasStyleSuggestion(runs, cluster.start, cluster.end)) {
+    return { status: 'unsupported', message: 'the suggestion region overlaps a style-only suggestion; not yet resolvable' };
+  }
+
   await clients.docs.documents.batchUpdate({
     documentId,
     requestBody: {
-      requests: buildResolveRequests(s, decision, tabId),
+      requests: regionRequests(runs, cluster, new Map([[suggestionId, decision]]), tabId),
       writeControl: doc.revisionId ? { requiredRevisionId: doc.revisionId } : undefined,
     },
   });
   return { status: 'ok' };
+}
+
+export interface Resolution {
+  suggestionId: string;
+  decision: 'accept' | 'reject';
+  expectedChange?: string;
+}
+
+export interface ApplyManyResult {
+  status: 'ok' | 'error' | 'incomplete';
+  resolved?: number;
+  errors?: string[];
+}
+
+// Resolve several suggestions in ONE atomic batchUpdate. Required for clusters:
+// any cluster touched by `resolutions` must be resolved in full (every member
+// decided), or the call is refused — never a partial, corrupting resolution.
+export async function applySuggestions(
+  clients: GoogleClients,
+  documentId: string,
+  resolutions: Resolution[],
+  tab?: string,
+): Promise<ApplyManyResult> {
+  const doc = await getDocInline(clients, documentId);
+  const tabId = resolveTabId(doc, tab);
+  const suggestions = parseSuggestions(doc, tabId);
+  const byId = new Map(suggestions.map((s) => [s.id, s]));
+  const clusters = clusterSuggestions(suggestions);
+  const runs = collectRuns(doc, tabId);
+
+  const decisions = new Map<string, 'accept' | 'reject'>();
+  const errors: string[] = [];
+  for (const r of resolutions) {
+    const s = byId.get(r.suggestionId);
+    if (!s) {
+      errors.push(`${r.suggestionId}: not found (may be already resolved)`);
+      continue;
+    }
+    if (s.type === 'style') {
+      errors.push(`${r.suggestionId}: style-only, not resolvable`);
+      continue;
+    }
+    if (r.expectedChange !== undefined && formatSuggestionPreview(s) !== r.expectedChange) {
+      errors.push(`${r.suggestionId}: expectedChange mismatch (found "${formatSuggestionPreview(s)}")`);
+      continue;
+    }
+    decisions.set(r.suggestionId, r.decision);
+  }
+  if (errors.length) return { status: 'error', errors };
+
+  const touched = clusters.filter((c) => c.ids.some((id) => decisions.has(id)));
+  for (const c of touched) {
+    const missing = c.ids.filter((id) => !decisions.has(id));
+    if (missing.length) {
+      errors.push(`cluster [${c.ids.join(', ')}] partially resolved — also decide ${missing.join(', ')} (resolving part of a cluster corrupts the rest)`);
+    }
+    if (regionHasStyleSuggestion(runs, c.start, c.end)) {
+      errors.push(`cluster [${c.ids.join(', ')}] overlaps a style-only suggestion (not resolvable)`);
+    }
+  }
+  if (errors.length) return { status: 'incomplete', errors };
+
+  const requests: docs_v1.Schema$Request[] = [];
+  for (const c of [...touched].sort((a, b) => b.start - a.start)) {
+    requests.push(...regionRequests(runs, c, decisions, tabId));
+  }
+  await clients.docs.documents.batchUpdate({
+    documentId,
+    requestBody: {
+      requests,
+      writeControl: doc.revisionId ? { requiredRevisionId: doc.revisionId } : undefined,
+    },
+  });
+  return { status: 'ok', resolved: decisions.size };
 }
