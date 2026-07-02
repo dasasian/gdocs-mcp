@@ -66,6 +66,8 @@ In a project's `.mcp.json` (Claude Code) or equivalent:
 
 `GDOCS_DEFAULT_ACCOUNT` sets which authorized account this project uses by default — so a work project and a personal project can point at different accounts without re-authorizing. Any tool call can override it with an `account` argument.
 
+Prefer it available in **every** project? Register once at user scope: `claude mcp add gdocs -s user -e GDOCS_DEFAULT_ACCOUNT=you@example.com -- gdocs-mcp`. Then a project that needs a *different* account just drops a `.gdocs-mcp.json` (`{ "account": "work@company.com" }`) — no need to repeat the server config. See [docs/setup.md](docs/setup.md) for the full resolution order.
+
 ## Tools
 
 | Tool | Description |

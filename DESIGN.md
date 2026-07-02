@@ -172,7 +172,7 @@ Tokens are **global** (authorize each account once); defaults are **scoped per p
 |---|---|
 | Identifier | email canonical; optional friendly alias (`work` → `work@company.com`) |
 | Add accounts | `add_account` runs loopback OAuth in browser → stores token by email; `list_accounts` lists them |
-| Account resolution | per-call `account` → project `GDOCS_DEFAULT_ACCOUNT` (in `.mcp.json`) → global default |
+| Account resolution | per-call `account` → project `.gdocs-mcp.json` (cwd or a parent) → `GDOCS_DEFAULT_ACCOUNT` env → sole account. The `.gdocs-mcp.json` file lets a user-scope (all-projects) registration be overridden per folder without repeating the `.mcp.json` entry. |
 | Cross-account doc resolution | **auto-discover** (opt-in default): if the active account 404/403s on a doc, quietly try other authorized accounts, use the one with access, and report which. Falls back to a clear error if none can see it. A discrete `find_doc_account(docId)` also exists |
 
 Per-project default is just an env var in that project's `.mcp.json`, so a work project can't accidentally default to a personal account.

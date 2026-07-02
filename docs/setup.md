@@ -50,20 +50,38 @@ Check what's authorized:
 gdocs-mcp list-accounts
 ```
 
-## 5. Point a project at an account
+## 5. Register the server and pick a default account
 
-In the project's `.mcp.json`:
+Register it **once for all projects** (user scope):
+
+```sh
+claude mcp add gdocs -s user -e GDOCS_DEFAULT_ACCOUNT=you@example.com -- gdocs-mcp
+```
+
+Or per project, in that project's `.mcp.json`:
 
 ```jsonc
-{
-  "mcpServers": {
-    "gdocs": {
-      "command": "gdocs-mcp",
-      "env": { "GDOCS_DEFAULT_ACCOUNT": "you@example.com" }
-    }
-  }
-}
+{ "mcpServers": { "gdocs": {
+    "command": "gdocs-mcp",
+    "env": { "GDOCS_DEFAULT_ACCOUNT": "you@example.com" }
+} } }
 ```
+
+### Overriding the account per project
+
+If you registered at user scope but one project needs a different account, drop a
+`.gdocs-mcp.json` in that project (no need to repeat the whole `.mcp.json`):
+
+```json
+{ "account": "work@company.com" }
+```
+
+Account resolution, highest priority first:
+
+1. an `account` argument on a tool call (one-off)
+2. `.gdocs-mcp.json` in the working directory or a parent
+3. `GDOCS_DEFAULT_ACCOUNT` (env, from `.mcp.json`)
+4. the sole authorized account, if only one
 
 ## Troubleshooting
 
