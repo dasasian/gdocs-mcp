@@ -75,4 +75,15 @@ describe('parseBlocks', () => {
     const blocks = parseBlocks('| a \\| b | c |\n|---|---|\n| 1 | 2 |');
     expect(blocks[0]).toMatchObject({ rows: [['a | b', 'c'], ['1', '2']] });
   });
+
+  it('parses a block image', () => {
+    expect(parseBlocks('![a caption](path/to/img.png)')).toEqual([
+      { type: 'image', alt: 'a caption', src: 'path/to/img.png' },
+    ]);
+  });
+
+  it('separates an image from surrounding paragraphs', () => {
+    const blocks = parseBlocks('intro\n\n![](x.png)\n\noutro');
+    expect(blocks.map((b) => b.type)).toEqual(['paragraph', 'image', 'paragraph']);
+  });
 });

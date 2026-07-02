@@ -15,10 +15,13 @@ type Block =
   | { type: 'heading'; level: number; text: string }
   | { type: 'paragraph'; text: string }
   | { type: 'list'; ordered: boolean; items: { level: number; text: string }[] }
-  | { type: 'table'; rows: string[][]; aligns: (CellAlign | null)[] };
+  | { type: 'table'; rows: string[][]; aligns: (CellAlign | null)[] }
+  | { type: 'image'; alt: string; src: string };
 
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
 const LIST_RE = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+// A whole line that is just an image: ![alt](src)
+const IMAGE_RE = /^!\[([^\]]*)\]\(([^)]+)\)\s*$/;
 
 const isTableRow = (l: string): boolean => l.trim().startsWith('|');
 // A separator line is only dashes/colons/pipes/spaces, with at least one dash.
@@ -73,6 +76,12 @@ export function parseBlocks(md: string): Block[] {
       blocks.push({ type: 'table', rows: [header, ...body], aligns });
       continue;
     }
+    const img = IMAGE_RE.exec(line.trim());
+    if (img) {
+      blocks.push({ type: 'image', alt: img[1], src: img[2] });
+      i++;
+      continue;
+    }
     if (LIST_RE.test(line)) {
       const first = LIST_RE.exec(line)!;
       const ordered = /\d/.test(first[2]);
@@ -114,10 +123,17 @@ export interface TablePlacement {
   aligns: (CellAlign | null)[];
 }
 
+export interface ImagePlacement {
+  index: number;
+  alt: string;
+  src: string;
+}
+
 export interface BuiltContent {
   requests: docs_v1.Schema$Request[];
   text: string;
   tables: TablePlacement[];
+  images: ImagePlacement[];
 }
 
 // Build the requests to render `blocks` starting at `startIndex` (within `tabId`).
@@ -127,6 +143,7 @@ export function buildContentRequests(blocks: Block[], startIndex: number, tabId?
   const inlineOps: InlineOp[] = [];
   const listOps: { start: number; end: number; ordered: boolean }[] = [];
   const tables: TablePlacement[] = [];
+  const images: ImagePlacement[] = [];
   const abs = (off: number): number => startIndex + off;
 
   const addInline = (lineContentStart: number, content: string): string => {
@@ -156,6 +173,9 @@ export function buildContentRequests(blocks: Block[], startIndex: number, tabId?
       // trailing paragraph a table needs.
       tables.push({ index: abs(text.length), rows: block.rows, aligns: block.aligns });
       text += '\n';
+    } else if (block.type === 'image') {
+      images.push({ index: abs(text.length), alt: block.alt, src: block.src });
+      text += '\n';
     } else {
       const listStart = text.length;
       for (const item of block.items) {
@@ -169,7 +189,7 @@ export function buildContentRequests(blocks: Block[], startIndex: number, tabId?
   }
 
   const requests: docs_v1.Schema$Request[] = [];
-  if (!text) return { requests, text, tables };
+  if (!text) return { requests, text, tables, images };
   requests.push({ insertText: { location: { index: startIndex, tabId }, text } });
   for (const h of headingOps) {
     requests.push({
@@ -192,7 +212,7 @@ export function buildContentRequests(blocks: Block[], startIndex: number, tabId?
       },
     });
   }
-  return { requests, text, tables };
+  return { requests, text, tables, images };
 }
 
 export function markdownToRequests(markdown: string, startIndex: number, tabId?: string): BuiltContent {

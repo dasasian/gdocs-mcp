@@ -2,9 +2,46 @@ import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
 import { contentOf, resolveTabId } from './structure.js';
 import { parseSuggestions } from './suggestions.js';
+import { existsSync } from 'node:fs';
+import nodePath from 'node:path';
 import { markdownToRequests } from './write.js';
 import { parseInline, segmentTextStyle } from './inline.js';
 import { findProjectConfig } from '../auth/accounts.js';
+import { uploadImageForInsert } from '../drive/images.js';
+
+// Insert a markdown image at `index`. Remote URLs embed directly; a local path is
+// resolved against baseDir, uploaded, embedded, and the temp upload deleted.
+// Returns a warning string if it couldn't be resolved (never throws mid-render).
+async function insertImagePlacement(
+  clients: GoogleClients,
+  documentId: string,
+  index: number,
+  src: string,
+  baseDir: string | undefined,
+  tabId?: string,
+): Promise<string | null> {
+  if (/^https?:\/\//i.test(src)) {
+    await clients.docs.documents.batchUpdate({
+      documentId,
+      requestBody: { requests: [{ insertInlineImage: { location: { index, tabId }, uri: src } }] },
+    });
+    return null;
+  }
+  const decoded = decodeURIComponent(src);
+  const absPath = nodePath.isAbsolute(decoded) ? decoded : baseDir ? nodePath.resolve(baseDir, decoded) : null;
+  if (!absPath) return `image "${src}" is a local path but no baseDir was provided; skipped`;
+  if (!existsSync(absPath)) return `image not found: ${absPath}; skipped`;
+  const { uri, cleanup } = await uploadImageForInsert(clients, absPath);
+  try {
+    await clients.docs.documents.batchUpdate({
+      documentId,
+      requestBody: { requests: [{ insertInlineImage: { location: { index, tabId }, uri } }] },
+    });
+  } finally {
+    await cleanup();
+  }
+  return null;
+}
 
 // Insert a table at `index` and fill its cells (descending so inserts don't shift
 // later cells). Cell text is plain in this narrow first cut.
@@ -94,9 +131,9 @@ async function renderMarkdownInto(
   clients: GoogleClients,
   documentId: string,
   markdown: string,
-  opts: { tabId?: string; preRequests?: docs_v1.Schema$Request[]; requiredRevisionId?: string } = {},
-): Promise<void> {
-  const { requests, tables } = markdownToRequests(markdown, 1, opts.tabId);
+  opts: { tabId?: string; preRequests?: docs_v1.Schema$Request[]; requiredRevisionId?: string; baseDir?: string } = {},
+): Promise<{ warnings: string[] }> {
+  const { requests, tables, images } = markdownToRequests(markdown, 1, opts.tabId);
   const all = [...(opts.preRequests ?? []), ...requests];
   if (all.length) {
     await clients.docs.documents.batchUpdate({
@@ -104,9 +141,20 @@ async function renderMarkdownInto(
       requestBody: { requests: all, writeControl: opts.requiredRevisionId ? { requiredRevisionId: opts.requiredRevisionId } : undefined },
     });
   }
-  for (const t of [...tables].sort((a, b) => b.index - a.index)) {
-    await insertTableAt(clients, documentId, t.index, t.rows, t.aligns, opts.tabId);
-  }
+  // Structural inserts (tables + images) descending by index so earlier indices stay valid.
+  const warnings: string[] = [];
+  const placements: { index: number; run: () => Promise<void> }[] = [
+    ...tables.map((t) => ({ index: t.index, run: () => insertTableAt(clients, documentId, t.index, t.rows, t.aligns, opts.tabId) })),
+    ...images.map((im) => ({
+      index: im.index,
+      run: async () => {
+        const w = await insertImagePlacement(clients, documentId, im.index, im.src, opts.baseDir, opts.tabId);
+        if (w) warnings.push(w);
+      },
+    })),
+  ].sort((a, b) => b.index - a.index);
+  for (const p of placements) await p.run();
+  return { warnings };
 }
 
 // Extract a Drive file/folder id from a URL (…/folders/ID, …/d/ID) or a raw id.
@@ -120,8 +168,8 @@ export async function createDoc(
   clients: GoogleClients,
   title: string,
   content?: string,
-  opts: { folder?: string } = {},
-): Promise<{ documentId: string; title: string; folderId?: string }> {
+  opts: { folder?: string; baseDir?: string } = {},
+): Promise<{ documentId: string; title: string; folderId?: string; warnings?: string[] }> {
   let documentId: string;
   let folderId: string | undefined;
 
@@ -142,8 +190,9 @@ export async function createDoc(
     documentId = created.data.documentId!;
   }
 
-  if (content) await renderMarkdownInto(clients, documentId, content);
-  return { documentId, title, ...(folderId ? { folderId } : {}) };
+  let warnings: string[] = [];
+  if (content) ({ warnings } = await renderMarkdownInto(clients, documentId, content, { baseDir: opts.baseDir }));
+  return { documentId, title, ...(folderId ? { folderId } : {}), ...(warnings.length ? { warnings } : {}) };
 }
 
 // Move an existing doc into a folder (by folder URL or id).
@@ -185,8 +234,8 @@ export async function overwriteDoc(
   clients: GoogleClients,
   documentId: string,
   content: string,
-  opts: { force?: boolean; tab?: string } = {},
-): Promise<{ status: 'ok' | 'blocked'; message?: string }> {
+  opts: { force?: boolean; tab?: string; baseDir?: string } = {},
+): Promise<{ status: 'ok' | 'blocked'; message?: string; warnings?: string[] }> {
   const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
   const tabId = resolveTabId(doc, opts.tab);
 
@@ -210,12 +259,13 @@ export async function overwriteDoc(
   const preRequests: docs_v1.Schema$Request[] =
     end > 2 ? [{ deleteContentRange: { range: { startIndex: 1, endIndex: end - 1, tabId } } }] : [];
 
-  await renderMarkdownInto(clients, documentId, content, {
+  const { warnings } = await renderMarkdownInto(clients, documentId, content, {
     tabId,
     preRequests,
     requiredRevisionId: doc.revisionId ?? undefined,
+    baseDir: opts.baseDir,
   });
-  return { status: 'ok' };
+  return { status: 'ok', ...(warnings.length ? { warnings } : {}) };
 }
 
 // Tab CRUD. The live Docs API supports these (verified), but googleapis@144's

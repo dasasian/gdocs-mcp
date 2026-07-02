@@ -297,12 +297,13 @@ export function createServer(): McpServer {
         title: z.string(),
         content: z.string().optional(),
         folder: z.string().optional().describe('Drive folder URL or id to create the doc in'),
+        baseDir: z.string().optional().describe('absolute dir to resolve relative local image paths against (e.g. the markdown file’s folder)'),
         ...accountArg,
       },
     },
-    async ({ title, content, folder, account }) => {
+    async ({ title, content, folder, baseDir, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await createDoc(clients, title, content, { folder }));
+      return json(await createDoc(clients, title, content, { folder, baseDir }));
     },
   );
 
@@ -329,13 +330,14 @@ export function createServer(): McpServer {
         documentId: z.string(),
         content: z.string().describe('markdown content'),
         force: z.boolean().optional().describe('proceed even if comments/suggestions would be lost'),
+        baseDir: z.string().optional().describe('absolute dir to resolve relative local image paths against (e.g. the markdown file’s folder)'),
         ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, content, force, tab, account }) => {
+    async ({ documentId, content, force, baseDir, tab, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await overwriteDoc(clients, documentId, content, { force, tab }));
+      return json(await overwriteDoc(clients, documentId, content, { force, tab, baseDir }));
     },
   );
 
