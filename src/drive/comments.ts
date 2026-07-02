@@ -58,14 +58,29 @@ export async function resolveComment(
   fileId: string,
   commentId: string,
   reopen = false,
-): Promise<{ id: string }> {
+  opts: { expectQuote?: string } = {},
+): Promise<{ status: 'ok' | 'mismatch'; id?: string; message?: string }> {
+  // commentId is opaque; when the caller echoes a snippet of the comment's quoted
+  // text or body, verify it against the live comment before resolving (#10).
+  if (opts.expectQuote !== undefined) {
+    const c = (
+      await clients.drive.comments.get({ fileId, commentId, fields: 'quotedFileContent/value,content' })
+    ).data;
+    const hay = `${c.quotedFileContent?.value ?? ''}\n${c.content ?? ''}`;
+    if (!hay.includes(opts.expectQuote)) {
+      return {
+        status: 'mismatch',
+        message: `expectQuote "${opts.expectQuote}" not found in comment (quoted="${c.quotedFileContent?.value ?? ''}", body="${c.content ?? ''}"). Re-check list_comments — this id may be a different comment.`,
+      };
+    }
+  }
   const res = await clients.drive.replies.create({
     fileId,
     commentId,
     fields: 'id,action',
     requestBody: { action: reopen ? 'reopen' : 'resolve', content: reopen ? 'Reopened' : 'Resolved' },
   });
-  return { id: res.data.id ?? '' };
+  return { status: 'ok', id: res.data.id ?? '' };
 }
 
 export async function listComments(

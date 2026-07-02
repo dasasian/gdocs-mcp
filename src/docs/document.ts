@@ -1,6 +1,6 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
-import { contentOf, resolveTabId } from './structure.js';
+import { contentOf, resolveTabId, findTab } from './structure.js';
 import { parseSuggestions } from './suggestions.js';
 import { existsSync } from 'node:fs';
 import nodePath from 'node:path';
@@ -210,9 +210,14 @@ export async function moveDoc(
   clients: GoogleClients,
   documentId: string,
   folder: string,
-): Promise<{ documentId: string; folderId: string; parents: string[] }> {
+  opts: { expectTitle?: string } = {},
+): Promise<{ status: 'ok' | 'mismatch'; documentId: string; folderId?: string; parents?: string[]; name?: string; message?: string }> {
   const folderId = parseDriveId(folder);
-  const meta = await clients.drive.files.get({ fileId: documentId, fields: 'parents', supportsAllDrives: true });
+  const meta = await clients.drive.files.get({ fileId: documentId, fields: 'parents,name', supportsAllDrives: true });
+  const name = meta.data.name ?? '';
+  if (opts.expectTitle !== undefined && opts.expectTitle !== name) {
+    return { status: 'mismatch', documentId, name, message: `expectTitle "${opts.expectTitle}" != live doc title "${name}". Refusing to move a different doc than intended.` };
+  }
   const res = await clients.drive.files.update({
     fileId: documentId,
     addParents: folderId,
@@ -220,7 +225,7 @@ export async function moveDoc(
     fields: 'id,parents',
     supportsAllDrives: true,
   });
-  return { documentId, folderId, parents: res.data.parents ?? [] };
+  return { status: 'ok', documentId, folderId, parents: res.data.parents ?? [], name };
 }
 
 // Rename = change the Drive file name (which is the doc title).
@@ -244,10 +249,15 @@ export async function overwriteDoc(
   clients: GoogleClients,
   documentId: string,
   content: string,
-  opts: { force?: boolean; tab?: string; baseDir?: string } = {},
-): Promise<{ status: 'ok' | 'blocked'; message?: string; warnings?: string[]; images?: { src: string; objectId: string }[] }> {
+  opts: { force?: boolean; tab?: string; baseDir?: string; expectTitle?: string } = {},
+): Promise<{ status: 'ok' | 'blocked' | 'mismatch'; message?: string; warnings?: string[]; images?: { src: string; objectId: string }[] }> {
   const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
   const tabId = resolveTabId(doc, opts.tab);
+
+  // Name the doc being wholesale-replaced (#10): verify the caller-echoed title.
+  if (opts.expectTitle !== undefined && opts.expectTitle !== (doc.title ?? '')) {
+    return { status: 'mismatch', message: `expectTitle "${opts.expectTitle}" != live doc title "${doc.title ?? ''}". Refusing to overwrite a different doc than intended.` };
+  }
 
   if (!opts.force) {
     const suggestions = parseSuggestions(doc, tabId).length;
@@ -317,10 +327,24 @@ export async function deleteTab(
   clients: GoogleClients,
   documentId: string,
   tabId: string,
-): Promise<{ deleted: string }> {
+  opts: { expectTitle?: string } = {},
+): Promise<{ status: 'ok' | 'not_found' | 'mismatch'; deleted?: string; title?: string; message?: string }> {
+  // Verify the tab's live title before deleting — tabId is opaque, so a stale/wrong
+  // id would otherwise silently delete the wrong tab (#10).
+  const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
+  const tab = findTab(doc, tabId);
+  if (!tab) return { status: 'not_found', message: `tab "${tabId}" not found` };
+  const title = tab.tabProperties?.title ?? '';
+  if (opts.expectTitle !== undefined && opts.expectTitle !== title) {
+    return {
+      status: 'mismatch',
+      title,
+      message: `expectTitle "${opts.expectTitle}" != live tab title "${title}". Re-check list_tabs — refusing to delete a different tab than intended.`,
+    };
+  }
   const req = { deleteTab: { tabId } } as unknown as RawRequest;
   await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests: [req] } });
-  return { deleted: tabId };
+  return { status: 'ok', deleted: tabId, title };
 }
 
 export interface TabInfo {

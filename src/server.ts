@@ -358,17 +358,19 @@ export function createServer(): McpServer {
     'resolve_comment',
     {
       title: 'Resolve or reopen a comment',
-      description: 'Resolve (or reopen) a comment thread by comment id.',
+      description:
+        'Resolve (or reopen) a comment thread by comment id. Pass expectQuote (a snippet of the comment’s quoted text or body, from list_comments) — shown for confirmation and verified against the live comment, so a wrong/stale id is refused instead of resolving the wrong thread.',
       inputSchema: {
         documentId: z.string(),
         commentId: z.string(),
         reopen: z.boolean().optional().describe('reopen instead of resolve'),
+        expectQuote: z.string().optional().describe('snippet of the comment’s quoted text/body; verified before resolving'),
         ...accountArg,
       },
     },
-    async ({ documentId, commentId, reopen, account }) => {
+    async ({ documentId, commentId, reopen, expectQuote, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await resolveComment(clients, documentId, commentId, reopen ?? false));
+      return json(await resolveComment(clients, documentId, commentId, reopen ?? false, { expectQuote }));
     },
   );
 
@@ -396,12 +398,18 @@ export function createServer(): McpServer {
     'move_doc',
     {
       title: 'Move a doc to a folder',
-      description: 'Move an existing Google Doc into a Drive folder (by folder URL or id).',
-      inputSchema: { documentId: z.string(), folder: z.string().describe('Drive folder URL or id'), ...accountArg },
+      description:
+        'Move an existing Google Doc into a Drive folder (by folder URL or id). Pass expectTitle (the doc’s title) — shown for confirmation and verified against the live doc before moving.',
+      inputSchema: {
+        documentId: z.string(),
+        folder: z.string().describe('Drive folder URL or id'),
+        expectTitle: z.string().optional().describe('the doc’s title; verified before moving so a wrong id is refused'),
+        ...accountArg,
+      },
     },
-    async ({ documentId, folder, account }) => {
+    async ({ documentId, folder, expectTitle, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await moveDoc(clients, documentId, folder));
+      return json(await moveDoc(clients, documentId, folder, { expectTitle }));
     },
   );
 
@@ -410,19 +418,20 @@ export function createServer(): McpServer {
     {
       title: 'Overwrite a doc (guarded)',
       description:
-        'Replace the entire body of a doc (or one tab) with markdown-rendered content. Refuses if comments/suggestions are present (would orphan them) unless force=true. A direct edit, not a tracked suggestion.',
+        'Replace the entire body of a doc (or one tab) with markdown-rendered content. Refuses if comments/suggestions are present (would orphan them) unless force=true. Pass expectTitle (the doc’s title) — shown for confirmation and verified against the live doc before replacing. A direct edit, not a tracked suggestion.',
       inputSchema: {
         documentId: z.string(),
         content: z.string().describe('markdown content'),
         force: z.boolean().optional().describe('proceed even if comments/suggestions would be lost'),
+        expectTitle: z.string().optional().describe('the doc’s title; verified before overwriting so a wrong id is refused'),
         baseDir: z.string().optional().describe('absolute dir to resolve relative local image paths against (e.g. the markdown file’s folder)'),
         ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, content, force, baseDir, tab, account }) => {
+    async ({ documentId, content, force, expectTitle, baseDir, tab, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await overwriteDoc(clients, documentId, content, { force, tab, baseDir }));
+      return json(await overwriteDoc(clients, documentId, content, { force, tab, baseDir, expectTitle }));
     },
   );
 
@@ -671,12 +680,18 @@ export function createServer(): McpServer {
     'delete_tab',
     {
       title: 'Delete a tab',
-      description: 'Delete a tab by tabId (cascades to child tabs).',
-      inputSchema: { documentId: z.string(), tabId: z.string(), ...accountArg },
+      description:
+        'Delete a tab by tabId (cascades to child tabs). expectTitle (the tab’s title from list_tabs) is REQUIRED — it is shown in the confirmation and verified against the live tab, so an opaque/stale tabId cannot silently delete the wrong tab.',
+      inputSchema: {
+        documentId: z.string(),
+        tabId: z.string(),
+        expectTitle: z.string().describe('the tab’s title (from list_tabs); verified before deleting'),
+        ...accountArg,
+      },
     },
-    async ({ documentId, tabId, account }) => {
+    async ({ documentId, tabId, expectTitle, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await deleteTab(clients, documentId, tabId));
+      return json(await deleteTab(clients, documentId, tabId, { expectTitle }));
     },
   );
 
