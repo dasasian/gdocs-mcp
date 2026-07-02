@@ -52,4 +52,17 @@ You'll need your own Google Cloud OAuth client to run against the live API — s
 - Describe how you verified behavior against real Google Docs (the CI can't do that for you).
 - Update `README.md` / `CHANGELOG.md` as needed.
 
+## Labels
+
+We use GitHub's default labels, kept intentionally lean:
+
+- **Type** (one per issue): `bug`, `enhancement`, `documentation`, `question`
+- **Triage / meta:** `good first issue`, `help wanted`, `duplicate`, `invalid`, `wontfix`
+
+Conventions:
+
+- Give each issue exactly one **type** label.
+- `good first issue` = well-scoped, low-context work a newcomer can pick up.
+- We deliberately **don't** use priority or per-area labels yet — the backlog is small enough not to need them. If triage gets noisy later, add `area:*` labels (e.g. `area:suggestions`, `area:markdown`) at that point rather than up front.
+
 By contributing you agree your contributions are licensed under the [MIT License](LICENSE).
