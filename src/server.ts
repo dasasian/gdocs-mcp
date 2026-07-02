@@ -17,6 +17,11 @@ function json(data: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
 }
 
+// The Docs API cannot create tracked suggestions or anchor comments to text — every write is direct.
+// Surfaced in the tool result (not just the schema description) so a calling agent sees it in the moment.
+const DIRECT_EDIT_NOTE = 'Direct edit — applied as live text, not a tracked suggestion (the Docs API cannot create suggestions).';
+const UNANCHORED_COMMENT_NOTE = 'Comment added, but not anchored to specific text (the Docs/Drive API cannot anchor programmatically-created comments).';
+
 const accountArg = {
   account: z
     .string()
@@ -101,7 +106,7 @@ export function createServer(): McpServer {
     {
       title: 'Edit a Google Doc',
       description:
-        'Replace an exact unique snippet of text in a Google Doc (like a local file Edit). old_string is matched markup-tolerantly; ambiguous matches return surrounding context to disambiguate. new_string is interpreted as inline markdown (**bold**, *italic*, `code`, [text](url)).',
+        'Replace an exact unique snippet of text in a Google Doc (like a local file Edit). old_string is matched markup-tolerantly; ambiguous matches return surrounding context to disambiguate. new_string is interpreted as inline markdown (**bold**, *italic*, `code`, [text](url)). NOTE: this is a direct edit — the change is applied as live text, not a tracked suggestion (the Docs API cannot create suggestions). If the doc has pending suggestions from other reviewers, flag to the user that your edit will sit alongside them as an accepted change.',
       inputSchema: {
         documentId: z.string().describe('Google Doc id'),
         old_string: z.string().describe('exact text to replace (quote a unique slice from read_doc)'),
@@ -113,7 +118,8 @@ export function createServer(): McpServer {
     },
     async ({ documentId, old_string, new_string, replace_all, tab, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await editDoc(clients, documentId, old_string, new_string, { replaceAll: replace_all, tab }));
+      const result = await editDoc(clients, documentId, old_string, new_string, { replaceAll: replace_all, tab });
+      return json(result.status === 'ok' ? { ...result, note: DIRECT_EDIT_NOTE } : result);
     },
   );
 
@@ -122,7 +128,7 @@ export function createServer(): McpServer {
     {
       title: 'Format text in a doc',
       description:
-        'Apply styling to an existing unique text snippet in place (no content change): bold/italic/underline/strikethrough, color (hex), fontSize (pt), fontFamily, link, and paragraph alignment.',
+        'Apply styling to an existing unique text snippet in place (no content change): bold/italic/underline/strikethrough, color (hex), fontSize (pt), fontFamily, link, and paragraph alignment. NOTE: a direct style change, not a tracked suggestion.',
       inputSchema: {
         documentId: z.string().describe('Google Doc id'),
         target_string: z.string().describe('exact text to style (quote a unique slice from read_doc)'),
@@ -173,7 +179,7 @@ export function createServer(): McpServer {
     {
       title: 'Insert an image',
       description:
-        'Insert an inline image from a public URL. Position via at (top/end/or a unique text anchor), size via width/height (points), and align left/center/right. Note: floating/text-wrapped images are not supported by the Docs API.',
+        'Insert an inline image from a public URL. Position via at (top/end/or a unique text anchor), size via width/height (points), and align left/center/right. A direct edit, not a tracked suggestion. Note: floating/text-wrapped images are not supported by the Docs API.',
       inputSchema: {
         documentId: z.string(),
         uri: z.string().describe('public image URL'),
@@ -196,7 +202,7 @@ export function createServer(): McpServer {
     {
       title: 'Insert a table',
       description:
-        'Insert a rows×columns table, optionally populated from a 2D array of cell text. Position via at (top/end/or a unique text anchor, default end).',
+        'Insert a rows×columns table, optionally populated from a 2D array of cell text. Position via at (top/end/or a unique text anchor, default end). A direct edit, not a tracked suggestion.',
       inputSchema: {
         documentId: z.string(),
         rows: z.number().int().positive(),
@@ -308,7 +314,7 @@ export function createServer(): McpServer {
     },
     async ({ documentId, content, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await addComment(clients, documentId, content));
+      return json({ ...(await addComment(clients, documentId, content)), note: UNANCHORED_COMMENT_NOTE });
     },
   );
 
@@ -381,7 +387,7 @@ export function createServer(): McpServer {
     {
       title: 'Overwrite a doc (guarded)',
       description:
-        'Replace the entire body of a doc (or one tab) with markdown-rendered content. Refuses if comments/suggestions are present (would orphan them) unless force=true.',
+        'Replace the entire body of a doc (or one tab) with markdown-rendered content. Refuses if comments/suggestions are present (would orphan them) unless force=true. A direct edit, not a tracked suggestion.',
       inputSchema: {
         documentId: z.string(),
         content: z.string().describe('markdown content'),
