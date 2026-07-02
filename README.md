@@ -42,7 +42,7 @@ You need a Google Cloud OAuth client (one-time). Each user creates their own —
    gcloud services enable docs.googleapis.com drive.googleapis.com
    ```
 2. **OAuth consent screen** (Cloud Console → APIs & Services → OAuth consent screen): User type **External**, add yourself as a **Test user**. For long-lived tokens, set publishing status to **In production** (avoids the 7-day refresh-token expiry).
-3. **OAuth client** → Create credentials → **OAuth client ID** → **Desktop app**. Download the JSON and save it as `~/.config/googledocs-mcp/client_secret.json`.
+3. **OAuth client** → Create credentials → **OAuth client ID** → **Desktop app**. Download the JSON and save it as `~/.config/gdocs-mcp/client_secret.json`.
 4. **Authorize an account** (opens a browser):
    ```sh
    gdocs-mcp add-account

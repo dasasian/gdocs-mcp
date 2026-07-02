@@ -1,4 +1,4 @@
-# googledocs-mcp-server — Design
+# gdocs-mcp — Design
 
 An MCP server that lets an AI agent (Claude Code) treat a Google Doc **like a local file** — read it, edit it by content, review and act on suggestions, manage comments, work across tabs, and across multiple Google accounts.
 
@@ -161,7 +161,7 @@ Optional `strict: true` on `edit_doc` pins the revision for high-stakes edits. T
 Tokens are **global** (authorize each account once); defaults are **scoped per project**.
 
 ```
-~/.config/googledocs-mcp/
+~/.config/gdocs-mcp/
   client_secret.json          # one shared OAuth app
   tokens/
     damithsc@gmail.com.json    # per-account refresh tokens (0600)
@@ -323,6 +323,6 @@ The Google Cloud project is the #1 onboarding friction (§11). A `scripts/setup.
 | Set publishing status to **"In production"** | ✗ manual (one click; required to avoid 7-day token expiry) |
 | Add test users (if left unverified) | ⚠️ console, or moot once "In production" |
 
-The script does everything scriptable and **prints exact instructions for the 2–3 manual console steps** that remain, then drops `client_secret.json` into `~/.config/googledocs-mcp/`. The README's setup guide mirrors these steps for users who prefer clicking.
+The script does everything scriptable and **prints exact instructions for the 2–3 manual console steps** that remain, then drops `client_secret.json` into `~/.config/gdocs-mcp/`. The README's setup guide mirrors these steps for users who prefer clicking.
 
 **Note on shared projects:** one Cloud project can serve multiple accounts (e.g. a household — both partners' Google accounts authorized against the same app, separate token files). The setup guide presents "your own project" as the default and "share within a household/team" as a documented option; the script supports re-running `add_account` for each account against the existing project.
