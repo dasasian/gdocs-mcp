@@ -264,7 +264,7 @@ export function createServer(): McpServer {
       title: 'Accept or reject a suggestion',
       description:
         'Resolve a pending suggestion by id (from list_suggestions): accept keeps the proposed text, reject keeps the original. Cleanly removes the suggestion. ' +
-        'Always call list_suggestions first and copy its `title` and the suggestion\'s `preview` verbatim into documentTitle/expectedChange — this is what a human reviewing the tool call sees, and it is also checked against the live suggestion before applying, so a stale or wrong id is rejected instead of silently resolved. ' +
+        'Always call list_suggestions first and copy its `title` and the suggestion\'s `preview` verbatim into documentTitle/expectedChange — this is what a human reviewing the tool call sees, and both are checked against the live document/suggestion before applying (status "wrong_doc" or "stale" on mismatch), so a stale id or an id from a different, similarly-titled document is rejected instead of silently resolved. ' +
         'If the suggestion overlaps or adjoins others (a cluster), this returns status "cluster" with the members — resolve them together via apply_suggestions instead (resolving a cluster one-at-a-time corrupts neighbours).',
       inputSchema: {
         documentId: z.string().describe('Google Doc id'),
@@ -280,9 +280,9 @@ export function createServer(): McpServer {
         ...accountArg,
       },
     },
-    async ({ documentId, documentTitle: _documentTitle, suggestionId, expectedChange, decision, tab, account }) => {
+    async ({ documentId, documentTitle, suggestionId, expectedChange, decision, tab, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await applySuggestion(clients, documentId, suggestionId, decision, expectedChange, tab));
+      return json(await applySuggestion(clients, documentId, documentTitle, suggestionId, decision, expectedChange, tab));
     },
   );
 
@@ -291,7 +291,7 @@ export function createServer(): McpServer {
     {
       title: 'Accept/reject multiple suggestions atomically',
       description:
-        'Resolve several suggestions in ONE atomic update — required for suggestions that overlap or adjoin each other (a "cluster"), which cannot be resolved one at a time without corrupting neighbours. You MUST include every suggestion in any cluster you touch; a partially-resolved cluster is refused (status "incomplete"). Copy each suggestion\'s `preview` from list_suggestions into its `expectedChange` (verified before applying). If the result includes a `conflicts` array, two suggestions genuinely conflicted (one inserts text inside another\'s deletion, both accepted) — it was auto-resolved by keeping the insertion; surface this to the user as NOT a clean merge.',
+        'Resolve several suggestions in ONE atomic update — required for suggestions that overlap or adjoin each other (a "cluster"), which cannot be resolved one at a time without corrupting neighbours. You MUST include every suggestion in any cluster you touch; a partially-resolved cluster is refused (status "incomplete"). documentTitle is checked against the live document first (status "wrong_doc" on mismatch, e.g. an id from a different, similarly-titled document). Copy each suggestion\'s `preview` from list_suggestions into its `expectedChange` (verified before applying). If the result includes a `conflicts` array, two suggestions genuinely conflicted (one inserts text inside another\'s deletion, both accepted) — it was auto-resolved by keeping the insertion; surface this to the user as NOT a clean merge.',
       inputSchema: {
         documentId: z.string().describe('Google Doc id'),
         documentTitle: z.string().describe("The document's title, from list_suggestions. Shown for confirmation only."),
@@ -308,9 +308,9 @@ export function createServer(): McpServer {
         ...accountArg,
       },
     },
-    async ({ documentId, documentTitle: _documentTitle, resolutions, tab, account }) => {
+    async ({ documentId, documentTitle, resolutions, tab, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await applySuggestions(clients, documentId, resolutions, tab));
+      return json(await applySuggestions(clients, documentId, documentTitle, resolutions, tab));
     },
   );
 

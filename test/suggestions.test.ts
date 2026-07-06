@@ -81,6 +81,7 @@ describe('formatSuggestionPreview', () => {
 describe('applySuggestion staleness check', () => {
   const doc: docs_v1.Schema$Document = {
     revisionId: 'rev1',
+    title: 'Test Doc',
     body: {
       content: [
         { paragraph: { elements: [{ startIndex: 1, endIndex: 4, textRun: { content: 'add', suggestedInsertionIds: ['s1'] } }] } },
@@ -105,7 +106,7 @@ describe('applySuggestion staleness check', () => {
   it('refuses to apply when expectedChange does not match the live suggestion', async () => {
     const batchUpdate = vi.fn().mockResolvedValue({});
     const clients = fakeClients(batchUpdate);
-    const result = await applySuggestion(clients, 'doc1', 's1', 'reject', 'insert: "something else"');
+    const result = await applySuggestion(clients, 'doc1', 'Test Doc', 's1', 'reject', 'insert: "something else"');
     expect(result.status).toBe('stale');
     expect(batchUpdate).not.toHaveBeenCalled();
   });
@@ -113,9 +114,51 @@ describe('applySuggestion staleness check', () => {
   it('applies when expectedChange matches the live suggestion', async () => {
     const batchUpdate = vi.fn().mockResolvedValue({});
     const clients = fakeClients(batchUpdate);
-    const result = await applySuggestion(clients, 'doc1', 's1', 'reject', 'insert: "add"');
+    const result = await applySuggestion(clients, 'doc1', 'Test Doc', 's1', 'reject', 'insert: "add"');
     expect(result.status).toBe('ok');
     expect(batchUpdate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('applySuggestion / applySuggestions — documentTitle check (#9)', () => {
+  const doc: docs_v1.Schema$Document = {
+    revisionId: 'rev1',
+    title: 'Test Doc',
+    body: {
+      content: [
+        { paragraph: { elements: [{ startIndex: 1, endIndex: 4, textRun: { content: 'add', suggestedInsertionIds: ['s1'] } }] } },
+      ],
+    },
+  };
+
+  function fakeClients(batchUpdate = vi.fn().mockResolvedValue({})): GoogleClients {
+    return {
+      account: 'test@example.com',
+      auth: {} as GoogleClients['auth'],
+      docs: {
+        documents: {
+          get: vi.fn().mockResolvedValue({ data: doc }),
+          batchUpdate,
+        },
+      } as unknown as GoogleClients['docs'],
+      drive: {} as GoogleClients['drive'],
+    };
+  }
+
+  it('applySuggestion refuses when documentTitle does not match the live document', async () => {
+    const batchUpdate = vi.fn().mockResolvedValue({});
+    const result = await applySuggestion(fakeClients(batchUpdate), 'doc1', 'Wrong Doc', 's1', 'reject', 'insert: "add"');
+    expect(result.status).toBe('wrong_doc');
+    expect(batchUpdate).not.toHaveBeenCalled();
+  });
+
+  it('applySuggestions refuses when documentTitle does not match the live document', async () => {
+    const batchUpdate = vi.fn().mockResolvedValue({});
+    const result = await applySuggestions(fakeClients(batchUpdate), 'doc1', 'Wrong Doc', [
+      { suggestionId: 's1', decision: 'reject', expectedChange: 'insert: "add"' },
+    ]);
+    expect(result.status).toBe('wrong_doc');
+    expect(batchUpdate).not.toHaveBeenCalled();
   });
 });
 
@@ -185,6 +228,7 @@ describe('resolveRegionText', () => {
 function docFromRuns(runs: { content: string; start: number; ins?: string; del?: string }[]): docs_v1.Schema$Document {
   return {
     revisionId: 'rev1',
+    title: 'Test Doc',
     body: {
       content: [
         {
@@ -226,7 +270,7 @@ const clusterDoc = () =>
 describe('applySuggestion — cluster safety (#7)', () => {
   it('refuses to resolve a clustered suggestion and does NOT mutate', async () => {
     const batchUpdate = vi.fn().mockResolvedValue({});
-    const res = await applySuggestion(clientsFor(clusterDoc(), batchUpdate), 'd', 's1', 'accept', 'insert: "new"');
+    const res = await applySuggestion(clientsFor(clusterDoc(), batchUpdate), 'd', 'Test Doc', 's1', 'accept', 'insert: "new"');
     expect(res.status).toBe('cluster');
     expect(res.cluster?.map((c) => c.suggestionId).sort()).toEqual(['s1', 's2']);
     expect(batchUpdate).not.toHaveBeenCalled();
@@ -238,7 +282,7 @@ describe('applySuggestion — cluster safety (#7)', () => {
       { content: '3 weeks', start: 8, del: 's1' },
     ]);
     const batchUpdate = vi.fn().mockResolvedValue({});
-    const res = await applySuggestion(clientsFor(doc, batchUpdate), 'd', 's1', 'accept', '"3 weeks" → "2 weeks"');
+    const res = await applySuggestion(clientsFor(doc, batchUpdate), 'd', 'Test Doc', 's1', 'accept', '"3 weeks" → "2 weeks"');
     expect(res.status).toBe('ok');
     expect(batchUpdate).toHaveBeenCalledTimes(1);
     const reqs = batchUpdate.mock.calls[0][0].requestBody.requests;
@@ -250,7 +294,7 @@ describe('applySuggestion — cluster safety (#7)', () => {
 describe('applySuggestions — atomic cluster resolution (#7)', () => {
   it('resolves a full cluster in one batchUpdate with correct merged text', async () => {
     const batchUpdate = vi.fn().mockResolvedValue({});
-    const res = await applySuggestions(clientsFor(clusterDoc(), batchUpdate), 'd', [
+    const res = await applySuggestions(clientsFor(clusterDoc(), batchUpdate), 'd', 'Test Doc', [
       { suggestionId: 's1', decision: 'accept', expectedChange: 'insert: "new"' },
       { suggestionId: 's2', decision: 'accept', expectedChange: 'delete: "old"' },
     ]);
@@ -264,7 +308,7 @@ describe('applySuggestions — atomic cluster resolution (#7)', () => {
 
   it('refuses a partially-resolved cluster (incomplete) and does NOT mutate', async () => {
     const batchUpdate = vi.fn().mockResolvedValue({});
-    const res = await applySuggestions(clientsFor(clusterDoc(), batchUpdate), 'd', [
+    const res = await applySuggestions(clientsFor(clusterDoc(), batchUpdate), 'd', 'Test Doc', [
       { suggestionId: 's1', decision: 'accept', expectedChange: 'insert: "new"' },
     ]);
     expect(res.status).toBe('incomplete');
@@ -274,7 +318,7 @@ describe('applySuggestions — atomic cluster resolution (#7)', () => {
 
   it('refuses on any expectedChange mismatch and does NOT mutate', async () => {
     const batchUpdate = vi.fn().mockResolvedValue({});
-    const res = await applySuggestions(clientsFor(clusterDoc(), batchUpdate), 'd', [
+    const res = await applySuggestions(clientsFor(clusterDoc(), batchUpdate), 'd', 'Test Doc', [
       { suggestionId: 's1', decision: 'accept', expectedChange: 'insert: "WRONG"' },
       { suggestionId: 's2', decision: 'accept', expectedChange: 'delete: "old"' },
     ]);
@@ -287,6 +331,7 @@ describe('applySuggestion — style metadata on edit runs (#7 regression)', () =
   it('resolves an insertion run that also carries suggestedTextStyleChanges (not treated as style-only)', async () => {
     const doc = {
       revisionId: 'r',
+      title: 'Test Doc',
       body: {
         content: [
           {
@@ -300,7 +345,7 @@ describe('applySuggestion — style metadata on edit runs (#7 regression)', () =
       },
     } as unknown as docs_v1.Schema$Document;
     const batchUpdate = vi.fn().mockResolvedValue({});
-    const res = await applySuggestion(clientsFor(doc, batchUpdate), 'd', 's1', 'accept', 'insert: "new"');
+    const res = await applySuggestion(clientsFor(doc, batchUpdate), 'd', 'Test Doc', 's1', 'accept', 'insert: "new"');
     expect(res.status).toBe('ok');
     expect(batchUpdate).toHaveBeenCalledTimes(1);
   });
@@ -336,7 +381,7 @@ describe('detectConflicts (#11)', () => {
 describe('applySuggestions — surfaces conflicts (#11)', () => {
   it('resolves atomically but reports the auto-resolved conflict', async () => {
     const batchUpdate = vi.fn().mockResolvedValue({});
-    const res = await applySuggestions(clientsFor(conflictDoc(), batchUpdate), 'd', [
+    const res = await applySuggestions(clientsFor(conflictDoc(), batchUpdate), 'd', 'Test Doc', [
       { suggestionId: 's1', decision: 'accept' },
       { suggestionId: 's2', decision: 'accept' },
     ]);
@@ -348,7 +393,7 @@ describe('applySuggestions — surfaces conflicts (#11)', () => {
   });
 
   it('reports no conflicts for a clean (non-overlapping) cluster', async () => {
-    const res = await applySuggestions(clientsFor(clusterDoc()), 'd', [
+    const res = await applySuggestions(clientsFor(clusterDoc()), 'd', 'Test Doc', [
       { suggestionId: 's1', decision: 'accept' },
       { suggestionId: 's2', decision: 'accept' },
     ]);

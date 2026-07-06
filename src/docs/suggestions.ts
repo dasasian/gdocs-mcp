@@ -261,20 +261,33 @@ function regionRequests(
 }
 
 export interface ApplyResult {
-  status: 'ok' | 'not_found' | 'unsupported' | 'stale' | 'cluster';
+  status: 'ok' | 'not_found' | 'unsupported' | 'stale' | 'cluster' | 'wrong_doc';
   message?: string;
   cluster?: { suggestionId: string; preview: string }[];
+}
+
+// Anchors a call to the document, not just the change (#9): a same-worded
+// suggestion can exist in two near-identical documents, and expectedChange
+// alone wouldn't catch approving it on the wrong one.
+function checkDocumentTitle(doc: docs_v1.Schema$Document, documentTitle: string): string | undefined {
+  const actual = doc.title ?? '';
+  if (actual === documentTitle) return undefined;
+  return `documentTitle did not match the live document (expected "${documentTitle}", found "${actual}"). This id may belong to a different, similarly-titled document — re-run list_suggestions on the intended document and retry.`;
 }
 
 export async function applySuggestion(
   clients: GoogleClients,
   documentId: string,
+  documentTitle: string,
   suggestionId: string,
   decision: 'accept' | 'reject',
   expectedChange: string,
   tab?: string,
 ): Promise<ApplyResult> {
   const doc = await getDocInline(clients, documentId);
+  const wrongDoc = checkDocumentTitle(doc, documentTitle);
+  if (wrongDoc) return { status: 'wrong_doc', message: wrongDoc };
+
   const tabId = resolveTabId(doc, tab);
   const suggestions = parseSuggestions(doc, tabId);
   const s = suggestions.find((x) => x.id === suggestionId);
@@ -324,7 +337,7 @@ export interface Resolution {
 }
 
 export interface ApplyManyResult {
-  status: 'ok' | 'error' | 'incomplete';
+  status: 'ok' | 'error' | 'incomplete' | 'wrong_doc';
   resolved?: number;
   errors?: string[];
   /** Overlapping insert-inside-delete conflicts that were auto-resolved (insertion kept). */
@@ -337,10 +350,14 @@ export interface ApplyManyResult {
 export async function applySuggestions(
   clients: GoogleClients,
   documentId: string,
+  documentTitle: string,
   resolutions: Resolution[],
   tab?: string,
 ): Promise<ApplyManyResult> {
   const doc = await getDocInline(clients, documentId);
+  const wrongDoc = checkDocumentTitle(doc, documentTitle);
+  if (wrongDoc) return { status: 'wrong_doc', errors: [wrongDoc] };
+
   const tabId = resolveTabId(doc, tab);
   const suggestions = parseSuggestions(doc, tabId);
   const byId = new Map(suggestions.map((s) => [s.id, s]));
