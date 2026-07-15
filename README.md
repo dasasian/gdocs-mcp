@@ -88,8 +88,7 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 | `overwrite_doc` | Replace a doc/tab body with markdown-rendered content — guarded against orphaning comments/suggestions |
 | `create_doc` / `update_doc` | Create (from markdown, optionally in a folder) / rename and/or move a doc |
 | `list_suggestions` | Pending suggestions as `before → after` diffs |
-| `apply_suggestions` | Accept or reject one or more suggestions (atomically; required for overlapping clusters) |
-| `apply_suggestions` | Accept/reject multiple suggestions atomically — required for overlapping/adjacent "clusters" |
+| `apply_suggestions` | Accept or reject one or more suggestions atomically — required for overlapping/adjacent "clusters" |
 | `insert_image` | Insert an inline image (URL) — position, size, left/center/right align |
 | `download_images` | Download a doc’s embedded images to a local folder (pairs with `read_doc`’s image markers — the inverse of publishing) |
 | `insert_table` | Insert a rows×columns table — optional data fill, column widths, header shading |

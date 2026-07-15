@@ -37,21 +37,28 @@ Markdown is otherwise a ceiling — it cannot express alignment, color, fonts, i
 
 ## 3. Tool surface
 
+The canonical, always-current list is the table in `README.md`; this is the
+conceptual map. The surface is kept deliberately small (~31 tools) — see
+`CLAUDE.md` for the add-vs-enhance discipline (merge symmetric verbs; a new tool
+only when the vocabulary/return-shape differs; destructive verbs stay distinct).
+
 | Tool | Role |
 |---|---|
 | `read_doc(doc, tab?, mode)` | Read as markdown+HTML. `mode`: `clean` (default) · `tracked` (`<ins>/<del>`+IDs) · `accepted` · `rejected` |
 | `edit_doc(doc, old_string, new_string, tab?, replace_all?, strict?)` | String-anchored edit (the workhorse) |
-| `overwrite_doc(doc, content, tab?)` | Wholesale replace — **guarded** (§4) |
-| `create_doc(content)` | New doc |
-| `format_doc(doc, target_string, style, tab?)` | Style existing text **in place**, no content change |
+| `overwrite_doc(doc, content\|contentFile, tab?)` | Wholesale replace — **guarded** (§4) |
+| `create_doc(content\|contentFile, folder?)` | New doc (`contentFile` reads a long body server-side, no inline retype) |
+| `update_doc(doc, name?, folder?)` | Rename and/or move (metadata) |
+| `set_style(doc, {from,to?}\|whole_document, style, tab?)` | Style existing text **in place** by selection or whole-doc, no content change |
+| `get_style(doc, target_string, tab?)` | Read the computed style at an anchor (read side of `set_style`) |
+| `set_page_setup / get_page_setup(doc, tab?)` | Document page setup: margins, page size, orientation |
 | `insert_image(doc, at, source, width?, align?, tab?)` | Images (markdown can't size/place them) |
-| `insert_table(doc, rows, cols, data?, tab?)` | Programmatic/large tables (simple ones stay markdown) |
-| `search_doc(doc, query, tab?)` | Grep |
+| `insert_table(doc, rows, cols, data?, tab?)` · `edit_table(doc, cell, op, side?)` · `set_table_style(...)` | Tables: create, insert/delete row-or-column, style |
 | `list_suggestions(doc, tab?)` | Suggestions as before→after diffs |
-| `apply_suggestion(doc, id, accept\|reject)` | Resolve a suggestion (§6) |
-| `accept_all / reject_all(doc, tab?)` | Bulk resolve |
-| `list_comments / add_comment / reply_comment / resolve_comment` | Drive comments |
-| `list_tabs / add_tab / rename_tab / reorder_tab / delete_tab` | Tab structure |
+| `apply_suggestions(doc, resolutions[])` | Resolve one or more suggestions atomically (§6) |
+| `list_comments / add_comment(replyTo?) / resolve_comment` | Drive comments (`add_comment` also replies) |
+| `list_tabs / add_tab / rename_tab / delete_tab` | Tab structure |
+| `list_permissions / share_doc(email?|link) / unshare_doc` | Sharing (person or anyone-with-link) |
 | `add_account / list_accounts` | Multi-account (§9) |
 
 ---
@@ -73,7 +80,7 @@ Markdown is otherwise a ceiling — it cannot express alignment, color, fonts, i
 
 Design asymmetry, deliberate: **locate by loose plain-text match, author with markdown/HTML formatting.**
 
-**`format_doc` vs inline HTML in `edit_doc`:** complementary. `edit_doc` changes content (and inline style as written). `format_doc` styles text that is *already there*, by anchor, without re-typing it (avoids transcription risk) and returns *what it set* (restores the verify loop).
+**`set_style` vs inline HTML in `edit_doc`:** complementary. `edit_doc` changes content (and inline style as written). `set_style` styles text that is *already there*, by selection (`from`/`to`) or whole-document, without re-typing it (avoids transcription risk) and returns *what it set* (restores the verify loop).
 
 **`overwrite_doc` guard:** wholesale replace orphans comments and wipes suggestions. If the target has comments/suggestions, the tool **warns and requires confirmation** before proceeding. `edit_doc` (surgical, anchor-preserving) is the default for nearly everything. A future "smart replace" (diff new vs current, emit minimal edits) is a later upgrade.
 
@@ -108,7 +115,7 @@ No existing server surfaces suggestion **content** as a diff, and all repeat tha
 
 In `read_doc(mode: "tracked")` the same suggestions render inline as `<ins>/<del>` + IDs, so reviewing them is just reading the doc.
 
-**Acting (`apply_suggestion`):** the API cannot create suggestions or write *in* suggestion mode, but existing suggestions **can** be resolved by operating on the raw tagged ranges with normal (direct) edits:
+**Acting (`apply_suggestions`):** the API cannot create suggestions or write *in* suggestion mode, but existing suggestions **can** be resolved by operating on the raw tagged ranges with normal (direct) edits:
 
 | Decision | Mechanism | Clean? |
 |---|---|---|
@@ -128,7 +135,7 @@ The trick: **to clear a suggestion tag, delete the tagged content and reinsert t
 - **Attribution has no clean API path — confirmed by spike + research.** `documents.get` carries only `suggestedInsertionIds`/`suggestedDeletionIds` (no author/time). Investigated alternatives: Drive **Revisions** = dead end (a pending suggestion isn't a revision; on accept `lastModifyingUser` is the *acceptor*); Drive **Activity API v2** = partial (gives actor+timestamp but its `Suggestion` event has no `suggestionId`/range, so it can't be linked to a specific suggestion); Drive **Comments** = also a dead end for the common case. **Spike-disproven:** a *bare* suggestion (a tracked change with no attached comment) does **not** appear in the Drive comments API at all — only explicit user comments do. So there's no comment thread to correlate to unless the suggester *also* typed a comment (uncommon). The "fuzzy-match suggestion text ↔ comment quoted text" route therefore doesn't apply to typical suggestions.
   - **Decision — v1 (final): no attribution.** Present suggestions in **document order** (the natural review order; serves "go through them" fully). Author and "latest by time" are simply not available via any API for typical suggestions. Not revisited unless Google adds first-class support.
 
-**Edit-the-markup-to-act** (accept by editing `<ins>/<del>` in a `tracked` read) is a tempting v2: it needs an intent-inference/reconciliation engine and is fragile to marker drift, so the discrete `apply_suggestion(id, decision)` stays the reliable path; ID references come naturally from what was just read.
+**Edit-the-markup-to-act** (accept by editing `<ins>/<del>` in a `tracked` read) is a tempting v2: it needs an intent-inference/reconciliation engine and is fragile to marker drift, so the discrete `apply_suggestions(id, decision)` stays the reliable path; ID references come naturally from what was just read.
 
 ---
 
@@ -150,7 +157,7 @@ A Doc can change between read and edit (collaborators, a human resolving a sugge
 |---|---|
 | `edit_doc` | optimistic: re-read live + re-match `old_string` at write time (self-heals index shifts); `requiredRevisionId` closes the tiny internal read→write window; on match-loss/ambiguity return current surrounding text + "re-read" |
 | `overwrite_doc`, `accept_all` | **strict**: pin `requiredRevisionId` to last read; fail on any concurrent change |
-| `apply_suggestion` | re-resolve by ID; if gone, report "already resolved" |
+| `apply_suggestions` | re-resolve by ID; if gone, report "already resolved" |
 
 > **Validated by spike.** A `batchUpdate` with a stale `requiredRevisionId` is rejected (`"The required revision ID ... does not match the latest revision."`), while the current revision succeeds. Optimistic locking is enforceable as designed.
 
@@ -186,7 +193,7 @@ Per-project default is just an env var in that project's `.mcp.json`, so a work 
 ### 10a. Tab-aware editing (core) — a tab is a file in a folder
 Every tool takes an optional `tab` param (tabId or title). The Doc stays canonical; tabs are sub-files. No source-of-truth conflict.
 
-> **Implemented + validated.** `read_doc`/`edit_doc`/`list_suggestions`/`apply_suggestion` accept `tab`; writes stamp `tabId` onto ranges/locations. Live test confirmed per-tab read isolation, correct per-tab index space for editing, and no cross-tab bleed. Tab selection resolves by tabId or title.
+> **Implemented + validated.** `read_doc`/`edit_doc`/`list_suggestions`/`apply_suggestions` accept `tab`; writes stamp `tabId` onto ranges/locations. Live test confirmed per-tab read isolation, correct per-tab index space for editing, and no cross-tab bleed. Tab selection resolves by tabId or title.
 
 > **Tab CRUD — supported, validated live.** The Docs API `batchUpdate` supports `addDocumentTab` / `updateDocumentTabProperties` (rename) / `deleteTab` (cascades to children), plus `tabId` targeting for content edits and read via `includeTabsContent`/`tabProperties`. `add_tab`/`rename_tab`/`delete_tab`/`list_tabs` are implemented and round-trip-tested against the live API. **This means §10b's "push files → one-tab-per-chapter" assemble CAN create tabs programmatically** — the vision is unblocked.
 >
@@ -202,8 +209,8 @@ Use case: chapter `.md` files ⇄ one Doc with one tab per chapter, with review 
 ```
   Claude Code (orchestration)                 MCP server (primitives)
   • read local chapter .md (filesystem)  ──▶  read_doc · edit_doc
-  • decide file↔tab mapping                   list_suggestions · apply_suggestion
-  • reason about / merge differences          add_tab · format_doc · comments
+  • decide file↔tab mapping                   list_suggestions · apply_suggestions
+  • reason about / merge differences          add_tab · set_style · comments
   • go through suggestions, judge each        overwrite_doc(markdown, tab) ← push a chapter
   • apply the result as edits            ──▶  create_doc(markdown)
 ```
@@ -291,7 +298,7 @@ Security posture is first-class: token files `0600`, scope justification documen
 
 The three differentiators are unproven *because* nobody has done them:
 1. **Suggestion accept/reject via range-reconstruction** — ✅ **validated** (spike): clean ACCEPT of a replacement (no ghost) *and* multi-suggestion batch resolve with descending-index ordering (no corruption). Remaining cases (reject path, insertion/deletion-only, style) are lower-risk variants of the same proven mechanism.
-2. **markdown + HTML + `<ins>/<del>` round-trip** — ✅ **read validated**; ✅ **style-write validated** via `format_doc`; ✅ **inline `new_string` markdown *and* HTML validated** in `edit_doc`; ✅ **block-level markdown→Docs validated** (`write.ts`: headings, paragraphs, inline, bullet/ordered nested lists → `create_doc`/`overwrite_doc`, with a **lossless live round-trip** md→Docs→md). Reader/writer share `markdown-spec` constants + round-trip tests (the "extend in pairs" discipline) instead of a bidirectional spec engine. Open: Tier-2 blocks (tables, images, code blocks) in the renderer.
+2. **markdown + HTML + `<ins>/<del>` round-trip** — ✅ **read validated**; ✅ **style-write validated** via `set_style`; ✅ **inline `new_string` markdown *and* HTML validated** in `edit_doc`; ✅ **block-level markdown→Docs validated** (`write.ts`: headings, paragraphs, inline, bullet/ordered nested lists → `create_doc`/`overwrite_doc`, with a **lossless live round-trip** md→Docs→md). Reader/writer share `markdown-spec` constants + round-trip tests (the "extend in pairs" discipline) instead of a bidirectional spec engine. Open: Tier-2 blocks (tables, images, code blocks) in the renderer.
 3. **String-anchored editing over batchUpdate** — ✅ **validated in code**: plain-text projection + index map across runs, exact + markup-tolerant match, ambiguity→context, optimistic revision, delete+insert. Live round-trip edit confirmed. Open: whitespace-normalized matching; new_string formatting.
 
 The canonical-projection requirement (§10b) is the linchpin for AI-merge and a stressor for round-trip fidelity generally.
