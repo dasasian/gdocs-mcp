@@ -78,6 +78,8 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 
 ## Tools
 
+> New here? See **[docs/recipes.md](docs/recipes.md)** for task-shaped examples of what to ask Claude — publishing a markdown file, restyling a whole doc, reviewing tracked changes, mirroring a layout, and more.
+
 | Tool | Description |
 |---|---|
 | `read_doc` | Read as markdown + inline HTML. Modes: `clean` · `tracked` (`<ins>/<del>`) · `accepted` · `rejected` |
