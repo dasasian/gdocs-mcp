@@ -124,6 +124,9 @@ function renderParagraph(para: docs_v1.Schema$Paragraph, opts: RenderOpts): stri
     }
   }
   inline = inline.replace(/\n$/, ''); // drop the paragraph-mark newline
+  // In-paragraph line breaks (Shift+Enter) come through as U+000B; surface them as
+  // <br> so they're visible and round-trip on write (inline.ts parses <br> back).
+  inline = inline.replace(/\x0b/g, '<br>');
 
   const named = para.paragraphStyle?.namedStyleType ?? 'NORMAL_TEXT';
   const level = LEVEL_BY_HEADING[named];

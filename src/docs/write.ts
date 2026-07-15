@@ -10,19 +10,27 @@ import { HEADING_BY_LEVEL } from './markdown-spec.js';
 // indices after it). Tier 1: headings, paragraphs, inline, bullet/ordered lists.
 
 export type CellAlign = 'left' | 'center' | 'right';
+export type ParaAlign = 'left' | 'center' | 'right' | 'justify';
 
 type Block =
   | { type: 'heading'; level: number; text: string }
-  | { type: 'paragraph'; text: string }
+  | { type: 'paragraph'; text: string; align?: ParaAlign }
   | { type: 'list'; ordered: boolean; items: { level: number; text: string }[] }
   | { type: 'table'; rows: string[][]; aligns: (CellAlign | null)[] }
   | { type: 'image'; alt: string; src: string };
+
+// Docs paragraph alignment enum, keyed by the CSS value read (transformer.ts) emits.
+const PARA_ALIGN: Record<ParaAlign, string> = { left: 'START', center: 'CENTER', right: 'END', justify: 'JUSTIFIED' };
 
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
 const LIST_RE = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
 // A whole line that is just an image: ![alt](src), with an optional trailing
 // HTML comment (e.g. gdocs tracking metadata) that we ignore.
 const IMAGE_RE = /^!\[([^\]]*)\]\(([^)]+)\)\s*(?:<!--.*?-->)?\s*$/;
+// A whole line that is a single aligned paragraph, the exact shape read_doc emits
+// for non-default alignment: <p style="text-align:center|right|justify">…</p>.
+// Parsed back so read->write round-trips (write's counterpart to transformer.ts).
+const ALIGNED_P_RE = /^<p style="text-align:(left|center|right|justify)">(.*)<\/p>$/;
 
 const isTableRow = (l: string): boolean => l.trim().startsWith('|');
 // A separator line is only dashes/colons/pipes/spaces, with at least one dash.
@@ -90,6 +98,14 @@ export function parseBlocks(md: string): Block[] {
       i++;
       continue;
     }
+    // Aligned paragraph (read_doc's <p style="text-align:…"> output) — matched
+    // before the plain-paragraph fallback so it isn't treated as literal text.
+    const ap = ALIGNED_P_RE.exec(line.trim());
+    if (ap) {
+      blocks.push({ type: 'paragraph', text: ap[2].trim(), align: ap[1] as ParaAlign });
+      i++;
+      continue;
+    }
     if (LIST_RE.test(line)) {
       const first = LIST_RE.exec(line)!;
       const ordered = /\d/.test(first[2]);
@@ -148,6 +164,7 @@ export interface BuiltContent {
 export function buildContentRequests(blocks: Block[], startIndex: number, tabId?: string): BuiltContent {
   let text = '';
   const headingOps: { start: number; end: number; level: number }[] = [];
+  const alignOps: { start: number; end: number; align: ParaAlign }[] = [];
   const inlineOps: InlineOp[] = [];
   const listOps: { start: number; end: number; ordered: boolean }[] = [];
   const tables: TablePlacement[] = [];
@@ -175,6 +192,8 @@ export function buildContentRequests(blocks: Block[], startIndex: number, tabId?
       text += plain + '\n';
       if (block.type === 'heading') {
         headingOps.push({ start: abs(lineStart), end: abs(lineStart + plain.length + 1), level: block.level });
+      } else if (block.align) {
+        alignOps.push({ start: abs(lineStart), end: abs(lineStart + plain.length + 1), align: block.align });
       }
     } else if (block.type === 'table') {
       // Placeholder paragraph where the table will be inserted; also serves as the
@@ -205,6 +224,15 @@ export function buildContentRequests(blocks: Block[], startIndex: number, tabId?
         range: { startIndex: h.start, endIndex: h.end, tabId },
         paragraphStyle: { namedStyleType: HEADING_BY_LEVEL[h.level] },
         fields: 'namedStyleType',
+      },
+    });
+  }
+  for (const a of alignOps) {
+    requests.push({
+      updateParagraphStyle: {
+        range: { startIndex: a.start, endIndex: a.end, tabId },
+        paragraphStyle: { alignment: PARA_ALIGN[a.align] },
+        fields: 'alignment',
       },
     });
   }

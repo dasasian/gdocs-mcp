@@ -68,6 +68,9 @@ const PATTERNS: Pattern[] = [
   { re: /<u>(.*?)<\/u>/i, make: (m) => ({ text: m[1], underline: true }) },
   { re: /<(?:s|del|strike)>(.*?)<\/(?:s|del|strike)>/i, make: (m) => ({ text: m[1], strikethrough: true }) },
   { re: /<code>(.*?)<\/code>/i, make: (m) => ({ text: m[1], code: true }) },
+  // <br> -> an in-paragraph line break (Docs vertical tab U+000B), the write-side
+  // counterpart to read emitting <br> for the same char (transformer.ts).
+  { re: /<br\s*\/?>/i, make: () => ({ text: '\v' }) },
   { re: /<a\s+[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/i, make: (m) => ({ text: m[2], link: m[1] }) },
   { re: /<span\s+[^>]*style="([^"]*)"[^>]*>(.*?)<\/span>/i, make: (m) => ({ text: m[2], ...parseStyleAttr(m[1]) }) },
 ];

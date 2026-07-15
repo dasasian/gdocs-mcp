@@ -69,6 +69,10 @@ describe('renderMarkdown', () => {
     const d = doc([para([run('centered\n', 1)], { alignment: 'CENTER' })]);
     expect(renderMarkdown(d)).toBe('<p style="text-align:center">centered</p>');
   });
+  it('renders in-paragraph line breaks (U+000B) as <br>', () => {
+    const d = doc([para([run('line1\x0bline2\n', 1)])]);
+    expect(renderMarkdown(d)).toBe('line1<br>line2');
+  });
   it('wraps suggestions in <ins>/<del> in tracked mode', () => {
     const d = doc([
       para([

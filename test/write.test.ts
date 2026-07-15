@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseBlocks } from '../src/docs/write.js';
+import { parseBlocks, markdownToRequests } from '../src/docs/write.js';
 
 describe('parseBlocks', () => {
   it('parses headings with level', () => {
@@ -14,6 +14,28 @@ describe('parseBlocks', () => {
       { type: 'paragraph', text: 'one two' },
       { type: 'paragraph', text: 'three' },
     ]);
+  });
+
+  it('parses read_doc aligned paragraphs (<p style="text-align:…">) back to align', () => {
+    expect(parseBlocks('<p style="text-align:center">Landlord</p>')).toEqual([
+      { type: 'paragraph', text: 'Landlord', align: 'center' },
+    ]);
+    expect(parseBlocks('<p style="text-align:right">x</p>')).toEqual([
+      { type: 'paragraph', text: 'x', align: 'right' },
+    ]);
+  });
+
+  it('emits an alignment updateParagraphStyle for an aligned paragraph', () => {
+    const { requests } = markdownToRequests('<p style="text-align:center">Hi</p>', 1);
+    const align = requests.find(
+      (r) => r.updateParagraphStyle?.paragraphStyle?.alignment === 'CENTER',
+    );
+    expect(align?.updateParagraphStyle?.fields).toBe('alignment');
+  });
+
+  it('converts <br> to an in-paragraph line break (U+000B) in the inserted text', () => {
+    const { text } = markdownToRequests('a<br>b', 1);
+    expect(text).toBe('a\x0bb\n');
   });
 
   it('groups a bullet list with nesting', () => {
