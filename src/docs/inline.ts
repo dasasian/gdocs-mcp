@@ -37,12 +37,28 @@ function parseStyleAttr(css: string): Partial<Segment> {
   return out;
 }
 
+// Backslash escapes (CommonMark): a backslash before ASCII punctuation makes that
+// char literal; before anything else (e.g. \t) the backslash is literal too. We
+// neutralize escapes BEFORE emphasis parsing — position-based interleaving is wrong
+// (in `*a\*b*` the italic run starts before the escape, so an escaped `*` would
+// still be swallowed). Each `\<punct>` becomes a single private-use sentinel that
+// no emphasis pattern can match; decodeEscapes() restores the literal char after.
+const ESCAPE_RE = /\\([!-/:-@[-`{-~])/g;
+const SENTINEL_LO = 0xe000;
+const encodeEscapes = (s: string): string =>
+  s.replace(ESCAPE_RE, (_m, c: string) => String.fromCharCode(SENTINEL_LO + c.charCodeAt(0)));
+const decodeEscapes = (s: string): string =>
+  s.replace(/[\uE000-\uE0FF]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - SENTINEL_LO));
+
 // Order matters: links/HTML and double-markers before single-markers.
 const PATTERNS: Pattern[] = [
   // markdown
   { re: /\[([^\]]+)\]\(([^)]+)\)/, make: (m) => ({ text: m[1], link: m[2] }) },
   { re: /\*\*([^*]+)\*\*/, make: (m) => ({ text: m[1], bold: true }) },
-  { re: /__([^_]+)__/, make: (m) => ({ text: m[1], bold: true }) },
+  // Underscore-bold with CommonMark word-boundary guards: `\w` (which includes `_`)
+  // on either side blocks both intraword emphasis (a__b__c) and long underscore
+  // runs used as signature blank lines (____ ____ from soft-joined lines).
+  { re: /(?<!\w)__([^_]+)__(?!\w)/, make: (m) => ({ text: m[1], bold: true }) },
   { re: /~~([^~]+)~~/, make: (m) => ({ text: m[1], strikethrough: true }) },
   { re: /\*([^*]+)\*/, make: (m) => ({ text: m[1], italic: true }) },
   { re: /`([^`]+)`/, make: (m) => ({ text: m[1], code: true }) },
@@ -58,7 +74,7 @@ const PATTERNS: Pattern[] = [
 
 export function parseInline(input: string): Segment[] {
   const segments: Segment[] = [];
-  let rest = input;
+  let rest = encodeEscapes(input);
   while (rest.length) {
     // Find the earliest-starting marker across all patterns.
     let best: { index: number; len: number; seg: Segment } | null = null;
@@ -75,6 +91,11 @@ export function parseInline(input: string): Segment[] {
     if (best.index > 0) segments.push({ text: rest.slice(0, best.index) });
     segments.push(best.seg);
     rest = rest.slice(best.index + best.len);
+  }
+  // Restore escaped punctuation (sentinels) to literal chars in text (and any link url).
+  for (const s of segments) {
+    s.text = decodeEscapes(s.text);
+    if (s.link) s.link = decodeEscapes(s.link);
   }
   return segments.filter((s) => s.text.length > 0);
 }

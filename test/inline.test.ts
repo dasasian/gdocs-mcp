@@ -25,6 +25,29 @@ describe('parseInline', () => {
   it('prefers ** over * (bold not double-italic)', () => {
     expect(parseInline('**bold**')).toEqual([{ text: 'bold', bold: true }]);
   });
+  it('still bolds real __underscore__ emphasis', () => {
+    expect(parseInline('a __bold__ b')).toEqual([{ text: 'a ' }, { text: 'bold', bold: true }, { text: ' b' }]);
+  });
+  it('treats underscore runs (signature blank lines) as literal, not bold', () => {
+    // Two soft-joined signature lines become "____ ____" — must NOT bold the gap.
+    expect(parseInline('____ ____')).toEqual([{ text: '____ ____' }]);
+    expect(parseInline('Sign _______ here _______ now')).toEqual([{ text: 'Sign _______ here _______ now' }]);
+    expect(parseInline('_______________________')).toEqual([{ text: '_______________________' }]);
+  });
+  it('does not treat intraword __ as bold (CommonMark)', () => {
+    expect(parseInline('a__b__c')).toEqual([{ text: 'a__b__c' }]);
+  });
+  it('unescapes backslashed punctuation to literal chars', () => {
+    expect(parseInline('\\_\\_ literal underscores')).toEqual([{ text: '__ literal underscores' }]);
+    expect(parseInline('not \\*italic\\*')).toEqual([{ text: 'not *italic*' }]);
+  });
+  it('escaped delimiter does not open emphasis, real ones still do', () => {
+    // The escaped * is literal; the outer *...* is a real italic span around it.
+    expect(parseInline('*a\\*b*')).toEqual([{ text: 'a*b', italic: true }]);
+  });
+  it('leaves \\t literal (only punctuation is escapable per CommonMark)', () => {
+    expect(parseInline('name\\tdate')).toEqual([{ text: 'name\\tdate' }]);
+  });
   it('parses inline html tags', () => {
     expect(parseInline('<b>x</b>')).toEqual([{ text: 'x', bold: true }]);
     expect(parseInline('<u>y</u>')).toEqual([{ text: 'y', underline: true }]);
