@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 430" role="img" aria-label="gdocs-mcp — treat a Google Doc like a local file">
+  <style>
+    .bg { fill: #f5f7fa; }
+    .brand { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 24px; font-weight: 600; fill: #15181e; }
+    .brand-accent { fill: #235a9b; }
+    .kind { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; letter-spacing: 3px; fill: #79828f; }
+    .rule { stroke: #dbe1ea; }
+    .margin { stroke: #235a9b; }
+    .h { font-family: Georgia, "Times New Roman", serif; font-weight: 700; font-size: 74px; fill: #15181e; letter-spacing: -1px; }
+    .h-accent { fill: #235a9b; }
+    .sub { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 21px; fill: #4b5462; }
+    .cap { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 15px; fill: #79828f; font-style: italic; }
+    .lbl { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; letter-spacing: 2px; fill: #79828f; }
+    .pill-del-bg { fill: #f8e7e4; stroke: #c33a2e; }
+    .pill-ins-bg { fill: #e4f2ea; stroke: #1b7a46; }
+    .pill-del { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 17px; font-weight: 600; fill: #c33a2e; }
+    .pill-ins { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 17px; font-weight: 600; fill: #1b7a46; }
+    .arrow { fill: #79828f; font-size: 20px; font-family: system-ui, sans-serif; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #101318; }
+      .brand { fill: #e8ecf2; } .brand-accent { fill: #74a6e2; }
+      .kind, .cap, .lbl { fill: #6b7480; }
+      .rule { stroke: #2a313b; } .margin { stroke: #74a6e2; }
+      .h { fill: #e8ecf2; } .h-accent { fill: #74a6e2; }
+      .sub { fill: #9aa4b2; }
+      .pill-del-bg { fill: #2a1a18; stroke: #e07a70; }
+      .pill-ins-bg { fill: #16261e; stroke: #55b585; }
+      .pill-del { fill: #e07a70; } .pill-ins { fill: #55b585; }
+      .arrow { fill: #6b7480; }
+    }
+  </style>
+
+  <rect class="bg" x="0" y="0" width="1280" height="430"/>
+  <line class="margin" x1="72" y1="50" x2="72" y2="380" stroke-width="2" opacity="0.5"/>
+
+  <!-- masthead -->
+  <text class="brand" x="104" y="72">@dasasian/<tspan class="brand-accent">gdocs-mcp</tspan></text>
+  <text class="kind" x="1208" y="70" text-anchor="end">MODEL&#160;CONTEXT&#160;PROTOCOL&#160;SERVER</text>
+  <line class="rule" x1="104" y1="94" x2="1208" y2="94" stroke-width="1"/>
+
+  <!-- headline -->
+  <text class="h" x="102" y="204">Treat a Google Doc</text>
+  <text class="h" x="102" y="288">like a <tspan class="h-accent">local file</tspan>.</text>
+
+  <!-- subtitle -->
+  <text class="sub" x="104" y="338">Read, edit, style, and review a Google Doc by its content — not integer indices.</text>
+
+  <!-- tracked-changes motif: the signature capability -->
+  <text class="lbl" x="104" y="384">SUGGESTION</text>
+  <g transform="translate(222, 366)">
+    <rect class="pill-del-bg" x="0" y="0" width="118" height="30" rx="7" stroke-width="1.5"/>
+    <text class="pill-del" x="14" y="20">− net 30</text>
+    <text class="arrow" x="132" y="21">→</text>
+    <rect class="pill-ins-bg" x="160" y="0" width="118" height="30" rx="7" stroke-width="1.5"/>
+    <text class="pill-ins" x="174" y="20">+ net 15</text>
+  </g>
+  <text class="cap" x="104" y="416">Suggestions read as before → after diffs, and resolve safely — even overlapping ones.</text>
+</svg>

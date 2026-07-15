@@ -1,3 +1,15 @@
+<p align="center">
+  <img src="assets/hero.svg" alt="gdocs-mcp — treat a Google Doc like a local file" width="900">
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-235a9b?style=flat-square"></a>
+  <a href="https://modelcontextprotocol.io"><img alt="Model Context Protocol server" src="https://img.shields.io/badge/MCP-server-235a9b?style=flat-square"></a>
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178c6?style=flat-square">
+  <img alt="Node 18+" src="https://img.shields.io/badge/node-18%2B-5fa04e?style=flat-square">
+  <img alt="Status: alpha" src="https://img.shields.io/badge/status-alpha-c89b3c?style=flat-square">
+</p>
+
 # @dasasian/gdocs-mcp
 
 An [MCP](https://modelcontextprotocol.io) server that lets an AI agent (like Claude Code) treat a **Google Doc like a local file** — read it, edit it by content, review and resolve **suggestions**, manage **comments**, and work across **tabs** and **multiple Google accounts**.
