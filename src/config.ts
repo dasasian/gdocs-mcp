@@ -1,27 +1,16 @@
 import path from 'node:path';
 import os from 'node:os';
-import fs from 'node:fs';
 
 // All persistent state lives under one config dir. Tokens are global (authorize
 // each account once); per-project default account comes from an env var.
 const DEFAULT_CONFIG_DIR = path.join(os.homedir(), '.config', 'gdocs-mcp');
-const LEGACY_CONFIG_DIR = path.join(os.homedir(), '.config', 'googledocs-mcp');
 
-// The config dir was renamed googledocs-mcp -> gdocs-mcp to match the package/repo.
-// One-time seamless migration: if only the legacy dir exists, move it (they're
-// siblings under ~/.config, so the rename is atomic) so existing tokens/secret
-// keep working. Falls back to the legacy dir if the move can't be done.
+// Pure: reads the override env var (if set), else the default path. No filesystem
+// mutation or I/O — safe to call at import time. (The one-time googledocs-mcp ->
+// gdocs-mcp rename migration has run everywhere it applies and was removed; a rare
+// un-migrated install just re-runs add-account.)
 function resolveConfigDir(): string {
-  if (process.env.GDOCS_MCP_CONFIG_DIR) return process.env.GDOCS_MCP_CONFIG_DIR;
-  if (!fs.existsSync(DEFAULT_CONFIG_DIR) && fs.existsSync(LEGACY_CONFIG_DIR)) {
-    try {
-      fs.renameSync(LEGACY_CONFIG_DIR, DEFAULT_CONFIG_DIR);
-      console.error(`[gdocs-mcp] migrated config dir ${LEGACY_CONFIG_DIR} -> ${DEFAULT_CONFIG_DIR}`);
-    } catch {
-      return LEGACY_CONFIG_DIR;
-    }
-  }
-  return DEFAULT_CONFIG_DIR;
+  return process.env.GDOCS_MCP_CONFIG_DIR ?? DEFAULT_CONFIG_DIR;
 }
 
 export const CONFIG_DIR = resolveConfigDir();
