@@ -6,7 +6,7 @@ import { listSuggestions, applySuggestion, applySuggestions } from './docs/sugge
 import { listComments, addComment, replyComment, resolveComment } from './drive/comments.js';
 import { readDoc } from './docs/read.js';
 import { editDoc } from './docs/edit.js';
-import { createDoc, overwriteDoc, renameDoc, moveDoc, listTabs, addTab, renameTab, deleteTab } from './docs/document.js';
+import { createDoc, overwriteDoc, renameDoc, moveDoc, listTabs, addTab, renameTab, deleteTab, resolveContentSource } from './docs/document.js';
 import { formatDoc } from './docs/format.js';
 import { inspectStyle } from './docs/inspect.js';
 import { insertImage, insertTable, insertRow, deleteRow, insertColumn, deleteColumn, setTableStyle } from './docs/objects.js';
@@ -379,18 +379,25 @@ export function createServer(): McpServer {
     {
       title: 'Create a new Google Doc',
       description:
-        'Create a new Google Doc with a title and optional initial content (rendered as markdown). Optionally place it in a Drive folder (by folder URL or id); otherwise it goes to My Drive root.',
+        'Create a new Google Doc with a title and optional initial content (rendered as markdown). Optionally place it in a Drive folder (by folder URL or id); otherwise it goes to My Drive root. For long documents, pass contentFile (a local path) instead of content so the server reads the body directly — retyping a long doc inline can silently drop or fuse text.',
       inputSchema: {
         title: z.string(),
         content: z.string().optional(),
+        contentFile: z
+          .string()
+          .optional()
+          .describe(
+            'path to a local markdown/text file to use as the body, read directly by the server — preferred for long documents so the body is passed through mechanically rather than retyped inline (which can silently drop text). Absolute, or relative to baseDir. Mutually exclusive with content.',
+          ),
         folder: z.string().optional().describe('Drive folder URL or id to create the doc in'),
         baseDir: z.string().optional().describe('absolute dir to resolve relative local image paths against (e.g. the markdown file’s folder)'),
         ...accountArg,
       },
     },
-    async ({ title, content, folder, baseDir, account }) => {
+    async ({ title, content, contentFile, folder, baseDir, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await createDoc(clients, title, content, { folder, baseDir }));
+      const src = await resolveContentSource({ content, contentFile, baseDir });
+      return json(await createDoc(clients, title, src.content, { folder, baseDir: src.baseDir }));
     },
   );
 
@@ -418,10 +425,16 @@ export function createServer(): McpServer {
     {
       title: 'Overwrite a doc (guarded)',
       description:
-        'Replace the entire body of a doc (or one tab) with markdown-rendered content. Refuses if comments/suggestions are present (would orphan them) unless force=true. Pass expectTitle (the doc’s title) — shown for confirmation and verified against the live doc before replacing. A direct edit, not a tracked suggestion.',
+        'Replace the entire body of a doc (or one tab) with markdown-rendered content. Refuses if comments/suggestions are present (would orphan them) unless force=true. Pass expectTitle (the doc’s title) — shown for confirmation and verified against the live doc before replacing. For long documents, pass contentFile instead of content so the server reads the body directly (retyping a long doc inline can silently drop text). A direct edit, not a tracked suggestion.',
       inputSchema: {
         documentId: z.string(),
-        content: z.string().describe('markdown content'),
+        content: z.string().optional().describe('markdown content (or use contentFile)'),
+        contentFile: z
+          .string()
+          .optional()
+          .describe(
+            'path to a local markdown/text file to use as the new body, read directly by the server — preferred for long documents so the body is passed through mechanically rather than retyped inline (which can silently drop text). Absolute, or relative to baseDir. Mutually exclusive with content.',
+          ),
         force: z.boolean().optional().describe('proceed even if comments/suggestions would be lost'),
         expectTitle: z.string().optional().describe('the doc’s title; verified before overwriting so a wrong id is refused'),
         baseDir: z.string().optional().describe('absolute dir to resolve relative local image paths against (e.g. the markdown file’s folder)'),
@@ -429,9 +442,11 @@ export function createServer(): McpServer {
         ...accountArg,
       },
     },
-    async ({ documentId, content, force, expectTitle, baseDir, tab, account }) => {
+    async ({ documentId, content, contentFile, force, expectTitle, baseDir, tab, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await overwriteDoc(clients, documentId, content, { force, tab, baseDir, expectTitle }));
+      const src = await resolveContentSource({ content, contentFile, baseDir });
+      if (src.content === undefined) throw new Error('Provide content or contentFile.');
+      return json(await overwriteDoc(clients, documentId, src.content, { force, tab, baseDir: src.baseDir, expectTitle }));
     },
   );
 

@@ -3,6 +3,7 @@ import type { GoogleClients } from '../google/clients.js';
 import { contentOf, resolveTabId, findTab } from './structure.js';
 import { parseSuggestions } from './suggestions.js';
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import nodePath from 'node:path';
 import { markdownToRequests } from './write.js';
 import { parseInline, segmentTextStyle } from './inline.js';
@@ -165,6 +166,26 @@ export function parseDriveId(input: string): string {
   const m = /\/(?:folders|d)\/([a-zA-Z0-9_-]+)/.exec(input);
   if (m) return m[1];
   return input.trim().replace(/[?#].*$/, '');
+}
+
+// Resolve the document body from either an inline `content` string or a
+// `contentFile` path read server-side. contentFile lets the caller pass a long
+// document through mechanically instead of retyping it inline — a step that can
+// silently drop/fuse text (#14). Exactly one of the two may be given. When
+// contentFile is used and baseDir is unset, baseDir defaults to the file's own
+// folder, so relative image paths inside that markdown still resolve.
+export async function resolveContentSource(args: {
+  content?: string;
+  contentFile?: string;
+  baseDir?: string;
+}): Promise<{ content: string | undefined; baseDir: string | undefined }> {
+  if (args.contentFile === undefined) return { content: args.content, baseDir: args.baseDir };
+  if (args.content !== undefined) throw new Error('Provide content or contentFile, not both.');
+  const abs = nodePath.isAbsolute(args.contentFile)
+    ? args.contentFile
+    : nodePath.resolve(args.baseDir ?? process.cwd(), args.contentFile);
+  const content = await readFile(abs, 'utf8');
+  return { content, baseDir: args.baseDir ?? nodePath.dirname(abs) };
 }
 
 export async function createDoc(
