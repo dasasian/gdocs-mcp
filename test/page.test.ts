@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../src/google/clients.js';
-import { setPageSetup } from '../src/docs/page.js';
+import { setPageSetup, getPageSetup } from '../src/docs/page.js';
 
 // A doc whose current page size is portrait A4-ish (595 x 842), one tab.
 function docWith(pageSize?: docs_v1.Schema$Size): docs_v1.Schema$Document {
@@ -66,5 +66,36 @@ describe('setPageSetup', () => {
     const r = await setPageSetup(clientsFor(docWith(), batchUpdate), 'd', {});
     expect(r.status).toBe('empty');
     expect(batchUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe('getPageSetup', () => {
+  function docWithFull(): docs_v1.Schema$Document {
+    return {
+      tabs: [{ documentTab: { documentStyle: {
+        marginTop: { magnitude: 72, unit: 'PT' },
+        marginBottom: { magnitude: 72, unit: 'PT' },
+        marginLeft: { magnitude: 90, unit: 'PT' },
+        marginRight: { magnitude: 90, unit: 'PT' },
+        pageSize: { width: { magnitude: 792, unit: 'PT' }, height: { magnitude: 612, unit: 'PT' } },
+      }, body: { content: [] } } }],
+    } as unknown as docs_v1.Schema$Document;
+  }
+
+  it('reads margins, size, orientation, and a matching preset name', async () => {
+    const info = await getPageSetup(clientsFor(docWithFull()), 'd');
+    expect(info.marginTop).toBe(72);
+    expect(info.marginLeft).toBe(90);
+    expect(info.pageWidth).toBe(792);
+    expect(info.pageHeight).toBe(612);
+    // 792x612 is Letter rotated -> landscape, preset "letter".
+    expect(info.orientation).toBe('landscape');
+    expect(info.pageSizeName).toBe('letter');
+  });
+
+  it('reports portrait and no preset for a custom size', async () => {
+    const info = await getPageSetup(clientsFor(docWith({ width: { magnitude: 500, unit: 'PT' }, height: { magnitude: 700, unit: 'PT' } })), 'd');
+    expect(info.orientation).toBe('portrait');
+    expect(info.pageSizeName).toBeUndefined();
   });
 });

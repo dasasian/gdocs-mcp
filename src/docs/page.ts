@@ -43,6 +43,51 @@ function docStyleOf(doc: docs_v1.Schema$Document, tabId?: string): docs_v1.Schem
   return doc.documentStyle ?? undefined;
 }
 
+export interface PageSetupInfo {
+  marginTop?: number;
+  marginBottom?: number;
+  marginLeft?: number;
+  marginRight?: number;
+  pageWidth?: number;
+  pageHeight?: number;
+  pageSizeName?: string; // a matching preset name, if the dimensions match one
+  orientation?: 'portrait' | 'landscape';
+}
+
+// Read the current page setup (margins/size/orientation) of a doc or tab — the
+// read counterpart to setPageSetup, for mirroring another document's layout.
+export async function getPageSetup(
+  clients: GoogleClients,
+  documentId: string,
+  opts: { tab?: string } = {},
+): Promise<PageSetupInfo> {
+  const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
+  const tabId = resolveTabId(res.data, opts.tab);
+  const ds = docStyleOf(res.data, tabId) ?? {};
+  const mag = (d: docs_v1.Schema$Dimension | undefined): number | undefined => d?.magnitude ?? undefined;
+
+  const info: PageSetupInfo = {
+    marginTop: mag(ds.marginTop),
+    marginBottom: mag(ds.marginBottom),
+    marginLeft: mag(ds.marginLeft),
+    marginRight: mag(ds.marginRight),
+    pageWidth: mag(ds.pageSize?.width),
+    pageHeight: mag(ds.pageSize?.height),
+  };
+  if (info.pageWidth !== undefined && info.pageHeight !== undefined) {
+    info.orientation = info.pageWidth > info.pageHeight ? 'landscape' : 'portrait';
+    const lo = Math.min(info.pageWidth, info.pageHeight);
+    const hi = Math.max(info.pageWidth, info.pageHeight);
+    for (const [name, [pw, ph]] of Object.entries(PAGE_PRESETS)) {
+      if (Math.abs(lo - Math.min(pw, ph)) < 1.5 && Math.abs(hi - Math.max(pw, ph)) < 1.5) {
+        info.pageSizeName = name;
+        break;
+      }
+    }
+  }
+  return info;
+}
+
 export async function setPageSetup(
   clients: GoogleClients,
   documentId: string,

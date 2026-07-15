@@ -8,7 +8,7 @@ import { readDoc } from './docs/read.js';
 import { editDoc } from './docs/edit.js';
 import { createDoc, overwriteDoc, renameDoc, moveDoc, listTabs, addTab, renameTab, deleteTab, resolveContentSource } from './docs/document.js';
 import { setStyle } from './docs/format.js';
-import { setPageSetup } from './docs/page.js';
+import { setPageSetup, getPageSetup } from './docs/page.js';
 import { getStyle } from './docs/inspect.js';
 import { insertImage, insertTable, insertRow, deleteRow, insertColumn, deleteColumn, setTableStyle } from './docs/objects.js';
 import { listPermissions, shareDoc, unshareDoc, setLinkAccess } from './drive/sharing.js';
@@ -166,6 +166,20 @@ export function createServer(): McpServer {
       const target = whole_document ? { whole: true as const } : { from: from!, to };
       const clients = await clientsForAccount(account);
       return json(await setStyle(clients, documentId, target, style, { tab }));
+    },
+  );
+
+  server.registerTool(
+    'get_page_setup',
+    {
+      title: 'Read document page setup',
+      description:
+        'Read a doc’s (or tab’s) page setup — margins, page size (in points, plus a preset name if it matches letter/legal/a4/tabloid), and orientation. The read counterpart to set_page_setup; use it to mirror another document’s layout onto a new doc.',
+      inputSchema: { documentId: z.string().describe('Google Doc id'), ...tabArg, ...accountArg },
+    },
+    async ({ documentId, tab, account }) => {
+      const clients = await clientsForAccount(account);
+      return json(await getPageSetup(clients, documentId, { tab }));
     },
   );
 
