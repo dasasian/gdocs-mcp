@@ -7,7 +7,7 @@ import { listComments, addComment, replyComment, resolveComment } from './drive/
 import { readDoc } from './docs/read.js';
 import { editDoc } from './docs/edit.js';
 import { createDoc, overwriteDoc, renameDoc, moveDoc, listTabs, addTab, renameTab, deleteTab, resolveContentSource } from './docs/document.js';
-import { formatDoc } from './docs/format.js';
+import { setStyle } from './docs/format.js';
 import { inspectStyle } from './docs/inspect.js';
 import { insertImage, insertTable, insertRow, deleteRow, insertColumn, deleteColumn, setTableStyle } from './docs/objects.js';
 import { listPermissions, shareDoc, unshareDoc, setLinkAccess } from './drive/sharing.js';
@@ -125,14 +125,16 @@ export function createServer(): McpServer {
   );
 
   server.registerTool(
-    'format_doc',
+    'set_style',
     {
-      title: 'Format text in a doc',
+      title: 'Style text in a doc',
       description:
-        'Apply styling to an existing unique text snippet in place (no content change): bold/italic/underline/strikethrough, color (hex), fontSize (pt), fontFamily, link, paragraph alignment, and paragraph spacing (spaceBefore/spaceAfter in pt, lineSpacing %). Use inspect_style first to read current spacing/fonts. NOTE: a direct style change, not a tracked suggestion.',
+        'Apply styling to existing text in place (no content change), the way you select text in Docs and apply formatting. Pick ONE target: `from` (+ optional `to`) to style a selection — from the start of the unique `from` snippet to the end of the unique `to` snippet (omit `to` to style just `from`); or `whole_document: true` to style the entire doc/tab (e.g. one font throughout, without per-paragraph calls). Styles: bold/italic/underline/strikethrough, color (hex), fontSize (pt), fontFamily, link, paragraph alignment, and paragraph spacing (spaceBefore/spaceAfter in pt, lineSpacing %). Use inspect_style first to read current spacing/fonts. NOTE: a direct style change, not a tracked suggestion.',
       inputSchema: {
         documentId: z.string().describe('Google Doc id'),
-        target_string: z.string().describe('exact text to style (quote a unique slice from read_doc)'),
+        from: z.string().optional().describe('start anchor: a unique text snippet to style from (quote a slice from read_doc). Required unless whole_document is set.'),
+        to: z.string().optional().describe('optional end anchor: a unique snippet; styles the whole span from the start of `from` to the end of `to` (a selection). Must appear after `from`.'),
+        whole_document: z.boolean().optional().describe('style the entire document (or tab) instead of a selection — e.g. to set one font throughout. Mutually exclusive with from/to.'),
         style: z
           .object({
             bold: z.boolean().optional(),
@@ -153,9 +155,16 @@ export function createServer(): McpServer {
         ...accountArg,
       },
     },
-    async ({ documentId, target_string, style, tab, account }) => {
+    async ({ documentId, from, to, whole_document, style, tab, account }) => {
+      if (whole_document && from !== undefined) {
+        throw new Error('Provide either whole_document or from/to, not both.');
+      }
+      if (!whole_document && from === undefined) {
+        throw new Error('Provide a `from` anchor (with optional `to`), or set whole_document.');
+      }
+      const target = whole_document ? { whole: true as const } : { from: from!, to };
       const clients = await clientsForAccount(account);
-      return json(await formatDoc(clients, documentId, target_string, style, { tab }));
+      return json(await setStyle(clients, documentId, target, style, { tab }));
     },
   );
 
@@ -164,7 +173,7 @@ export function createServer(): McpServer {
     {
       title: 'Inspect computed style at a text anchor',
       description:
-        'Read the effective (inherited-resolved) style at a unique text snippet — read_doc’s markdown can’t express these. Returns paragraph style (namedStyleType, alignment, spaceBefore/spaceAfter in pt, lineSpacing %, and whether spacing is inherited) and text style (bold/italic/underline/strikethrough, fontSize pt, fontFamily, color hex, link). Use it to diagnose things markdown hides — e.g. an unexpected gap between paragraphs is spacing (spaceAfter>0), not a blank line, and is fixed with format_doc’s spaceAfter, not edit_doc.',
+        'Read the effective (inherited-resolved) style at a unique text snippet — read_doc’s markdown can’t express these. Returns paragraph style (namedStyleType, alignment, spaceBefore/spaceAfter in pt, lineSpacing %, and whether spacing is inherited) and text style (bold/italic/underline/strikethrough, fontSize pt, fontFamily, color hex, link). Use it to diagnose things markdown hides — e.g. an unexpected gap between paragraphs is spacing (spaceAfter>0), not a blank line, and is fixed with set_style’s spaceAfter, not edit_doc.',
       inputSchema: {
         documentId: z.string(),
         target_string: z.string().describe('exact text to inspect (quote a unique slice from read_doc)'),

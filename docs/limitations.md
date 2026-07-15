@@ -10,7 +10,7 @@ Legend for "What gdocs-mcp does": **mitigated** = a tool works around it; **surf
 
 | Limitation | Why (API reason) | What gdocs-mcp does |
 |---|---|---|
-| **Cannot create suggestions.** No tool can *propose* a tracked change; every write is a direct (live-text) edit. | There is no API to write "in suggestion mode" — `batchUpdate` only makes direct edits. | **surfaced** — `edit_doc`/`format_doc`/`overwrite_doc`/`insert_table`/`insert_image` say so in their description, and `edit_doc`/`add_comment` return a `note`. `apply_suggestion` only *resolves* existing suggestions. |
+| **Cannot create suggestions.** No tool can *propose* a tracked change; every write is a direct (live-text) edit. | There is no API to write "in suggestion mode" — `batchUpdate` only makes direct edits. | **surfaced** — `edit_doc`/`set_style`/`overwrite_doc`/`insert_table`/`insert_image` say so in their description, and `edit_doc`/`add_comment` return a `note`. `apply_suggestion` only *resolves* existing suggestions. |
 | **No suggestion attribution** (author or timestamp). | `documents.get` returns only `suggestedInsertionIds`/`suggestedDeletionIds` — no author, no time. Drive Revisions don't represent pending suggestions; Drive Activity gives an actor but no `suggestionId` to link it to; a bare suggestion never appears in the Comments API. | **hard limit** — `list_suggestions` presents suggestions in **document order** (the natural review order), never by author or "latest". |
 | **Overlapping suggestions can genuinely conflict.** When one suggestion inserts text *inside* the range another suggestion deletes and both are accepted, the outcome is contradictory. | The tagged runs encode both intents; the API has no notion of "the right merge". | **surfaced** — `apply_suggestions` resolves it deterministically (keeps the insertion) and returns a `conflicts` array so you know it wasn't a clean merge. |
 | **Style-only suggestions can't be resolved by us.** A suggestion that only changes text style (no insert/delete) is refused. | Resolving a cluster works by delete+re-insert of the region; a style-only change carries no text to re-create, so it would be silently dropped. | **surfaced** — refused with a clear reason rather than corrupting the doc. |
@@ -33,7 +33,7 @@ Legend for "What gdocs-mcp does": **mitigated** = a tool works around it; **surf
 
 | Limitation | Why (API reason) | What gdocs-mcp does |
 |---|---|---|
-| **Markdown can't express computed style** — paragraph spacing, line spacing, font, size, color. | `read_doc` projects the doc to markdown, which only represents structure/content, not paragraph/run style. A "gap" between paragraphs may be *spacing*, not a blank line. | **mitigated** — `inspect_style` reads the effective (inherited-resolved) style at a text anchor; `format_doc` sets paragraph spacing, and text color/size/font/alignment. |
+| **Markdown can't express computed style** — paragraph spacing, line spacing, font, size, color. | `read_doc` projects the doc to markdown, which only represents structure/content, not paragraph/run style. A "gap" between paragraphs may be *spacing*, not a blank line. | **mitigated** — `inspect_style` reads the effective (inherited-resolved) style at a text anchor; `set_style` sets paragraph spacing, and text color/size/font/alignment. |
 
 ---
 

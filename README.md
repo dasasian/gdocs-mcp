@@ -82,7 +82,7 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 |---|---|
 | `read_doc` | Read as markdown + inline HTML. Modes: `clean` · `tracked` (`<ins>/<del>`) · `accepted` · `rejected` |
 | `edit_doc` | Replace a unique text snippet (string-anchored, markup-tolerant; new text supports inline markdown) |
-| `format_doc` | Style an existing snippet in place: bold/italic/underline/strikethrough, color, font size/family, link, alignment, paragraph spacing (before/after/line) |
+| `set_style` | Style existing text in place — like selecting in Docs and applying formatting: a `from`/`to` selection, a single `from` snippet, or the `whole_document`. bold/italic/underline/strikethrough, color, font size/family, link, alignment, paragraph spacing (before/after/line) |
 | `inspect_style` | Read the computed (inherited-resolved) style at a text anchor — paragraph spacing, alignment, fonts, colors that markdown can't show |
 | `overwrite_doc` | Replace a doc/tab body with markdown-rendered content — guarded against orphaning comments/suggestions |
 | `create_doc` / `rename_doc` / `move_doc` | Create (from markdown, optionally in a folder) / rename / move a doc to a folder |
@@ -111,7 +111,7 @@ These are **Google-API constraints, not bugs** — the highlights are below; the
 - **No suggestion attribution** (author/timestamp) — suggestions are listed in document order.
 - **Comments** created via the API aren't anchored to text, and Drive returns author *name* only (no email).
 - **Images are inline only** (no floating/x,y positioning), and Google downscales/re-encodes embedded images, so pulled copies aren't byte-identical.
-- **Markdown can't express computed style** (spacing, fonts, colors) or deep table styling — read it with `inspect_style`, set it with `format_doc`/`set_table_style`. Code blocks aren't rendered from markdown yet (roadmap).
+- **Markdown can't express computed style** (spacing, fonts, colors) or deep table styling — read it with `inspect_style`, set it with `set_style`/`set_table_style`. Code blocks aren't rendered from markdown yet (roadmap).
 
 See **[docs/limitations.md](docs/limitations.md)** for the full table, including how each is mitigated or surfaced.
 

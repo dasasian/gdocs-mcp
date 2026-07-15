@@ -10,7 +10,7 @@ import { rgbToHex } from './color.js';
 // "remove the gap between these paragraphs" had no way to see that the gap is
 // spacing, not a blank line. inspect_style resolves the *effective* style
 // (direct paragraph/run style layered over the inherited named style) so the
-// cause is diagnosable, and format_doc's spaceBefore/spaceAfter can then fix it.
+// cause is diagnosable, and set_style's spaceBefore/spaceAfter can then fix it.
 
 export interface ParagraphStyleInfo {
   namedStyleType?: string;
