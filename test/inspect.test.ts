@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../src/google/clients.js';
-import { inspectStyle } from '../src/docs/inspect.js';
+import { getStyle } from '../src/docs/inspect.js';
 
 // A one-paragraph tabbed doc with a NORMAL_TEXT named style, so we can assert
 // that inspect resolves effective style by layering direct over inherited.
@@ -61,9 +61,9 @@ function clientsFor(doc: docs_v1.Schema$Document): GoogleClients {
   };
 }
 
-describe('inspectStyle', () => {
+describe('getStyle', () => {
   it('resolves inherited spacing/fonts when nothing is set directly', async () => {
-    const r = await inspectStyle(clientsFor(docWith({}, {})), 'd', 'Hello');
+    const r = await getStyle(clientsFor(docWith({}, {})), 'd', 'Hello');
     expect(r.status).toBe('ok');
     expect(r.paragraph).toMatchObject({
       namedStyleType: 'NORMAL_TEXT',
@@ -77,13 +77,13 @@ describe('inspectStyle', () => {
   });
 
   it('reports direct spacing as not inherited', async () => {
-    const r = await inspectStyle(clientsFor(docWith({ spaceBelow: { magnitude: 18, unit: 'PT' } }, {})), 'd', 'Hello');
+    const r = await getStyle(clientsFor(docWith({ spaceBelow: { magnitude: 18, unit: 'PT' } }, {})), 'd', 'Hello');
     expect(r.paragraph?.spaceAfterPt).toBe(18);
     expect(r.paragraph?.spacingInherited).toBe(false);
   });
 
   it('lets a direct run style override the inherited one', async () => {
-    const r = await inspectStyle(
+    const r = await getStyle(
       clientsFor(docWith({}, { bold: true, fontSize: { magnitude: 20, unit: 'PT' }, foregroundColor: { color: { rgbColor: { red: 1, green: 0, blue: 0 } } } })),
       'd',
       'Hello',
@@ -92,11 +92,11 @@ describe('inspectStyle', () => {
   });
 
   it('reports not_found for a missing anchor', async () => {
-    expect((await inspectStyle(clientsFor(docWith({}, {})), 'd', 'nope')).status).toBe('not_found');
+    expect((await getStyle(clientsFor(docWith({}, {})), 'd', 'nope')).status).toBe('not_found');
   });
 
   it('reports ambiguous for a repeated anchor', async () => {
-    const r = await inspectStyle(clientsFor(docWith({}, {}, 'ab ab\n')), 'd', 'ab');
+    const r = await getStyle(clientsFor(docWith({}, {}, 'ab ab\n')), 'd', 'ab');
     expect(r.status).toBe('ambiguous');
   });
 });

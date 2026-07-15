@@ -2,14 +2,14 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { clientsForAccount } from './google/clients.js';
 import { listAccounts, findProjectConfig, findProjectConfigPath, setProjectConfig } from './auth/accounts.js';
-import { listSuggestions, applySuggestion, applySuggestions } from './docs/suggestions.js';
+import { listSuggestions, applySuggestions } from './docs/suggestions.js';
 import { listComments, addComment, replyComment, resolveComment } from './drive/comments.js';
 import { readDoc } from './docs/read.js';
 import { editDoc } from './docs/edit.js';
 import { createDoc, overwriteDoc, renameDoc, moveDoc, listTabs, addTab, renameTab, deleteTab, resolveContentSource } from './docs/document.js';
 import { setStyle } from './docs/format.js';
 import { setPageSetup } from './docs/page.js';
-import { inspectStyle } from './docs/inspect.js';
+import { getStyle } from './docs/inspect.js';
 import { insertImage, insertTable, insertRow, deleteRow, insertColumn, deleteColumn, setTableStyle } from './docs/objects.js';
 import { listPermissions, shareDoc, unshareDoc, setLinkAccess } from './drive/sharing.js';
 import { listFolder, searchDrive } from './drive/files.js';
@@ -199,21 +199,21 @@ export function createServer(): McpServer {
   );
 
   server.registerTool(
-    'inspect_style',
+    'get_style',
     {
-      title: 'Inspect computed style at a text anchor',
+      title: 'Read computed style at a text anchor',
       description:
-        'Read the effective (inherited-resolved) style at a unique text snippet — read_doc’s markdown can’t express these. Returns paragraph style (namedStyleType, alignment, spaceBefore/spaceAfter in pt, lineSpacing %, and whether spacing is inherited) and text style (bold/italic/underline/strikethrough, fontSize pt, fontFamily, color hex, link). Use it to diagnose things markdown hides — e.g. an unexpected gap between paragraphs is spacing (spaceAfter>0), not a blank line, and is fixed with set_style’s spaceAfter, not edit_doc.',
+        'Read the effective (inherited-resolved) style at a unique text snippet — read_doc’s markdown can’t express these; the read counterpart to set_style. Returns paragraph style (namedStyleType, alignment, spaceBefore/spaceAfter in pt, lineSpacing %, and whether spacing is inherited) and text style (bold/italic/underline/strikethrough, fontSize pt, fontFamily, color hex, link). Use it to diagnose things markdown hides — e.g. an unexpected gap between paragraphs is spacing (spaceAfter>0), not a blank line, and is fixed with set_style’s spaceAfter, not edit_doc.',
       inputSchema: {
         documentId: z.string(),
-        target_string: z.string().describe('exact text to inspect (quote a unique slice from read_doc)'),
+        target_string: z.string().describe('exact text to read the style of (quote a unique slice from read_doc)'),
         ...tabArg,
         ...accountArg,
       },
     },
     async ({ documentId, target_string, tab, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await inspectStyle(clients, documentId, target_string, { tab }));
+      return json(await getStyle(clients, documentId, target_string, { tab }));
     },
   );
 
@@ -298,39 +298,11 @@ export function createServer(): McpServer {
   );
 
   server.registerTool(
-    'apply_suggestion',
-    {
-      title: 'Accept or reject a suggestion',
-      description:
-        'Resolve a pending suggestion by id (from list_suggestions): accept keeps the proposed text, reject keeps the original. Cleanly removes the suggestion. ' +
-        'Always call list_suggestions first and copy its `title` and the suggestion\'s `preview` verbatim into documentTitle/expectedChange — this is what a human reviewing the tool call sees, and both are checked against the live document/suggestion before applying (status "wrong_doc" or "stale" on mismatch), so a stale id or an id from a different, similarly-titled document is rejected instead of silently resolved. ' +
-        'If the suggestion overlaps or adjoins others (a cluster), this returns status "cluster" with the members — resolve them together via apply_suggestions instead (resolving a cluster one-at-a-time corrupts neighbours).',
-      inputSchema: {
-        documentId: z.string().describe('Google Doc id'),
-        documentTitle: z.string().describe("The document's title, from list_suggestions' `title` field. Shown for confirmation only."),
-        suggestionId: z.string().describe('suggestion id from list_suggestions'),
-        expectedChange: z
-          .string()
-          .describe(
-            "The suggestion's `preview` string, copied exactly from list_suggestions. Shown for confirmation, and must match the live suggestion or the call is rejected.",
-          ),
-        decision: z.enum(['accept', 'reject']),
-        ...tabArg,
-        ...accountArg,
-      },
-    },
-    async ({ documentId, documentTitle, suggestionId, expectedChange, decision, tab, account }) => {
-      const clients = await clientsForAccount(account);
-      return json(await applySuggestion(clients, documentId, documentTitle, suggestionId, decision, expectedChange, tab));
-    },
-  );
-
-  server.registerTool(
     'apply_suggestions',
     {
-      title: 'Accept/reject multiple suggestions atomically',
+      title: 'Accept/reject one or more suggestions',
       description:
-        'Resolve several suggestions in ONE atomic update — required for suggestions that overlap or adjoin each other (a "cluster"), which cannot be resolved one at a time without corrupting neighbours. You MUST include every suggestion in any cluster you touch; a partially-resolved cluster is refused (status "incomplete"). documentTitle is checked against the live document first (status "wrong_doc" on mismatch, e.g. an id from a different, similarly-titled document). Copy each suggestion\'s `preview` from list_suggestions into its `expectedChange` (verified before applying). If the result includes a `conflicts` array, two suggestions genuinely conflicted (one inserts text inside another\'s deletion, both accepted) — it was auto-resolved by keeping the insertion; surface this to the user as NOT a clean merge.',
+        'Resolve one or more pending suggestions (from list_suggestions) in ONE atomic update: accept keeps the proposed text, reject keeps the original. Pass one resolution to resolve a single suggestion, or several at once — required for suggestions that overlap or adjoin each other (a "cluster"), which cannot be resolved one at a time without corrupting neighbours. You MUST include every suggestion in any cluster you touch; a partially-resolved cluster is refused (status "incomplete"). documentTitle is checked against the live document first (status "wrong_doc" on mismatch, e.g. an id from a different, similarly-titled document). Copy each suggestion\'s `preview` from list_suggestions into its `expectedChange` (verified before applying). If the result includes a `conflicts` array, two suggestions genuinely conflicted (one inserts text inside another\'s deletion, both accepted) — it was auto-resolved by keeping the insertion; surface this to the user as NOT a clean merge.',
       inputSchema: {
         documentId: z.string().describe('Google Doc id'),
         documentTitle: z.string().describe("The document's title, from list_suggestions. Shown for confirmation only."),
@@ -370,26 +342,20 @@ export function createServer(): McpServer {
   server.registerTool(
     'add_comment',
     {
-      title: 'Add a comment',
-      description: 'Add a comment to a Google Doc. Note: API-created comments are not anchored to specific text.',
-      inputSchema: { documentId: z.string(), content: z.string(), ...accountArg },
+      title: 'Add a comment or reply',
+      description:
+        'Add a comment to a Google Doc, or reply to an existing comment thread by passing replyTo (a comment id from list_comments). A new comment (no replyTo) is not anchored to specific text — the Docs/Drive API cannot anchor programmatically-created comments.',
+      inputSchema: {
+        documentId: z.string(),
+        content: z.string(),
+        replyTo: z.string().optional().describe('a comment id (from list_comments) to reply to; omit to start a new top-level comment'),
+        ...accountArg,
+      },
     },
-    async ({ documentId, content, account }) => {
+    async ({ documentId, content, replyTo, account }) => {
       const clients = await clientsForAccount(account);
+      if (replyTo !== undefined) return json(await replyComment(clients, documentId, replyTo, content));
       return json({ ...(await addComment(clients, documentId, content)), note: UNANCHORED_COMMENT_NOTE });
-    },
-  );
-
-  server.registerTool(
-    'reply_comment',
-    {
-      title: 'Reply to a comment',
-      description: 'Reply to a comment thread by comment id.',
-      inputSchema: { documentId: z.string(), commentId: z.string(), content: z.string(), ...accountArg },
-    },
-    async ({ documentId, commentId, content, account }) => {
-      const clients = await clientsForAccount(account);
-      return json(await replyComment(clients, documentId, commentId, content));
     },
   );
 
@@ -441,21 +407,30 @@ export function createServer(): McpServer {
   );
 
   server.registerTool(
-    'move_doc',
+    'update_doc',
     {
-      title: 'Move a doc to a folder',
+      title: 'Update a doc’s name and/or folder',
       description:
-        'Move an existing Google Doc into a Drive folder (by folder URL or id). Pass expectTitle (the doc’s title) — shown for confirmation and verified against the live doc before moving.',
+        'Update a Google Doc’s metadata: rename it (name) and/or move it to a Drive folder (folder, by URL or id). Provide name, folder, or both. When moving, pass expectTitle (the doc’s title) — shown for confirmation and verified against the live doc before moving; if it doesn’t match, nothing is changed. (Content edits use edit_doc/overwrite_doc, not this.)',
       inputSchema: {
         documentId: z.string(),
-        folder: z.string().describe('Drive folder URL or id'),
-        expectTitle: z.string().optional().describe('the doc’s title; verified before moving so a wrong id is refused'),
+        name: z.string().optional().describe('new name/title for the doc'),
+        folder: z.string().optional().describe('Drive folder URL or id to move the doc into'),
+        expectTitle: z.string().optional().describe('the doc’s current title; verified before moving so a wrong id is refused'),
         ...accountArg,
       },
     },
-    async ({ documentId, folder, expectTitle, account }) => {
+    async ({ documentId, name, folder, expectTitle, account }) => {
+      if (name === undefined && folder === undefined) throw new Error('Provide name and/or folder to update.');
       const clients = await clientsForAccount(account);
-      return json(await moveDoc(clients, documentId, folder, { expectTitle }));
+      const result: Record<string, unknown> = {};
+      if (folder !== undefined) {
+        const moved = await moveDoc(clients, documentId, folder, { expectTitle });
+        result.move = moved;
+        if (moved.status !== 'ok') return json(result); // mismatch — don't rename either
+      }
+      if (name !== undefined) result.rename = await renameDoc(clients, documentId, name);
+      return json(result);
     },
   );
 
@@ -489,70 +464,39 @@ export function createServer(): McpServer {
     },
   );
 
-  server.registerTool(
-    'rename_doc',
-    {
-      title: 'Rename a doc',
-      description: 'Rename a Google Doc (changes its Drive file name / title).',
-      inputSchema: { documentId: z.string(), name: z.string(), ...accountArg },
-    },
-    async ({ documentId, name, account }) => {
-      const clients = await clientsForAccount(account);
-      return json(await renameDoc(clients, documentId, name));
-    },
-  );
-
   const cellArg = { cell: z.string().describe('text identifying a cell in the target table') };
 
   server.registerTool(
-    'insert_row',
+    'edit_table',
     {
-      title: 'Insert a table row',
-      description: 'Insert a row into the table containing the given cell text. Preserves the rest of the table.',
-      inputSchema: { documentId: z.string(), ...cellArg, below: z.boolean().optional().describe('insert below (default) vs above'), ...tabArg, ...accountArg },
+      title: 'Insert or delete a table row/column',
+      description:
+        'Structurally edit the table containing the given cell text: insert or delete a row or column. `op` picks the operation; `side` picks which side an insert goes on (for rows: after=below (default)/before=above; for columns: after=right (default)/before=left) and is ignored for deletes. Deletes remove the row/column that contains `cell`.',
+      inputSchema: {
+        documentId: z.string(),
+        ...cellArg,
+        op: z.enum(['insert_row', 'delete_row', 'insert_column', 'delete_column']).describe('the structural edit to perform'),
+        side: z
+          .enum(['before', 'after'])
+          .optional()
+          .describe('for inserts: which side of `cell` to add on — rows after=below (default)/before=above; columns after=right (default)/before=left. Ignored for deletes.'),
+        ...tabArg,
+        ...accountArg,
+      },
     },
-    async ({ documentId, cell, below, tab, account }) => {
+    async ({ documentId, cell, op, side, tab, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await insertRow(clients, documentId, cell, { below, tab }));
-    },
-  );
-
-  server.registerTool(
-    'delete_row',
-    {
-      title: 'Delete a table row',
-      description: 'Delete the row containing the given cell text.',
-      inputSchema: { documentId: z.string(), ...cellArg, ...tabArg, ...accountArg },
-    },
-    async ({ documentId, cell, tab, account }) => {
-      const clients = await clientsForAccount(account);
-      return json(await deleteRow(clients, documentId, cell, { tab }));
-    },
-  );
-
-  server.registerTool(
-    'insert_column',
-    {
-      title: 'Insert a table column',
-      description: 'Insert a column into the table containing the given cell text.',
-      inputSchema: { documentId: z.string(), ...cellArg, right: z.boolean().optional().describe('insert to the right (default) vs left'), ...tabArg, ...accountArg },
-    },
-    async ({ documentId, cell, right, tab, account }) => {
-      const clients = await clientsForAccount(account);
-      return json(await insertColumn(clients, documentId, cell, { right, tab }));
-    },
-  );
-
-  server.registerTool(
-    'delete_column',
-    {
-      title: 'Delete a table column',
-      description: 'Delete the column containing the given cell text.',
-      inputSchema: { documentId: z.string(), ...cellArg, ...tabArg, ...accountArg },
-    },
-    async ({ documentId, cell, tab, account }) => {
-      const clients = await clientsForAccount(account);
-      return json(await deleteColumn(clients, documentId, cell, { tab }));
+      const after = side !== 'before'; // default 'after'
+      switch (op) {
+        case 'insert_row':
+          return json(await insertRow(clients, documentId, cell, { below: after, tab }));
+        case 'delete_row':
+          return json(await deleteRow(clients, documentId, cell, { tab }));
+        case 'insert_column':
+          return json(await insertColumn(clients, documentId, cell, { right: after, tab }));
+        case 'delete_column':
+          return json(await deleteColumn(clients, documentId, cell, { tab }));
+      }
     },
   );
 
@@ -639,19 +583,24 @@ export function createServer(): McpServer {
   server.registerTool(
     'share_doc',
     {
-      title: 'Share a doc with someone',
-      description: 'Grant a person access to a Google Doc by email, as reader/commenter/writer. Optionally send a notification email.',
+      title: 'Share a doc (person or link)',
+      description:
+        'Grant access to a Google Doc. With `email`, share with that person as reader/commenter/writer (optionally sending a notification). Without `email`, set anyone-with-link access to that role, or role "none" to disable link sharing. (To revoke a specific person’s access, use unshare_doc.)',
       inputSchema: {
         documentId: z.string(),
-        email: z.string().describe('email to share with'),
-        role: z.enum(['reader', 'commenter', 'writer']).optional().describe('default writer'),
-        notify: z.boolean().optional().describe('send notification email (default true)'),
+        email: z.string().optional().describe('person to share with; omit to set anyone-with-link access instead'),
+        role: z.enum(['reader', 'commenter', 'writer', 'none']).optional().describe('access level; default writer. "none" (link only) disables link sharing.'),
+        notify: z.boolean().optional().describe('when sharing with a person, send a notification email (default true)'),
         ...accountArg,
       },
     },
     async ({ documentId, email, role, notify, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await shareDoc(clients, documentId, email, role ?? 'writer', notify ?? true));
+      if (email !== undefined) {
+        if (role === 'none') throw new Error('role "none" is only for link access (omit email); use unshare_doc to revoke a person.');
+        return json(await shareDoc(clients, documentId, email, role ?? 'writer', notify ?? true));
+      }
+      return json(await setLinkAccess(clients, documentId, role ?? 'reader'));
     },
   );
 
@@ -665,23 +614,6 @@ export function createServer(): McpServer {
     async ({ documentId, email, account }) => {
       const clients = await clientsForAccount(account);
       return json(await unshareDoc(clients, documentId, email));
-    },
-  );
-
-  server.registerTool(
-    'set_link_access',
-    {
-      title: 'Set anyone-with-link access',
-      description: 'Set link sharing for a Google Doc: reader/commenter/writer for anyone with the link, or none to disable.',
-      inputSchema: {
-        documentId: z.string(),
-        role: z.enum(['reader', 'commenter', 'writer', 'none']),
-        ...accountArg,
-      },
-    },
-    async ({ documentId, role, account }) => {
-      const clients = await clientsForAccount(account);
-      return json(await setLinkAccess(clients, documentId, role));
     },
   );
 

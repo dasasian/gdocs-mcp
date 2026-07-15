@@ -80,7 +80,7 @@ const paragraphText = (p: docs_v1.Schema$Paragraph): string =>
     .join('')
     .trim();
 
-export async function inspectStyle(
+export async function getStyle(
   clients: GoogleClients,
   documentId: string,
   targetString: string,
