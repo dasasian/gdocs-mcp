@@ -1,0 +1,109 @@
+import type { docs_v1 } from 'googleapis';
+import type { GoogleClients } from '../google/clients.js';
+import { resolveTabId, findTab } from './structure.js';
+
+// Document-level page setup via updateDocumentStyle: margins, page size, orientation.
+// All dimensions are points (72 pt = 1 inch), consistent with set_style's pt units.
+// Google Docs has no "orientation" field — landscape/portrait is just the ordering
+// of pageSize width/height, so we resolve a size then order it.
+
+// Named page sizes in points (portrait: width x height).
+const PAGE_PRESETS: Record<string, [number, number]> = {
+  letter: [612, 792],
+  legal: [612, 1008],
+  a4: [595.28, 841.89],
+  tabloid: [792, 1224],
+};
+
+export type PageSize = 'letter' | 'legal' | 'a4' | 'tabloid' | { width: number; height: number };
+
+export interface PageSetup {
+  marginTop?: number;
+  marginBottom?: number;
+  marginLeft?: number;
+  marginRight?: number;
+  pageSize?: PageSize;
+  orientation?: 'portrait' | 'landscape';
+}
+
+export interface PageSetupResult {
+  status: 'ok' | 'empty';
+  applied?: string[];
+  message?: string;
+}
+
+const pt = (magnitude: number): docs_v1.Schema$Dimension => ({ magnitude, unit: 'PT' });
+
+// The documentStyle for the resolved tab (or the legacy top-level body).
+function docStyleOf(doc: docs_v1.Schema$Document, tabId?: string): docs_v1.Schema$DocumentStyle | undefined {
+  if (doc.tabs && doc.tabs.length) {
+    const tab = tabId ? findTab(doc, tabId) : doc.tabs[0];
+    return tab?.documentTab?.documentStyle ?? undefined;
+  }
+  return doc.documentStyle ?? undefined;
+}
+
+export async function setPageSetup(
+  clients: GoogleClients,
+  documentId: string,
+  setup: PageSetup,
+  opts: { tab?: string } = {},
+): Promise<PageSetupResult> {
+  const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
+  const revisionId = res.data.revisionId ?? undefined;
+  const tabId = resolveTabId(res.data, opts.tab);
+
+  const documentStyle: docs_v1.Schema$DocumentStyle = {};
+  const fields: string[] = [];
+  const applied: string[] = [];
+
+  const margins: [keyof PageSetup, keyof docs_v1.Schema$DocumentStyle][] = [
+    ['marginTop', 'marginTop'],
+    ['marginBottom', 'marginBottom'],
+    ['marginLeft', 'marginLeft'],
+    ['marginRight', 'marginRight'],
+  ];
+  for (const [key, field] of margins) {
+    const v = setup[key] as number | undefined;
+    if (v !== undefined) {
+      (documentStyle as Record<string, unknown>)[field] = pt(v);
+      fields.push(field);
+      applied.push(field);
+    }
+  }
+
+  if (setup.pageSize !== undefined || setup.orientation !== undefined) {
+    let w: number;
+    let h: number;
+    if (setup.pageSize && typeof setup.pageSize === 'object') {
+      ({ width: w, height: h } = setup.pageSize);
+    } else if (typeof setup.pageSize === 'string') {
+      [w, h] = PAGE_PRESETS[setup.pageSize];
+    } else {
+      // orientation-only: start from the current page size (fallback US Letter).
+      const cur = docStyleOf(res.data, tabId)?.pageSize;
+      w = cur?.width?.magnitude ?? 612;
+      h = cur?.height?.magnitude ?? 792;
+    }
+    // Orientation is width/height ordering: portrait w<=h, landscape w>=h.
+    if (setup.orientation === 'landscape' && w < h) [w, h] = [h, w];
+    if (setup.orientation === 'portrait' && w > h) [w, h] = [h, w];
+    documentStyle.pageSize = { width: pt(w), height: pt(h) };
+    fields.push('pageSize');
+    if (setup.pageSize !== undefined) applied.push('pageSize');
+    if (setup.orientation !== undefined) applied.push('orientation');
+  }
+
+  if (!fields.length) return { status: 'empty', message: 'no page-setup fields provided' };
+
+  // tabId on updateDocumentStyle is valid in the live API but lags in googleapis@144 types.
+  const updateDocumentStyle = { documentStyle, fields: fields.join(','), ...(tabId ? { tabId } : {}) };
+  await clients.docs.documents.batchUpdate({
+    documentId,
+    requestBody: {
+      requests: [{ updateDocumentStyle } as docs_v1.Schema$Request],
+      writeControl: revisionId ? { requiredRevisionId: revisionId } : undefined,
+    },
+  });
+  return { status: 'ok', applied };
+}

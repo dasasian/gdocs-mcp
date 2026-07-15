@@ -8,6 +8,7 @@ import { readDoc } from './docs/read.js';
 import { editDoc } from './docs/edit.js';
 import { createDoc, overwriteDoc, renameDoc, moveDoc, listTabs, addTab, renameTab, deleteTab, resolveContentSource } from './docs/document.js';
 import { setStyle } from './docs/format.js';
+import { setPageSetup } from './docs/page.js';
 import { inspectStyle } from './docs/inspect.js';
 import { insertImage, insertTable, insertRow, deleteRow, insertColumn, deleteColumn, setTableStyle } from './docs/objects.js';
 import { listPermissions, shareDoc, unshareDoc, setLinkAccess } from './drive/sharing.js';
@@ -165,6 +166,35 @@ export function createServer(): McpServer {
       const target = whole_document ? { whole: true as const } : { from: from!, to };
       const clients = await clientsForAccount(account);
       return json(await setStyle(clients, documentId, target, style, { tab }));
+    },
+  );
+
+  server.registerTool(
+    'set_page_setup',
+    {
+      title: 'Set document page setup',
+      description:
+        'Set document-level page setup for a doc (or tab): page margins, page size, and orientation — the File > Page setup controls, which set_style can’t reach. Margins and explicit page sizes are in points (72 pt = 1 inch). pageSize is a preset (letter/legal/a4/tabloid) or an explicit {width,height} in points; orientation (portrait/landscape) swaps the page dimensions. A direct change, not a tracked suggestion.',
+      inputSchema: {
+        documentId: z.string().describe('Google Doc id'),
+        marginTop: z.number().optional().describe('top margin in points (72 = 1 inch)'),
+        marginBottom: z.number().optional().describe('bottom margin in points'),
+        marginLeft: z.number().optional().describe('left margin in points'),
+        marginRight: z.number().optional().describe('right margin in points'),
+        pageSize: z
+          .union([z.enum(['letter', 'legal', 'a4', 'tabloid']), z.object({ width: z.number(), height: z.number() })])
+          .optional()
+          .describe('a preset name, or {width,height} in points'),
+        orientation: z.enum(['portrait', 'landscape']).optional().describe('portrait or landscape (orders the page width/height)'),
+        ...tabArg,
+        ...accountArg,
+      },
+    },
+    async ({ documentId, marginTop, marginBottom, marginLeft, marginRight, pageSize, orientation, tab, account }) => {
+      const clients = await clientsForAccount(account);
+      return json(
+        await setPageSetup(clients, documentId, { marginTop, marginBottom, marginLeft, marginRight, pageSize, orientation }, { tab }),
+      );
     },
   );
 
