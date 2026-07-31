@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/hero.svg" alt="gdocs-mcp — treat a Google Doc like a local file" width="900">
+  <img src="https://raw.githubusercontent.com/dasasian/gdocs-mcp/main/assets/hero.svg" alt="gdocs-mcp — treat a Google Doc like a local file" width="900">
 </p>
 
 <p align="center">
