@@ -1,0 +1,37 @@
+# Smithery configuration — https://smithery.ai/docs/build/project-config
+#
+# gdocs-mcp is a LOCAL stdio server: it authenticates with your own Google
+# account through a one-time OAuth setup on your machine (a client_secret.json
+# under ~/.config/gdocs-mcp plus `gdocs-mcp add-account`). It therefore runs
+# locally rather than on hosted infrastructure — see the README "Setup" section
+# before first use.
+startCommand:
+  type: stdio
+  # Optional configuration surfaced by Smithery's install UI. Both are optional;
+  # with neither set, the server resolves the account per-project (.gdocs-mcp.json)
+  # or falls back to the first authorized account, and uses the default config dir.
+  configSchema:
+    type: object
+    additionalProperties: false
+    properties:
+      defaultAccount:
+        type: string
+        title: Default account
+        description: >-
+          Email of the Google account to use by default (sets GDOCS_DEFAULT_ACCOUNT).
+      configDir:
+        type: string
+        title: Config directory
+        description: >-
+          Override the directory holding client_secret.json and tokens
+          (sets GDOCS_MCP_CONFIG_DIR; defaults to ~/.config/gdocs-mcp).
+    required: []
+  # Returns the command Smithery runs. Only sets an env var when the user provided
+  # a value, so unset options fall back to the server's own defaults.
+  commandFunction: |
+    (config) => {
+      const env = {};
+      if (config && config.defaultAccount) env.GDOCS_DEFAULT_ACCOUNT = config.defaultAccount;
+      if (config && config.configDir) env.GDOCS_MCP_CONFIG_DIR = config.configDir;
+      return { command: 'npx', args: ['-y', '@dasasian/gdocs-mcp'], env };
+    }
