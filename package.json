@@ -1,6 +1,7 @@
 {
   "name": "@dasasian/gdocs-mcp",
-  "version": "0.1.0",
+  "mcpName": "io.github.dasasian/gdocs-mcp",
+  "version": "0.1.1",
   "description": "An MCP server that lets an AI agent treat a Google Doc like a local file — read, edit, review suggestions, and manage comments, across multiple Google accounts.",
   "license": "MIT",
   "author": "Dasasian",

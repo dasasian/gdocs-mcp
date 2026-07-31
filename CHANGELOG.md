@@ -8,6 +8,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _Nothing yet._
 
+## [0.1.1] — 2026-07-31
+
+### Added
+- **MCP Registry metadata** — a `server.json` (registry schema) plus an `mcpName` field in `package.json`, so the server can be published to the official [MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.dasasian/gdocs-mcp`. No functional or API changes.
+
 ## [0.1.0] — 2026-07-31
 
 First public release — a Model Context Protocol server that lets an AI agent treat a
@@ -54,5 +59,6 @@ See [docs/limitations.md](docs/limitations.md). Highlights: suggestion attributi
 by Drive; images are inline-only and don't read back to a stable URL; embedded code
 blocks aren't rendered yet (Tier-2 roadmap).
 
-[Unreleased]: https://github.com/dasasian/gdocs-mcp/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/dasasian/gdocs-mcp/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/dasasian/gdocs-mcp/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/dasasian/gdocs-mcp/releases/tag/v0.1.0
