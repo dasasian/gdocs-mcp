@@ -3,7 +3,28 @@
   "version": "0.1.0",
   "description": "An MCP server that lets an AI agent treat a Google Doc like a local file — read, edit, review suggestions, and manage comments, across multiple Google accounts.",
   "license": "MIT",
+  "author": "Dasasian",
   "type": "module",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "google-docs",
+    "google-drive",
+    "claude",
+    "claude-code",
+    "ai-agent",
+    "llm",
+    "documents",
+    "markdown"
+  ],
+  "homepage": "https://github.com/dasasian/gdocs-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dasasian/gdocs-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dasasian/gdocs-mcp/issues"
+  },
   "bin": {
     "gdocs-mcp": "dist/index.js"
   },
@@ -13,13 +34,17 @@
   "engines": {
     "node": ">=18"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
