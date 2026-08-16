@@ -1,6 +1,6 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
-import { resolveTabId, documentStyleOf, writeControlFor } from './structure.js';
+import { resolveTabId, documentStyleOf, writeControlFor, PAGE_SETUP_FIELDS } from './structure.js';
 
 // Document-level page setup via updateDocumentStyle: margins, page size, orientation.
 // All dimensions are points (72 pt = 1 inch), consistent with set_style's pt units.
@@ -34,6 +34,20 @@ export interface PageSetupResult {
 
 const pt = (magnitude: number): docs_v1.Schema$Dimension => ({ magnitude, unit: 'PT' });
 
+// Page setup only reads documentStyle + tab identity, so ask for just those —
+// on a content-heavy doc that's ~700 bytes instead of the whole body. The mask
+// has to be tabs-only (the API rejects mixing legacy top-level fields with tabs
+// content), so if a doc comes back with no tabs at all it's the legacy shape and
+// we re-read it unmasked. Modern docs never take that path.
+async function getForPageSetup(
+  clients: GoogleClients,
+  documentId: string,
+): Promise<docs_v1.Schema$Document> {
+  const masked = await clients.docs.documents.get({ documentId, includeTabsContent: true, fields: PAGE_SETUP_FIELDS });
+  if (masked.data.tabs?.length) return masked.data;
+  return (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
+}
+
 export interface PageSetupInfo {
   marginTop?: number;
   marginBottom?: number;
@@ -52,9 +66,9 @@ export async function getPageSetup(
   documentId: string,
   opts: { tab?: string } = {},
 ): Promise<PageSetupInfo> {
-  const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
-  const tabId = resolveTabId(res.data, opts.tab);
-  const ds = documentStyleOf(res.data, tabId);
+  const doc = await getForPageSetup(clients, documentId);
+  const tabId = resolveTabId(doc, opts.tab);
+  const ds = documentStyleOf(doc, tabId);
   const mag = (d: docs_v1.Schema$Dimension | undefined): number | undefined => d?.magnitude ?? undefined;
 
   const info: PageSetupInfo = {
@@ -85,9 +99,9 @@ export async function setPageSetup(
   setup: PageSetup,
   opts: { tab?: string } = {},
 ): Promise<PageSetupResult> {
-  const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
-  const revisionId = res.data.revisionId ?? undefined;
-  const tabId = resolveTabId(res.data, opts.tab);
+  const doc = await getForPageSetup(clients, documentId);
+  const revisionId = doc.revisionId ?? undefined;
+  const tabId = resolveTabId(doc, opts.tab);
 
   const documentStyle: docs_v1.Schema$DocumentStyle = {};
   const fields: string[] = [];
@@ -117,7 +131,7 @@ export async function setPageSetup(
       [w, h] = PAGE_PRESETS[setup.pageSize];
     } else {
       // orientation-only: start from the current page size (fallback US Letter).
-      const cur = documentStyleOf(res.data, tabId).pageSize;
+      const cur = documentStyleOf(doc, tabId).pageSize;
       w = cur?.width?.magnitude ?? 612;
       h = cur?.height?.magnitude ?? 792;
     }

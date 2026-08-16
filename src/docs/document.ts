@@ -1,6 +1,6 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
-import { contentOf, resolveTabId, findTab, flattenTabs, tableInsertedAt, writeControlFor, type SegmentKind, type SegmentPage } from './structure.js';
+import { contentOf, resolveTabId, findTab, flattenTabs, tableInsertedAt, writeControlFor, TAB_METADATA_FIELDS, type SegmentKind, type SegmentPage } from './structure.js';
 import { resolveSegmentTarget } from './segments.js';
 import { ALIGN_BY_CSS } from './markdown-spec.js';
 import { parseSuggestions } from './suggestions.js';
@@ -457,8 +457,9 @@ export async function deleteTab(
   opts: { expectTitle?: string } = {},
 ): Promise<{ status: 'ok' | 'not_found' | 'mismatch'; deleted?: string; title?: string; message?: string }> {
   // Verify the tab's live title before deleting — tabId is opaque, so a stale/wrong
-  // id would otherwise silently delete the wrong tab (#10).
-  const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
+  // id would otherwise silently delete the wrong tab (#10). Tab metadata only:
+  // this never looks at body content.
+  const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true, fields: TAB_METADATA_FIELDS })).data;
   const tab = findTab(doc, tabId);
   if (!tab) return { status: 'not_found', message: `tab "${tabId}" not found` };
   const title = tab.tabProperties?.title ?? '';
@@ -484,7 +485,7 @@ export interface TabInfo {
 
 // Read tab structure (flattened, depth-first). Tabs are read-only via the API.
 export async function listTabs(clients: GoogleClients, documentId: string): Promise<TabInfo[]> {
-  const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
+  const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true, fields: TAB_METADATA_FIELDS })).data;
   return flattenTabs(doc).flatMap((t) => {
     const p = t.tabProperties;
     if (!p?.tabId) return [];
