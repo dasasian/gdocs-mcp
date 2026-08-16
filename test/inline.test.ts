@@ -76,3 +76,76 @@ describe('segmentTextStyle', () => {
     expect(segmentTextStyle({ text: 'x', link: 'u' }).textStyle.link?.url).toBe('u');
   });
 });
+
+// ---- #31: nested inline styles ---------------------------------------------
+//
+// The reader emits styles in layers (`<u>**AAA**</u>` for a bold+underlined
+// run). A one-level parser turned the inner markup into literal characters, so
+// read -> write lost the inner style AND baked its markers into the text; each
+// cycle added another layer (`<u>****AAA****</u>`).
+
+describe('parseInline — nested containers (#31)', () => {
+  it('keeps both styles for markup inside an HTML container', () => {
+    expect(parseInline('<u>**bold underlined**</u>')).toEqual([
+      { text: 'bold underlined', underline: true, bold: true },
+    ]);
+  });
+
+  it('keeps both styles for an HTML container inside markdown', () => {
+    expect(parseInline('**<u>bold underlined</u>**')).toEqual([
+      { text: 'bold underlined', bold: true, underline: true },
+    ]);
+  });
+
+  it('keeps a link nested inside bold — the shape read_doc emits', () => {
+    expect(parseInline('**[bold link](http://x)**')).toEqual([
+      { text: 'bold link', bold: true, link: 'http://x' },
+    ]);
+  });
+
+  it('carries a span’s styles onto nested markup', () => {
+    expect(parseInline('<span style="color:red">**b**</span>')).toEqual([
+      { text: 'b', color: 'red', bold: true },
+    ]);
+  });
+
+  it('nests more than two deep', () => {
+    expect(parseInline('<u><span style="color:red">**deep**</span></u>')).toEqual([
+      { text: 'deep', underline: true, color: 'red', bold: true },
+    ]);
+    expect(parseInline('<u>~~*CCC*~~</u>')).toEqual([
+      { text: 'CCC', underline: true, strikethrough: true, italic: true },
+    ]);
+  });
+
+  it('lets the inner style win when both set the same property', () => {
+    expect(parseInline('[<a href="http://inner">x</a>](http://outer)')).toEqual([
+      { text: 'x', link: 'http://inner' },
+    ]);
+  });
+
+  // Known limitation: two containers of the SAME tag can't nest, because the
+  // non-greedy pattern closes the outer one on the inner one's end tag. The
+  // reader never emits that shape (it puts every style of a run in one span),
+  // and the workaround is one span carrying both properties.
+  it('does not support same-tag nesting (documented limitation)', () => {
+    const out = parseInline('<span style="color:red"><span style="color:blue">x</span></span>');
+    expect(out).not.toEqual([{ text: 'x', color: 'blue' }]);
+    // the supported spelling:
+    expect(parseInline('<span style="color:blue;font-size:14pt">x</span>')).toEqual([
+      { text: 'x', color: 'blue', fontSize: 14 },
+    ]);
+  });
+
+  // Code spans are literal by definition — markup inside them is content.
+  it('does NOT parse inside code spans', () => {
+    expect(parseInline('`**not bold**`')).toEqual([{ text: '**not bold**', code: true }]);
+    expect(parseInline('<code>**not bold**</code>')).toEqual([{ text: '**not bold**', code: true }]);
+  });
+
+  it('leaves escapes, empty containers and unclosed markers alone', () => {
+    expect(parseInline('*a\\*b*')).toEqual([{ text: 'a*b', italic: true }]);
+    expect(parseInline('<u></u>')).toEqual([]);
+    expect(parseInline('**unclosed')).toEqual([{ text: '**unclosed' }]);
+  });
+});
