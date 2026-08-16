@@ -1,5 +1,6 @@
 import type { docs_v1 } from 'googleapis';
 import { hexToRgb } from './color.js';
+import { CODE_FONT } from './markdown-spec.js';
 
 // Parse inline markdown AND inline HTML into styled segments, so edit_doc's
 // new_string can carry **bold** / *italic* / ~~strike~~ / `code` / [text](url)
@@ -138,7 +139,7 @@ export function segmentTextStyle(seg: Segment): { textStyle: docs_v1.Schema$Text
   if (seg.underline) (textStyle.underline = true), fields.push('underline');
   if (seg.strikethrough) (textStyle.strikethrough = true), fields.push('strikethrough');
   if (seg.code || seg.fontFamily) {
-    textStyle.weightedFontFamily = { fontFamily: seg.fontFamily ?? 'Courier New' };
+    textStyle.weightedFontFamily = { fontFamily: seg.fontFamily ?? CODE_FONT };
     fields.push('weightedFontFamily');
   }
   if (seg.color) {
