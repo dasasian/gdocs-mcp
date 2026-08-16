@@ -17,6 +17,25 @@ export function findTab(doc: docs_v1.Schema$Document, tabId: string): docs_v1.Sc
   return flattenTabs(doc).find((t) => t.tabProperties?.tabId === tabId);
 }
 
+// Optimistic concurrency: only write if the doc hasn't moved since we read it.
+export function writeControlFor(revisionId?: string | null): docs_v1.Schema$WriteControl | undefined {
+  return revisionId ? { requiredRevisionId: revisionId } : undefined;
+}
+
+// After an insertTable at `index`, find the table that landed there: the
+// earliest table at or after the insertion point. Used by every "insert a table
+// then fill it" flow, which must re-fetch to learn the new cell indices.
+export function tableInsertedAt(
+  doc: docs_v1.Schema$Document,
+  index: number,
+  tabId?: string,
+  segmentId?: string,
+): docs_v1.Schema$StructuralElement | undefined {
+  return contentOf(doc, tabId, segmentId)
+    .filter((e) => e.table && (e.startIndex ?? 0) >= index)
+    .sort((a, b) => (a.startIndex ?? 0) - (b.startIndex ?? 0))[0];
+}
+
 // Resolve a user-supplied tab selector (tabId OR title) to a concrete tabId.
 // undefined selector => undefined (caller uses the first tab / legacy body).
 export function resolveTabId(doc: docs_v1.Schema$Document, tab?: string): string | undefined {
@@ -48,12 +67,18 @@ const ID_FIELD: Record<SegmentPage, { header: keyof docs_v1.Schema$DocumentStyle
   even: { header: 'evenPageHeaderId', footer: 'evenPageFooterId' },
 };
 
+// A tabbed doc keeps its content under tabs[].documentTab; a legacy doc keeps it
+// at the top level. Both shapes expose the same field names, so every accessor
+// below is "pluck this field from whichever container is active".
+type TabContainer = docs_v1.Schema$DocumentTab | docs_v1.Schema$Document;
+
+export function tabContainer(doc: docs_v1.Schema$Document, tabId?: string): TabContainer | undefined {
+  if (!doc.tabs || !doc.tabs.length) return doc;
+  return (tabId ? findTab(doc, tabId) : doc.tabs[0])?.documentTab ?? undefined;
+}
+
 export function documentStyleOf(doc: docs_v1.Schema$Document, tabId?: string): docs_v1.Schema$DocumentStyle {
-  if (doc.tabs && doc.tabs.length) {
-    const tab = tabId ? findTab(doc, tabId) : doc.tabs[0];
-    return tab?.documentTab?.documentStyle ?? {};
-  }
-  return doc.documentStyle ?? {};
+  return tabContainer(doc, tabId)?.documentStyle ?? {};
 }
 
 function segmentMap(
@@ -61,11 +86,8 @@ function segmentMap(
   kind: 'header' | 'footer',
   tabId?: string,
 ): Record<string, docs_v1.Schema$Header | docs_v1.Schema$Footer> {
-  if (doc.tabs && doc.tabs.length) {
-    const tab = tabId ? findTab(doc, tabId) : doc.tabs[0];
-    return (kind === 'header' ? tab?.documentTab?.headers : tab?.documentTab?.footers) ?? {};
-  }
-  return (kind === 'header' ? doc.headers : doc.footers) ?? {};
+  const c = tabContainer(doc, tabId);
+  return (kind === 'header' ? c?.headers : c?.footers) ?? {};
 }
 
 export interface SegmentInfo {
@@ -143,11 +165,7 @@ export function contentOf(
     const fromFooter = segmentMap(doc, 'footer', tabId)[segmentId];
     return (fromHeader ?? fromFooter)?.content ?? [];
   }
-  if (doc.tabs && doc.tabs.length) {
-    const tab = tabId ? findTab(doc, tabId) : doc.tabs[0];
-    return tab?.documentTab?.body?.content ?? [];
-  }
-  return doc.body?.content ?? [];
+  return tabContainer(doc, tabId)?.body?.content ?? [];
 }
 
 // The lists map (listId -> List) for the active tab / legacy body. Used to tell
@@ -156,11 +174,7 @@ export function listsOf(
   doc: docs_v1.Schema$Document,
   tabId?: string,
 ): Record<string, docs_v1.Schema$List> {
-  if (doc.tabs && doc.tabs.length) {
-    const tab = tabId ? findTab(doc, tabId) : doc.tabs[0];
-    return tab?.documentTab?.lists ?? {};
-  }
-  return doc.lists ?? {};
+  return tabContainer(doc, tabId)?.lists ?? {};
 }
 
 // Named styles (NORMAL_TEXT, HEADING_1, …) for the active tab / legacy body.
@@ -169,11 +183,8 @@ export function namedStylesOf(
   doc: docs_v1.Schema$Document,
   tabId?: string,
 ): docs_v1.Schema$NamedStyle[] {
-  if (doc.tabs && doc.tabs.length) {
-    const tab = tabId ? findTab(doc, tabId) : doc.tabs[0];
-    return tab?.documentTab?.namedStyles?.styles ?? doc.namedStyles?.styles ?? [];
-  }
-  return doc.namedStyles?.styles ?? [];
+  // A tab that defines no namedStyles still inherits the doc-level ones.
+  return tabContainer(doc, tabId)?.namedStyles?.styles ?? doc.namedStyles?.styles ?? [];
 }
 
 // The inlineObjects map (id -> InlineObject) for the active tab / legacy body.
@@ -181,9 +192,5 @@ export function inlineObjectsOf(
   doc: docs_v1.Schema$Document,
   tabId?: string,
 ): Record<string, docs_v1.Schema$InlineObject> {
-  if (doc.tabs && doc.tabs.length) {
-    const tab = tabId ? findTab(doc, tabId) : doc.tabs[0];
-    return tab?.documentTab?.inlineObjects ?? {};
-  }
-  return doc.inlineObjects ?? {};
+  return tabContainer(doc, tabId)?.inlineObjects ?? {};
 }

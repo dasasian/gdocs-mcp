@@ -1,12 +1,10 @@
 import http from 'node:http';
 import { URL } from 'node:url';
-import { writeFile, mkdir } from 'node:fs/promises';
-import path from 'node:path';
 import { OAuth2Client } from 'google-auth-library';
 import { google } from 'googleapis';
 import open from 'open';
-import { loadClientSecret } from './accounts.js';
-import { SCOPES, TOKENS_DIR } from '../config.js';
+import { loadClientSecret, saveToken } from './accounts.js';
+import { SCOPES } from '../config.js';
 
 // Loopback OAuth (Authorization Code + PKCE via the library). Stores the token
 // keyed by the account's email, which we read back from the userinfo endpoint.
@@ -68,9 +66,6 @@ export async function addAccount(): Promise<string> {
   const email = me.data.email;
   if (!email) throw new Error('could not determine account email');
 
-  await mkdir(TOKENS_DIR, { recursive: true });
-  await writeFile(path.join(TOKENS_DIR, `${email}.json`), JSON.stringify(tokens, null, 2), {
-    mode: 0o600,
-  });
+  await saveToken(email, tokens);
   return email;
 }

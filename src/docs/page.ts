@@ -1,6 +1,6 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
-import { resolveTabId, findTab } from './structure.js';
+import { resolveTabId, documentStyleOf, writeControlFor } from './structure.js';
 
 // Document-level page setup via updateDocumentStyle: margins, page size, orientation.
 // All dimensions are points (72 pt = 1 inch), consistent with set_style's pt units.
@@ -34,15 +34,6 @@ export interface PageSetupResult {
 
 const pt = (magnitude: number): docs_v1.Schema$Dimension => ({ magnitude, unit: 'PT' });
 
-// The documentStyle for the resolved tab (or the legacy top-level body).
-function docStyleOf(doc: docs_v1.Schema$Document, tabId?: string): docs_v1.Schema$DocumentStyle | undefined {
-  if (doc.tabs && doc.tabs.length) {
-    const tab = tabId ? findTab(doc, tabId) : doc.tabs[0];
-    return tab?.documentTab?.documentStyle ?? undefined;
-  }
-  return doc.documentStyle ?? undefined;
-}
-
 export interface PageSetupInfo {
   marginTop?: number;
   marginBottom?: number;
@@ -63,7 +54,7 @@ export async function getPageSetup(
 ): Promise<PageSetupInfo> {
   const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
   const tabId = resolveTabId(res.data, opts.tab);
-  const ds = docStyleOf(res.data, tabId) ?? {};
+  const ds = documentStyleOf(res.data, tabId);
   const mag = (d: docs_v1.Schema$Dimension | undefined): number | undefined => d?.magnitude ?? undefined;
 
   const info: PageSetupInfo = {
@@ -126,7 +117,7 @@ export async function setPageSetup(
       [w, h] = PAGE_PRESETS[setup.pageSize];
     } else {
       // orientation-only: start from the current page size (fallback US Letter).
-      const cur = docStyleOf(res.data, tabId)?.pageSize;
+      const cur = documentStyleOf(res.data, tabId).pageSize;
       w = cur?.width?.magnitude ?? 612;
       h = cur?.height?.magnitude ?? 792;
     }
@@ -147,7 +138,7 @@ export async function setPageSetup(
     documentId,
     requestBody: {
       requests: [{ updateDocumentStyle } as docs_v1.Schema$Request],
-      writeControl: revisionId ? { requiredRevisionId: revisionId } : undefined,
+      writeControl: writeControlFor(revisionId),
     },
   });
   return { status: 'ok', applied };

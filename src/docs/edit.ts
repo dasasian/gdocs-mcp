@@ -1,7 +1,7 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
 import { project, type Projection } from './transformer.js';
-import { resolveTabId, type SegmentKind, type SegmentPage } from './structure.js';
+import { resolveTabId, writeControlFor, type SegmentKind, type SegmentPage } from './structure.js';
 import { resolveSegmentTarget } from './segments.js';
 import { parseInline, segmentTextStyle } from './inline.js';
 
@@ -141,7 +141,7 @@ export async function editDoc(
 
   await clients.docs.documents.batchUpdate({
     documentId,
-    requestBody: { requests, writeControl: revisionId ? { requiredRevisionId: revisionId } : undefined },
+    requestBody: { requests, writeControl: writeControlFor(revisionId) },
   });
 
   return { status: 'ok', replaced: targets.length };

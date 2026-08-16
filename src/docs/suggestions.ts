@@ -1,6 +1,6 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
-import { contentOf, resolveTabId } from './structure.js';
+import { contentOf, resolveTabId, writeControlFor } from './structure.js';
 
 // Spike-validated logic. Suggestions live in the Docs API only (no author/time —
 // confirmed unavailable). We read in SUGGESTIONS_INLINE (the only mode whose
@@ -260,12 +260,6 @@ function regionRequests(
   return requests;
 }
 
-export interface ApplyResult {
-  status: 'ok' | 'not_found' | 'unsupported' | 'stale' | 'cluster' | 'wrong_doc';
-  message?: string;
-  cluster?: { suggestionId: string; preview: string }[];
-}
-
 // Anchors a call to the document, not just the change (#9): a same-worded
 // suggestion can exist in two near-identical documents, and expectedChange
 // alone wouldn't catch approving it on the wrong one.
@@ -273,61 +267,6 @@ function checkDocumentTitle(doc: docs_v1.Schema$Document, documentTitle: string)
   const actual = doc.title ?? '';
   if (actual === documentTitle) return undefined;
   return `documentTitle did not match the live document (expected "${documentTitle}", found "${actual}"). This id may belong to a different, similarly-titled document — re-run list_suggestions on the intended document and retry.`;
-}
-
-export async function applySuggestion(
-  clients: GoogleClients,
-  documentId: string,
-  documentTitle: string,
-  suggestionId: string,
-  decision: 'accept' | 'reject',
-  expectedChange: string,
-  tab?: string,
-): Promise<ApplyResult> {
-  const doc = await getDocInline(clients, documentId);
-  const wrongDoc = checkDocumentTitle(doc, documentTitle);
-  if (wrongDoc) return { status: 'wrong_doc', message: wrongDoc };
-
-  const tabId = resolveTabId(doc, tab);
-  const suggestions = parseSuggestions(doc, tabId);
-  const s = suggestions.find((x) => x.id === suggestionId);
-  if (!s) return { status: 'not_found', message: `suggestion ${suggestionId} not found (may be already resolved)` };
-  if (s.type === 'style') return { status: 'unsupported', message: 'style-only suggestions are not yet resolvable' };
-
-  const actual = formatSuggestionPreview(s);
-  if (actual !== expectedChange) {
-    return {
-      status: 'stale',
-      message: `expectedChange did not match the live suggestion (expected "${expectedChange}", found "${actual}"). The doc may have changed since list_suggestions, or this id belongs to a different suggestion. Re-run list_suggestions and retry with the current preview.`,
-    };
-  }
-
-  const clusters = clusterSuggestions(suggestions);
-  const cluster = clusters.find((c) => c.ids.includes(suggestionId));
-  if (!cluster) return { status: 'not_found', message: `suggestion ${suggestionId} has no resolvable text span` };
-
-  if (cluster.ids.length > 1) {
-    const byId = new Map(suggestions.map((x) => [x.id, x]));
-    return {
-      status: 'cluster',
-      message: `This suggestion overlaps or adjoins ${cluster.ids.length - 1} other pending suggestion(s); resolving it alone would corrupt them. Use apply_suggestions with a decision for every suggestion listed below.`,
-      cluster: cluster.ids.map((id) => ({ suggestionId: id, preview: formatSuggestionPreview(byId.get(id)!) })),
-    };
-  }
-
-  const runs = collectRuns(doc, tabId);
-  if (regionHasStyleSuggestion(runs, cluster.start, cluster.end)) {
-    return { status: 'unsupported', message: 'the suggestion region overlaps a style-only suggestion; not yet resolvable' };
-  }
-
-  await clients.docs.documents.batchUpdate({
-    documentId,
-    requestBody: {
-      requests: regionRequests(runs, cluster, new Map([[suggestionId, decision]]), tabId),
-      writeControl: doc.revisionId ? { requiredRevisionId: doc.revisionId } : undefined,
-    },
-  });
-  return { status: 'ok' };
 }
 
 export interface Resolution {
@@ -411,7 +350,7 @@ export async function applySuggestions(
     documentId,
     requestBody: {
       requests,
-      writeControl: doc.revisionId ? { requiredRevisionId: doc.revisionId } : undefined,
+      writeControl: writeControlFor(doc.revisionId),
     },
   });
   return { status: 'ok', resolved: decisions.size, ...(conflicts.length ? { conflicts } : {}) };
