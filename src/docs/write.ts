@@ -17,13 +17,17 @@ type Block =
   | { type: 'paragraph'; text: string; align?: ParaAlign }
   | { type: 'list'; ordered: boolean; items: { level: number; text: string }[] }
   | { type: 'table'; rows: string[][]; aligns: (CellAlign | null)[] }
-  | { type: 'image'; alt: string; src: string };
+  | { type: 'image'; alt: string; src: string; width?: number; height?: number };
 
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
 const LIST_RE = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
 // A whole line that is just an image: ![alt](src), with an optional trailing
 // HTML comment (e.g. gdocs tracking metadata) that we ignore.
 const IMAGE_RE = /^!\[([^\]]*)\]\(([^)]+)\)\s*(?:<!--.*?-->)?\s*$/;
+// A whole line that is an <img> tag — what read_doc emits, and the escape hatch
+// for the sizing markdown can't express (DESIGN.md §2). Attributes in any order.
+const IMG_TAG_RE = /^<img\s+[^>]*>$/i;
+const ATTR_RE = /([a-z-]+)\s*=\s*"([^"]*)"/gi;
 // A whole line that is a single aligned paragraph, the exact shape read_doc emits
 // for non-default alignment: <p style="text-align:center|right|justify">…</p>.
 // Parsed back so read->write round-trips (write's counterpart to transformer.ts).
@@ -95,6 +99,25 @@ export function parseBlocks(md: string): Block[] {
       i++;
       continue;
     }
+    if (IMG_TAG_RE.test(line.trim())) {
+      const attrs: Record<string, string> = {};
+      for (const a of line.trim().matchAll(ATTR_RE)) attrs[a[1].toLowerCase()] = a[2];
+      if (attrs.src) {
+        const num = (v: string | undefined): number | undefined => {
+          const n = Number.parseFloat(v ?? '');
+          return Number.isFinite(n) && n > 0 ? n : undefined;
+        };
+        blocks.push({
+          type: 'image',
+          alt: unescapeAttr(attrs.alt ?? ''),
+          src: attrs.src,
+          width: num(attrs.width),
+          height: num(attrs.height),
+        });
+        i++;
+        continue;
+      }
+    }
     // Aligned paragraph (read_doc's <p style="text-align:…"> output) — matched
     // before the plain-paragraph fallback so it isn't treated as literal text.
     const ap = ALIGNED_P_RE.exec(line.trim());
@@ -148,7 +171,13 @@ export interface ImagePlacement {
   index: number;
   alt: string;
   src: string;
+  /** points; from an <img width|height>. Docs keeps aspect ratio, so it may adjust these. */
+  width?: number;
+  height?: number;
 }
+
+const unescapeAttr = (s: string): string =>
+  s.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&amp;/g, '&');
 
 export interface BuiltContent {
   requests: docs_v1.Schema$Request[];
@@ -198,7 +227,7 @@ export function buildContentRequests(blocks: Block[], startIndex: number, tabId?
       tables.push({ index: abs(text.length), rows: block.rows, aligns: block.aligns });
       text += '\n';
     } else if (block.type === 'image') {
-      images.push({ index: abs(text.length), alt: block.alt, src: block.src });
+      images.push({ index: abs(text.length), alt: block.alt, src: block.src, width: block.width, height: block.height });
       text += '\n';
     } else {
       const listStart = text.length;

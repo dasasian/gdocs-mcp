@@ -31,6 +31,13 @@ The agent reads and writes **GitHub-flavored markdown with inline HTML**:
 
 This single format does both jobs: formatting is **visible in the read** (so the agent can perceive *and* verify style changes), and it is a format the agent authors natively. It replaces an earlier "clean markdown + separate formatting sidecar" idea.
 
+"Visible in the read" is the load-bearing half, and it was aspirational for a
+while: the writer parsed `<span style="color:…">` and `<img width>` long before
+the reader emitted either, so a `set_style` colour change or an image's size
+simply vanished on the next read — the agent could not verify its own edit.
+Closed in #30. The rule that follows: a construct the writer accepts must be a
+construct the reader emits, or the escape hatch is a one-way valve.
+
 Markdown is otherwise a ceiling — it cannot express alignment, color, fonts, image sizing, etc. The HTML escape-hatch is what lifts that ceiling.
 
 ---

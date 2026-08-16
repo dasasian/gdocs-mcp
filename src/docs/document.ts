@@ -24,11 +24,20 @@ async function insertImagePlacement(
   baseDir: string | undefined,
   tabId?: string,
   segmentId?: string,
+  size?: { width?: number; height?: number },
 ): Promise<{ objectId?: string; warning?: string }> {
+  // Docs preserves aspect ratio, so it may adjust whichever dimension it must.
+  const objectSize =
+    size?.width || size?.height
+      ? {
+          width: size.width ? { magnitude: size.width, unit: 'PT' } : undefined,
+          height: size.height ? { magnitude: size.height, unit: 'PT' } : undefined,
+        }
+      : undefined;
   const embed = async (uri: string): Promise<string | undefined> => {
     const r = await clients.docs.documents.batchUpdate({
       documentId,
-      requestBody: { requests: [{ insertInlineImage: { location: { index, tabId, segmentId }, uri } }] },
+      requestBody: { requests: [{ insertInlineImage: { location: { index, tabId, segmentId }, uri, objectSize } }] },
     });
     const reply = r.data.replies?.[0] as { insertInlineImage?: { objectId?: string } } | undefined;
     return reply?.insertInlineImage?.objectId ?? undefined;
@@ -36,6 +45,12 @@ async function insertImagePlacement(
 
   if (/^https?:\/\//i.test(src)) {
     return { objectId: await embed(src) };
+  }
+  // `image:<objectId>` is read_doc's handle for an image ALREADY in a document.
+  // Docs stores the embedded bytes, not a fetchable URL, so it can't be re-embedded
+  // from the marker alone — say so plainly instead of failing as a missing file.
+  if (src.startsWith('image:')) {
+    return { warning: `image "${src}" refers to an image already embedded in a document; its bytes are not re-fetchable. Use download_images and point at the local file, or give a URL. Skipped.` };
   }
   const decoded = decodeURIComponent(src);
   const absPath = nodePath.isAbsolute(decoded) ? decoded : baseDir ? nodePath.resolve(baseDir, decoded) : null;
@@ -151,7 +166,7 @@ async function renderMarkdownInto(
     ...images.map((im) => ({
       index: im.index,
       run: async () => {
-        const res = await insertImagePlacement(clients, documentId, im.index, im.src, opts.baseDir, opts.tabId, opts.segmentId);
+        const res = await insertImagePlacement(clients, documentId, im.index, im.src, opts.baseDir, opts.tabId, opts.segmentId, { width: im.width, height: im.height });
         if (res.warning) warnings.push(res.warning);
         if (res.objectId) imageMap.push({ src: im.src, objectId: res.objectId });
       },

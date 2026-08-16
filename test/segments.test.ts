@@ -87,7 +87,7 @@ describe('readDoc segments (#23)', () => {
 
   it('renders the header content, image marker included, for segment: header', async () => {
     const r = await readDoc(clientsFor(letterhead()), 'd', 'clean', undefined, { segment: 'header' });
-    expect(r.markdown).toContain('![](image:kix.logo)');
+    expect(r.markdown).toContain('<img src="image:kix.logo"');
     expect(r.markdown).toContain('Pour5 Inc.');
   });
 

@@ -120,3 +120,39 @@ describe('parseBlocks', () => {
     expect(parseBlocks('<!--\nmeta\nmeta2\n-->\nText.')).toEqual([{ type: 'paragraph', text: 'Text.' }]);
   });
 });
+
+// ---- #30: <img> is the escape hatch for image sizing -----------------------
+
+describe('parseBlocks — <img> tags', () => {
+  it('parses the shape read_doc emits, with size', () => {
+    expect(parseBlocks('<img src="image:kix.a" width="48" height="48">')).toEqual([
+      { type: 'image', alt: '', src: 'image:kix.a', width: 48, height: 48 },
+    ]);
+  });
+
+  it('accepts attributes in any order and unescapes alt', () => {
+    expect(parseBlocks('<img height="20" alt="say &quot;hi&quot; &amp; more" width="10" src="./a.png">')).toEqual([
+      { type: 'image', alt: 'say "hi" & more', src: './a.png', width: 10, height: 20 },
+    ]);
+  });
+
+  it('treats a size-less tag as an unsized image', () => {
+    expect(parseBlocks('<img src="./a.png">')).toEqual([
+      { type: 'image', alt: '', src: './a.png', width: undefined, height: undefined },
+    ]);
+  });
+
+  it('ignores junk dimensions rather than sending them to the API', () => {
+    expect(parseBlocks('<img src="./a.png" width="0" height="abc">')).toEqual([
+      { type: 'image', alt: '', src: './a.png', width: undefined, height: undefined },
+    ]);
+  });
+
+  it('still parses the plain markdown image form', () => {
+    expect(parseBlocks('![alt text](./a.png)')).toEqual([{ type: 'image', alt: 'alt text', src: './a.png' }]);
+  });
+
+  it('leaves an <img> with no src as ordinary text', () => {
+    expect(parseBlocks('<img width="10">')[0].type).toBe('paragraph');
+  });
+});
