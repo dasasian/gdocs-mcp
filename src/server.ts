@@ -309,13 +309,18 @@ export function createServer(): McpServer {
         columnWidths: z.array(z.number()).optional().describe('fixed width per column, in points'),
         headerShade: z.string().optional().describe('hex background color for the first row, e.g. #f1f3f4'),
         at: z.string().optional().describe('"top", "end", or a unique text snippet to insert after (default end)'),
+        ...segmentArg,
+        createSegment: z
+          .boolean()
+          .optional()
+          .describe('when segment is header/footer and the doc has none, create it first. Only the default header/footer can be created via the API.'),
         ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, rows, columns, data, columnWidths, headerShade, at, tab, account }) => {
+    async ({ documentId, rows, columns, data, columnWidths, headerShade, at, segment, page, createSegment, tab, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await insertTable(clients, documentId, rows, columns, { at, tab, data, columnWidths, headerShade }));
+      return json(await insertTable(clients, documentId, rows, columns, { at, tab, data, columnWidths, headerShade, segment, page, createSegment }));
     },
   );
 
@@ -325,11 +330,11 @@ export function createServer(): McpServer {
       title: 'List suggestions in a doc',
       description:
         'List pending suggestions (tracked changes) in a Google Doc as before→after diffs, in document order. Returns the doc `title` and, per suggestion, a human-readable `preview` — pass these verbatim as documentTitle/expectedChange to apply_suggestion. Note: the Docs API exposes no author or timestamp for suggestions.',
-      inputSchema: { documentId: z.string().describe('Google Doc id'), ...tabArg, ...accountArg },
+      inputSchema: { documentId: z.string().describe('Google Doc id'), ...segmentArg, ...tabArg, ...accountArg },
     },
-    async ({ documentId, tab, account }) => {
+    async ({ documentId, segment, page, tab, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await listSuggestions(clients, documentId, tab));
+      return json(await listSuggestions(clients, documentId, tab, { segment, page }));
     },
   );
 
@@ -351,13 +356,14 @@ export function createServer(): McpServer {
             }),
           )
           .describe('one entry per suggestion to resolve'),
+        ...segmentArg,
         ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, documentTitle, resolutions, tab, account }) => {
+    async ({ documentId, documentTitle, resolutions, segment, page, tab, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await applySuggestions(clients, documentId, documentTitle, resolutions, tab));
+      return json(await applySuggestions(clients, documentId, documentTitle, resolutions, tab, { segment, page }));
     },
   );
 
@@ -583,22 +589,24 @@ export function createServer(): McpServer {
           .enum(['before', 'after'])
           .optional()
           .describe('for inserts: which side of `cell` to add on — rows after=below (default)/before=above; columns after=right (default)/before=left. Ignored for deletes.'),
+        ...segmentArg,
         ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, cell, op, side, tab, account }) => {
+    async ({ documentId, cell, op, side, segment, page, tab, account }) => {
       const clients = await clientsForAccount(account);
       const after = side !== 'before'; // default 'after'
+      const seg = { segment, page, tab };
       switch (op) {
         case 'insert_row':
-          return json(await insertRow(clients, documentId, cell, { below: after, tab }));
+          return json(await insertRow(clients, documentId, cell, { below: after, ...seg }));
         case 'delete_row':
-          return json(await deleteRow(clients, documentId, cell, { tab }));
+          return json(await deleteRow(clients, documentId, cell, seg));
         case 'insert_column':
-          return json(await insertColumn(clients, documentId, cell, { right: after, tab }));
+          return json(await insertColumn(clients, documentId, cell, { right: after, ...seg }));
         case 'delete_column':
-          return json(await deleteColumn(clients, documentId, cell, { tab }));
+          return json(await deleteColumn(clients, documentId, cell, seg));
       }
     },
   );
@@ -643,13 +651,14 @@ export function createServer(): McpServer {
           .number()
           .optional()
           .describe('repeat the top N rows on every page (Docs’ "pin header rows"); 0 unpins. Independent of scope.'),
+        ...segmentArg,
         ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, cell, scope, padding, backgroundColor, border, columnWidths, headerRows, tab, account }) => {
+    async ({ documentId, cell, scope, padding, backgroundColor, border, columnWidths, headerRows, segment, page, tab, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await setTableStyle(clients, documentId, cell, { scope, padding, backgroundColor, border, columnWidths, headerRows, tab }));
+      return json(await setTableStyle(clients, documentId, cell, { scope, padding, backgroundColor, border, columnWidths, headerRows, segment, page, tab }));
     },
   );
 

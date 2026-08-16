@@ -145,3 +145,79 @@ describe('setTableStyle', () => {
     expect(r.status).toBe('empty');
   });
 });
+
+// ---- #28: tables living in a header/footer --------------------------------
+//
+// A letterhead table is the common case. Before this, the table ops only ever
+// walked the body, so a header table simply never matched — reported as
+// "no table cell containing …" rather than as an unreachable segment.
+
+const HDR = 'kix.hdr1';
+
+// The header holds the real table; the body holds a decoy with different text,
+// so a body-scoped scan cannot accidentally satisfy a header-scoped assertion.
+function headerTableDoc(): docs_v1.Schema$Document {
+  const cell = (t: string): docs_v1.Schema$TableCell => ({
+    content: [{ paragraph: { elements: [{ textRun: { content: t } }] } }],
+  });
+  const table = (prefix: string) => ({
+    startIndex: 2,
+    table: {
+      tableRows: [
+        { tableCells: [cell(`${prefix}0c0`), cell(`${prefix}0c1`)] },
+        { tableCells: [cell(`${prefix}1c0`), cell(`${prefix}1c1`)] },
+      ],
+    },
+  });
+  return {
+    tabs: [
+      {
+        documentTab: {
+          documentStyle: { defaultHeaderId: HDR },
+          headers: { [HDR]: { headerId: HDR, content: [table('h')] } },
+          body: { content: [table('b')] },
+        },
+      },
+    ],
+  } as unknown as docs_v1.Schema$Document;
+}
+
+describe('table ops reach headers/footers (#28)', () => {
+  it('finds a header table and scopes the write to that segment', async () => {
+    const b = vi.fn().mockResolvedValue({});
+    const r = await setTableStyle(clientsFor(headerTableDoc(), b), 'd', 'h1c1', {
+      segment: 'header',
+      backgroundColor: '#f1f3f4',
+    });
+    expect(r.status).toBe('ok');
+    expect(r.table).toMatchObject({ matchedCell: { rowIndex: 1, columnIndex: 1 } });
+    const loc = reqs(b)[0].updateTableCellStyle!.tableRange!.tableCellLocation!.tableStartLocation!;
+    expect(loc.segmentId).toBe(HDR);
+  });
+
+  it('body-scoped calls do not see the header table', async () => {
+    const b = vi.fn().mockResolvedValue({});
+    const r = await setTableStyle(clientsFor(headerTableDoc(), b), 'd', 'h1c1', { backgroundColor: '#fff' });
+    expect(r.status).toBe('not_found');
+    expect(b).not.toHaveBeenCalled();
+  });
+
+  it('reports no_segment (not not_found) when the segment is absent', async () => {
+    const b = vi.fn().mockResolvedValue({});
+    const r = await setTableStyle(clientsFor(headerTableDoc(), b), 'd', 'h1c1', {
+      segment: 'footer',
+      backgroundColor: '#fff',
+    });
+    expect(r.status).toBe('no_segment');
+    expect(r.message).toContain('no footer');
+    expect(b).not.toHaveBeenCalled();
+  });
+
+  it('body tables still work unchanged', async () => {
+    const b = vi.fn().mockResolvedValue({});
+    const r = await setTableStyle(clientsFor(headerTableDoc(), b), 'd', 'b1c1', { backgroundColor: '#fff' });
+    expect(r.status).toBe('ok');
+    const loc = reqs(b)[0].updateTableCellStyle!.tableRange!.tableCellLocation!.tableStartLocation!;
+    expect(loc.segmentId).toBeUndefined();
+  });
+});

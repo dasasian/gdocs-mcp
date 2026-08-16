@@ -1,6 +1,7 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
-import { contentOf, resolveTabId, writeControlFor } from './structure.js';
+import { contentOf, resolveTabId, writeControlFor, type SegmentKind, type SegmentPage } from './structure.js';
+import { resolveSegmentTarget } from './segments.js';
 
 // Spike-validated logic. Suggestions live in the Docs API only (no author/time —
 // confirmed unavailable). We read in SUGGESTIONS_INLINE (the only mode whose
@@ -44,7 +45,7 @@ export async function getDocInline(
   return res.data;
 }
 
-export function parseSuggestions(doc: docs_v1.Schema$Document, tabId?: string): Suggestion[] {
+export function parseSuggestions(doc: docs_v1.Schema$Document, tabId?: string, segmentId?: string): Suggestion[] {
   const groups = new Map<string, Group>();
   const ensure = (id: string): Group => {
     let g = groups.get(id);
@@ -55,7 +56,7 @@ export function parseSuggestions(doc: docs_v1.Schema$Document, tabId?: string): 
     return g;
   };
 
-  for (const el of contentOf(doc, tabId)) {
+  for (const el of contentOf(doc, tabId, segmentId)) {
     const elements = el.paragraph?.elements;
     if (!elements) continue;
     for (const pe of elements) {
@@ -108,10 +109,13 @@ export async function listSuggestions(
   clients: GoogleClients,
   documentId: string,
   tab?: string,
-): Promise<{ revisionId: string; title: string; suggestions: (Suggestion & { preview: string })[] }> {
+  opts: { segment?: SegmentKind; page?: SegmentPage } = {},
+): Promise<{ revisionId: string; title: string; suggestions: (Suggestion & { preview: string })[]; message?: string }> {
   const doc = await getDocInline(clients, documentId);
   const tabId = resolveTabId(doc, tab);
-  const suggestions = parseSuggestions(doc, tabId).map((s) => ({ ...s, preview: formatSuggestionPreview(s) }));
+  const seg = await resolveSegmentTarget(clients, documentId, doc, { segment: opts.segment, page: opts.page, tabId });
+  if (seg.error) return { revisionId: doc.revisionId ?? '', title: doc.title ?? '', suggestions: [], message: seg.error };
+  const suggestions = parseSuggestions(seg.doc, tabId, seg.segmentId).map((s) => ({ ...s, preview: formatSuggestionPreview(s) }));
   return { revisionId: doc.revisionId ?? '', title: doc.title ?? '', suggestions };
 }
 
@@ -138,9 +142,9 @@ export interface TaggedRun {
   styleIds?: string[];
 }
 
-export function collectRuns(doc: docs_v1.Schema$Document, tabId?: string): TaggedRun[] {
+export function collectRuns(doc: docs_v1.Schema$Document, tabId?: string, segmentId?: string): TaggedRun[] {
   const runs: TaggedRun[] = [];
-  for (const el of contentOf(doc, tabId)) {
+  for (const el of contentOf(doc, tabId, segmentId)) {
     for (const pe of el.paragraph?.elements ?? []) {
       const run = pe.textRun;
       if (!run?.content) continue;
@@ -251,12 +255,13 @@ function regionRequests(
   cluster: Cluster,
   decisions: Map<string, 'accept' | 'reject'>,
   tabId?: string,
+  segmentId?: string,
 ): docs_v1.Schema$Request[] {
   const finalText = resolveRegionText(runs, cluster.start, cluster.end, decisions);
   const requests: docs_v1.Schema$Request[] = [
-    { deleteContentRange: { range: { startIndex: cluster.start, endIndex: cluster.end, tabId } } },
+    { deleteContentRange: { range: { startIndex: cluster.start, endIndex: cluster.end, tabId, segmentId } } },
   ];
-  if (finalText) requests.push({ insertText: { location: { index: cluster.start, tabId }, text: finalText } });
+  if (finalText) requests.push({ insertText: { location: { index: cluster.start, tabId, segmentId }, text: finalText } });
   return requests;
 }
 
@@ -276,7 +281,7 @@ export interface Resolution {
 }
 
 export interface ApplyManyResult {
-  status: 'ok' | 'error' | 'incomplete' | 'wrong_doc';
+  status: 'ok' | 'error' | 'incomplete' | 'wrong_doc' | 'no_segment';
   resolved?: number;
   errors?: string[];
   /** Overlapping insert-inside-delete conflicts that were auto-resolved (insertion kept). */
@@ -292,16 +297,22 @@ export async function applySuggestions(
   documentTitle: string,
   resolutions: Resolution[],
   tab?: string,
+  opts: { segment?: SegmentKind; page?: SegmentPage } = {},
 ): Promise<ApplyManyResult> {
   const doc = await getDocInline(clients, documentId);
   const wrongDoc = checkDocumentTitle(doc, documentTitle);
   if (wrongDoc) return { status: 'wrong_doc', errors: [wrongDoc] };
 
   const tabId = resolveTabId(doc, tab);
-  const suggestions = parseSuggestions(doc, tabId);
+  // Read and write must agree on the segment: indices are per-segment, so runs
+  // collected from a header can only be written back with that header's id.
+  const seg = await resolveSegmentTarget(clients, documentId, doc, { segment: opts.segment, page: opts.page, tabId });
+  if (seg.error) return { status: 'no_segment', errors: [seg.error] };
+  const segmentId = seg.segmentId;
+  const suggestions = parseSuggestions(seg.doc, tabId, segmentId);
   const byId = new Map(suggestions.map((s) => [s.id, s]));
   const clusters = clusterSuggestions(suggestions);
-  const runs = collectRuns(doc, tabId);
+  const runs = collectRuns(seg.doc, tabId, segmentId);
 
   const decisions = new Map<string, 'accept' | 'reject'>();
   const errors: string[] = [];
@@ -344,7 +355,7 @@ export async function applySuggestions(
         note: `Insertion ${cf.insertionId} ("${cf.text}") sits inside deletion ${cf.deletionId}; accepting both is contradictory. Kept the inserted text (insertion-precedence). Flag this to the user — it is not a clean merge.`,
       });
     }
-    requests.push(...regionRequests(runs, c, decisions, tabId));
+    requests.push(...regionRequests(runs, c, decisions, tabId, segmentId));
   }
   await clients.docs.documents.batchUpdate({
     documentId,
