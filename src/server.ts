@@ -122,7 +122,7 @@ export function createServer(): McpServer {
     {
       title: 'Edit a Google Doc',
       description:
-        'Replace an exact unique snippet of text in a Google Doc (like a local file Edit). old_string is matched markup-tolerantly; ambiguous matches return surrounding context to disambiguate. new_string is interpreted as inline markdown (**bold**, *italic*, `code`, [text](url)). NOTE: this is a direct edit — the change is applied as live text, not a tracked suggestion (the Docs API cannot create suggestions). If the doc has pending suggestions from other reviewers, flag to the user that your edit will sit alongside them as an accepted change.',
+        'Replace an exact unique snippet of text in a Google Doc (like a local file Edit). old_string is matched markup-tolerantly; ambiguous matches return surrounding context to disambiguate. new_string is interpreted as inline markdown and inline HTML (**bold**, *italic*, `code`, [text](url), `<u>`, `<span style="color:…;font-size:…pt">`) — the same spelling read_doc emits, so a read can be edited and written back. To restyle text you are NOT otherwise changing, use set_style instead: it needs no copy of the text. NOTE: this is a direct edit — the change is applied as live text, not a tracked suggestion (the Docs API cannot create suggestions). If the doc has pending suggestions from other reviewers, flag to the user that your edit will sit alongside them as an accepted change.',
       inputSchema: {
         documentId: z.string().describe('Google Doc id'),
         old_string: z.string().describe('exact text to replace (quote a unique slice from read_doc)'),
@@ -145,7 +145,7 @@ export function createServer(): McpServer {
     {
       title: 'Style text in a doc',
       description:
-        'Apply styling to existing text in place (no content change), the way you select text in Docs and apply formatting. Pick ONE target: `from` (+ optional `to`) to style a selection — from the start of the unique `from` snippet to the end of the unique `to` snippet (omit `to` to style just `from`); or `whole_document: true` to style the entire doc/tab (e.g. one font throughout, without per-paragraph calls). Styles: bold/italic/underline/strikethrough, color (hex), fontSize (pt), fontFamily, link, paragraph alignment, and paragraph spacing (spaceBefore/spaceAfter in pt, lineSpacing %). Use inspect_style first to read current spacing/fonts. NOTE: a direct style change, not a tracked suggestion.',
+        'Apply styling to existing text in place (no content change), the way you select text in Docs and apply formatting. Pick ONE target: `from` (+ optional `to`) to style a selection — from the start of the unique `from` snippet to the end of the unique `to` snippet (omit `to` to style just `from`); or `whole_document: true` to style the entire doc/tab (e.g. one font throughout, without per-paragraph calls). Styles: bold/italic/underline/strikethrough, color (hex), fontSize (pt), fontFamily, link, paragraph alignment, and paragraph spacing (spaceBefore/spaceAfter in pt, lineSpacing %). Use get_style first to read current spacing/fonts. Prefer this over rewriting the text with edit_doc and a `<span style="…">`: that also works, but it makes you restate the whole run, and retyping text is how text gets silently dropped. NOTE: a direct style change, not a tracked suggestion.',
       inputSchema: {
         documentId: z.string().describe('Google Doc id'),
         from: z.string().optional().describe('start anchor: a unique text snippet to style from (quote a slice from read_doc). Required unless whole_document is set.'),
@@ -334,7 +334,7 @@ export function createServer(): McpServer {
     {
       title: 'List suggestions in a doc',
       description:
-        'List pending suggestions (tracked changes) in a Google Doc as before→after diffs, in document order. Returns the doc `title` and, per suggestion, a human-readable `preview` — pass these verbatim as documentTitle/expectedChange to apply_suggestion. Note: the Docs API exposes no author or timestamp for suggestions.',
+        'List pending suggestions (tracked changes) in a Google Doc as before→after diffs, in document order. Returns the doc `title` and, per suggestion, a human-readable `preview` — pass these verbatim as documentTitle/expectedChange to apply_suggestions. Note: the Docs API exposes no author or timestamp for suggestions.',
       inputSchema: { documentId: z.string().describe('Google Doc id'), ...segmentArg, ...tabArg, ...accountArg },
     },
     async ({ documentId, segment, page, tab, account }) => {

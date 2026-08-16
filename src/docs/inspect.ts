@@ -8,7 +8,7 @@ import { rgbToHex } from './color.js';
 // Read-only computed style at a text anchor (#5). read_doc -> markdown can only
 // express content, not paragraph spacing / colors / fonts — so an agent asked to
 // "remove the gap between these paragraphs" had no way to see that the gap is
-// spacing, not a blank line. inspect_style resolves the *effective* style
+// spacing, not a blank line. get_style resolves the *effective* style
 // (direct paragraph/run style layered over the inherited named style) so the
 // cause is diagnosable, and set_style's spaceBefore/spaceAfter can then fix it.
 

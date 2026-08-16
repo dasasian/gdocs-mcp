@@ -93,7 +93,7 @@ function isContiguous(spans: Span[]): boolean {
 }
 
 // Short human-readable summary of a suggestion, independent of accept/reject.
-// Callers echo this back into apply_suggestion (as `expectedChange`) so the
+// Callers echo this back into apply_suggestions (as `expectedChange`) so the
 // permission prompt shows what's actually being resolved instead of a bare id,
 // and so a stale/wrong id gets caught before anything is applied.
 export function formatSuggestionPreview(s: Pick<Suggestion, 'type' | 'before' | 'after'>): string {
