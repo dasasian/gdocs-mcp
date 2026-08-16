@@ -22,18 +22,22 @@ export interface EditResult {
 
 const CONTEXT = 30;
 
-// Conservatively strip markdown so a needle copied from a rendered read still
-// matches the doc's plain text.
+// Block- and annotation-level wrappers the reader (transformer.ts) puts around a
+// line: the alignment wrapper, and the suggestion markers. They carry no text of
+// their own, and parseInline deliberately doesn't know them (it handles inline
+// runs only), so they come off before the inline grammar runs.
+const READER_WRAPPERS = /<\/?(?:p|ins|del)\b[^>]*>/gi;
+
+// Strip markup so a needle copied from a rendered read still matches the doc's
+// plain text. This MUST agree with the writer about what counts as markup, so it
+// runs the writer's own parser (parseInline) rather than a second hand-rolled
+// grammar — a private copy had already drifted on `__` (#27), breaking matches
+// for signature lines (`____ ____`) and intraword underscores (`a__b__c`).
 export function stripMarkdown(s: string): string {
-  return s
-    .replace(/^#{1,6}\s+/, '')
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/__([^_]+)__/g, '$1')
-    .replace(/\*([^*]+)\*/g, '$1')
-    .replace(/~~([^~]+)~~/g, '$1')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/<\/?[a-z][^>]*>/gi, '');
+  const unwrapped = s.replace(/^#{1,6}\s+/, '').replace(READER_WRAPPERS, '');
+  return parseInline(unwrapped)
+    .map((seg) => seg.text)
+    .join('');
 }
 
 function findAll(haystack: string, needle: string): number[] {
