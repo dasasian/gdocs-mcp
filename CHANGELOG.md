@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.2.0] — 2026-08-15
+
 ### Added
 - **`copy_doc`** — duplicate a Doc via Drive `files.copy`, with an optional new name and target folder. Copying preserves what a markdown round-trip cannot rebuild (headers/footers, image sizing, exact formatting), so a template can be reused instead of recreated. Kept as its own tool rather than an `update_doc` mode: it creates a file rather than mutating one (#24).
 - **`create_folder`** — create a Drive folder, optionally inside a parent (URL or id). Previously the only way to make a folder was the Drive UI (#25).
@@ -71,6 +75,7 @@ See [docs/limitations.md](docs/limitations.md). Highlights: suggestion attributi
 by Drive; images are inline-only and don't read back to a stable URL; embedded code
 blocks aren't rendered yet (Tier-2 roadmap).
 
-[Unreleased]: https://github.com/dasasian/gdocs-mcp/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/dasasian/gdocs-mcp/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/dasasian/gdocs-mcp/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/dasasian/gdocs-mcp/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/dasasian/gdocs-mcp/releases/tag/v0.1.0
