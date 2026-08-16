@@ -182,3 +182,16 @@ describe('renderImage (#30)', () => {
     );
   });
 });
+
+describe('renderRun — Docs’ automatic link colour (#32)', () => {
+  const linked = (color: docs_v1.Schema$RgbColor) =>
+    md([para([run('x', 1, { link: { url: 'http://x' }, foregroundColor: { color: { rgbColor: color } } })])]);
+
+  it('suppresses the default link blue, which Docs writes in by itself', () => {
+    expect(linked({ red: 0.06666667, green: 0.33333334, blue: 0.8 })).toBe('[x](http://x)');
+  });
+
+  it('still shows a deliberately different link colour', () => {
+    expect(linked({ red: 1 })).toBe('<span style="color:#ff0000">[x](http://x)</span>');
+  });
+});

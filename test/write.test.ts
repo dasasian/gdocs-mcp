@@ -156,3 +156,42 @@ describe('parseBlocks — <img> tags', () => {
     expect(parseBlocks('<img width="10">')[0].type).toBe('paragraph');
   });
 });
+
+// ---- #32: inserted content must not inherit the styling it replaced --------
+
+describe('markdownToRequests — style reset (#32)', () => {
+  it('clears direct run styling over the inserted range, before applying its own', () => {
+    const { requests, text } = markdownToRequests('plain **bold**', 1);
+    const insertAt = requests.findIndex((r) => r.insertText);
+    const resetAt = requests.findIndex(
+      (r) => r.updateTextStyle && Object.keys(r.updateTextStyle.textStyle ?? {}).length === 0,
+    );
+    const boldAt = requests.findIndex((r) => r.updateTextStyle?.textStyle?.bold);
+
+    expect(insertAt).toBeGreaterThanOrEqual(0);
+    expect(resetAt).toBeGreaterThan(insertAt); // after the text exists
+    expect(boldAt).toBeGreaterThan(resetAt); // and before what the markdown asked for
+
+    const reset = requests[resetAt].updateTextStyle!;
+    expect(reset.range).toMatchObject({ startIndex: 1, endIndex: 1 + text.length });
+  });
+
+  it('names every direct character field, so none can leak', () => {
+    const { requests } = markdownToRequests('x', 1);
+    const reset = requests.find((r) => r.updateTextStyle && Object.keys(r.updateTextStyle.textStyle ?? {}).length === 0)!;
+    const fields = (reset.updateTextStyle!.fields ?? '').split(',');
+    for (const f of [
+      'bold', 'italic', 'underline', 'strikethrough', 'smallCaps',
+      'backgroundColor', 'foregroundColor', 'fontSize', 'weightedFontFamily',
+      'baselineOffset', 'link',
+    ]) {
+      expect(fields).toContain(f);
+    }
+  });
+
+  it('carries tab and segment, so a header overwrite resets the header', () => {
+    const { requests } = markdownToRequests('x', 1, 't.0', 'kix.h');
+    const reset = requests.find((r) => r.updateTextStyle && Object.keys(r.updateTextStyle.textStyle ?? {}).length === 0)!;
+    expect(reset.updateTextStyle!.range).toMatchObject({ tabId: 't.0', segmentId: 'kix.h' });
+  });
+});
