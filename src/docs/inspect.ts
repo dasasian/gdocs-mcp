@@ -1,7 +1,7 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
 import { project } from './transformer.js';
-import { contentOf, namedStylesOf, resolveTabId } from './structure.js';
+import { contentOf, namedStylesOf, resolveTabId, resolveSegmentId, listSegments, type SegmentKind, type SegmentPage } from './structure.js';
 import { locate, rangeFor, contextAround } from './edit.js';
 import { rgbToHex } from './color.js';
 
@@ -34,7 +34,7 @@ export interface TextStyleInfo {
 }
 
 export interface InspectResult {
-  status: 'ok' | 'not_found' | 'ambiguous';
+  status: 'ok' | 'not_found' | 'ambiguous' | 'no_segment';
   message?: string;
   matches?: { context: string }[];
   matched?: { text: string; paragraph: string };
@@ -84,11 +84,18 @@ export async function getStyle(
   clients: GoogleClients,
   documentId: string,
   targetString: string,
-  opts: { tab?: string } = {},
+  opts: { tab?: string; segment?: SegmentKind; page?: SegmentPage } = {},
 ): Promise<InspectResult> {
   const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
   const tabId = resolveTabId(res.data, opts.tab);
-  const proj = project(res.data, tabId);
+  // Read the style inside a header/footer too, so get_style pairs with set_style
+  // over the same targets (#23).
+  const segmentId = opts.segment && opts.segment !== 'body' ? resolveSegmentId(res.data, opts.segment, opts.page, tabId) : undefined;
+  if (opts.segment && opts.segment !== 'body' && !segmentId) {
+    const have = listSegments(res.data, tabId).map((x) => `${x.page}-page ${x.kind}`).join(', ') || 'none';
+    return { status: 'no_segment', message: `This doc has no ${opts.segment}. Segments present: ${have}.` };
+  }
+  const proj = project(res.data, tabId, segmentId);
 
   const { needle, positions } = locate(proj.text, targetString);
   if (positions.length === 0) return { status: 'not_found', message: `"${targetString}" not found.` };
@@ -102,7 +109,7 @@ export async function getStyle(
 
   const a = positions[0];
   const { startIndex } = rangeFor(proj, a, a + needle.length);
-  const { paragraph, run } = locateElements(contentOf(res.data, tabId), startIndex);
+  const { paragraph, run } = locateElements(contentOf(res.data, tabId, segmentId), startIndex);
   if (!paragraph) return { status: 'not_found', message: 'matched text but could not resolve its paragraph.' };
 
   const pStyle = paragraph.paragraphStyle ?? {};

@@ -37,6 +37,15 @@ Legend for "What gdocs-mcp does": **mitigated** = a tool works around it; **surf
 
 ---
 
+## Headers & footers
+
+| Limitation | Why (API reason) | What gdocs-mcp does |
+|---|---|---|
+| **Only the *default* header/footer can be created via the API.** A first-page or even-page one has to be enabled in the editor first. | `createHeader`/`createFooter` take a type but the API rejects creating the first/even variants. | **mitigated** — `createSegment: true` creates the default; asking for `page: 'first'`/`'even'` on a doc that lacks one returns a clear message instead of silently making the wrong thing. |
+| **Header/footer content is invisible to a body read** — it is a separate content tree, not part of `body.content`. | By design in the Docs data model. | **mitigated** — every text tool takes `segment: 'header'\|'footer'`, and a body read reports which segments exist and what they hold (#23). |
+
+---
+
 ## Images
 
 | Limitation | Why (API reason) | What gdocs-mcp does |

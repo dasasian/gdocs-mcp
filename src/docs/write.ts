@@ -161,7 +161,7 @@ export interface BuiltContent {
 }
 
 // Build the requests to render `blocks` starting at `startIndex` (within `tabId`).
-export function buildContentRequests(blocks: Block[], startIndex: number, tabId?: string): BuiltContent {
+export function buildContentRequests(blocks: Block[], startIndex: number, tabId?: string, segmentId?: string): BuiltContent {
   let text = '';
   const headingOps: { start: number; end: number; level: number }[] = [];
   const alignOps: { start: number; end: number; align: ParaAlign }[] = [];
@@ -217,11 +217,11 @@ export function buildContentRequests(blocks: Block[], startIndex: number, tabId?
 
   const requests: docs_v1.Schema$Request[] = [];
   if (!text) return { requests, text, tables, images };
-  requests.push({ insertText: { location: { index: startIndex, tabId }, text } });
+  requests.push({ insertText: { location: { index: startIndex, tabId, segmentId }, text } });
   for (const h of headingOps) {
     requests.push({
       updateParagraphStyle: {
-        range: { startIndex: h.start, endIndex: h.end, tabId },
+        range: { startIndex: h.start, endIndex: h.end, tabId, segmentId },
         paragraphStyle: { namedStyleType: HEADING_BY_LEVEL[h.level] },
         fields: 'namedStyleType',
       },
@@ -230,20 +230,20 @@ export function buildContentRequests(blocks: Block[], startIndex: number, tabId?
   for (const a of alignOps) {
     requests.push({
       updateParagraphStyle: {
-        range: { startIndex: a.start, endIndex: a.end, tabId },
+        range: { startIndex: a.start, endIndex: a.end, tabId, segmentId },
         paragraphStyle: { alignment: PARA_ALIGN[a.align] },
         fields: 'alignment',
       },
     });
   }
   for (const o of inlineOps) {
-    requests.push({ updateTextStyle: { range: { startIndex: o.start, endIndex: o.end, tabId }, textStyle: o.textStyle, fields: o.fields.join(',') } });
+    requests.push({ updateTextStyle: { range: { startIndex: o.start, endIndex: o.end, tabId, segmentId }, textStyle: o.textStyle, fields: o.fields.join(',') } });
   }
   // Bullets last, descending — they consume leading \t and shift later indices.
   for (const l of [...listOps].sort((a, b) => b.start - a.start)) {
     requests.push({
       createParagraphBullets: {
-        range: { startIndex: l.start, endIndex: l.end, tabId },
+        range: { startIndex: l.start, endIndex: l.end, tabId, segmentId },
         bulletPreset: l.ordered ? 'NUMBERED_DECIMAL_ALPHA_ROMAN' : 'BULLET_DISC_CIRCLE_SQUARE',
       },
     });
@@ -251,6 +251,6 @@ export function buildContentRequests(blocks: Block[], startIndex: number, tabId?
   return { requests, text, tables, images };
 }
 
-export function markdownToRequests(markdown: string, startIndex: number, tabId?: string): BuiltContent {
-  return buildContentRequests(parseBlocks(markdown), startIndex, tabId);
+export function markdownToRequests(markdown: string, startIndex: number, tabId?: string, segmentId?: string): BuiltContent {
+  return buildContentRequests(parseBlocks(markdown), startIndex, tabId, segmentId);
 }

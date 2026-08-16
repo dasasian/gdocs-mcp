@@ -1,6 +1,7 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
-import { contentOf, resolveTabId, findTab } from './structure.js';
+import { contentOf, resolveTabId, findTab, type SegmentKind, type SegmentPage } from './structure.js';
+import { resolveSegmentTarget } from './segments.js';
 import { parseSuggestions } from './suggestions.js';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -21,11 +22,12 @@ async function insertImagePlacement(
   src: string,
   baseDir: string | undefined,
   tabId?: string,
+  segmentId?: string,
 ): Promise<{ objectId?: string; warning?: string }> {
   const embed = async (uri: string): Promise<string | undefined> => {
     const r = await clients.docs.documents.batchUpdate({
       documentId,
-      requestBody: { requests: [{ insertInlineImage: { location: { index, tabId }, uri } }] },
+      requestBody: { requests: [{ insertInlineImage: { location: { index, tabId, segmentId }, uri } }] },
     });
     const reply = r.data.replies?.[0] as { insertInlineImage?: { objectId?: string } } | undefined;
     return reply?.insertInlineImage?.objectId ?? undefined;
@@ -57,16 +59,17 @@ async function insertTableAt(
   rows: string[][],
   aligns: ('left' | 'center' | 'right' | null)[],
   tabId?: string,
+  segmentId?: string,
 ): Promise<void> {
   const R = rows.length;
   const C = Math.max(...rows.map((r) => r.length));
   if (R === 0 || C === 0) return;
   await clients.docs.documents.batchUpdate({
     documentId,
-    requestBody: { requests: [{ insertTable: { location: { index, tabId }, rows: R, columns: C } }] },
+    requestBody: { requests: [{ insertTable: { location: { index, tabId, segmentId }, rows: R, columns: C } }] },
   });
   const after = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
-  const tableEl = contentOf(after, tabId)
+  const tableEl = contentOf(after, tabId, segmentId)
     .filter((e) => e.table && (e.startIndex ?? 0) >= index)
     .sort((a, b) => (a.startIndex ?? 0) - (b.startIndex ?? 0))[0];
   if (!tableEl?.table?.tableRows) return;
@@ -87,13 +90,13 @@ async function insertTableAt(
     const segs = parseInline(cell.md);
     const plain = segs.map((s) => s.text).join('');
     if (!plain) continue;
-    requests.push({ insertText: { location: { index: cell.index, tabId }, text: plain } });
+    requests.push({ insertText: { location: { index: cell.index, tabId, segmentId }, text: plain } });
     let off = 0;
     for (const seg of segs) {
       const { textStyle, fields } = segmentTextStyle(seg);
       if (fields.length) {
         requests.push({
-          updateTextStyle: { range: { startIndex: cell.index + off, endIndex: cell.index + off + seg.text.length, tabId }, textStyle, fields: fields.join(',') },
+          updateTextStyle: { range: { startIndex: cell.index + off, endIndex: cell.index + off + seg.text.length, tabId, segmentId }, textStyle, fields: fields.join(',') },
         });
       }
       off += seg.text.length;
@@ -105,7 +108,7 @@ async function insertTableAt(
   // indices are current; paragraph-style ops don't change length.
   if (aligns.some((a) => a === 'center' || a === 'right')) {
     const aligned = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
-    const tableEl2 = contentOf(aligned, tabId)
+    const tableEl2 = contentOf(aligned, tabId, segmentId)
       .filter((e) => e.table && (e.startIndex ?? 0) >= index)
       .sort((a, b) => (a.startIndex ?? 0) - (b.startIndex ?? 0))[0];
     const alignReqs: docs_v1.Schema$Request[] = [];
@@ -116,7 +119,7 @@ async function insertTableAt(
         if ((a === 'center' || a === 'right') && para?.startIndex != null) {
           alignReqs.push({
             updateParagraphStyle: {
-              range: { startIndex: para.startIndex, endIndex: para.endIndex ?? para.startIndex + 1, tabId },
+              range: { startIndex: para.startIndex, endIndex: para.endIndex ?? para.startIndex + 1, tabId, segmentId },
               paragraphStyle: { alignment: PARA_ALIGN[a] },
               fields: 'alignment',
             },
@@ -134,9 +137,9 @@ async function renderMarkdownInto(
   clients: GoogleClients,
   documentId: string,
   markdown: string,
-  opts: { tabId?: string; preRequests?: docs_v1.Schema$Request[]; requiredRevisionId?: string; baseDir?: string; startIndex?: number } = {},
+  opts: { tabId?: string; segmentId?: string; preRequests?: docs_v1.Schema$Request[]; requiredRevisionId?: string; baseDir?: string; startIndex?: number } = {},
 ): Promise<{ warnings: string[]; images: { src: string; objectId: string }[] }> {
-  const { requests, tables, images } = markdownToRequests(markdown, opts.startIndex ?? 1, opts.tabId);
+  const { requests, tables, images } = markdownToRequests(markdown, opts.startIndex ?? 1, opts.tabId, opts.segmentId);
   const all = [...(opts.preRequests ?? []), ...requests];
   if (all.length) {
     await clients.docs.documents.batchUpdate({
@@ -148,11 +151,11 @@ async function renderMarkdownInto(
   const warnings: string[] = [];
   const imageMap: { src: string; objectId: string }[] = [];
   const placements: { index: number; run: () => Promise<void> }[] = [
-    ...tables.map((t) => ({ index: t.index, run: () => insertTableAt(clients, documentId, t.index, t.rows, t.aligns, opts.tabId) })),
+    ...tables.map((t) => ({ index: t.index, run: () => insertTableAt(clients, documentId, t.index, t.rows, t.aligns, opts.tabId, opts.segmentId) })),
     ...images.map((im) => ({
       index: im.index,
       run: async () => {
-        const res = await insertImagePlacement(clients, documentId, im.index, im.src, opts.baseDir, opts.tabId);
+        const res = await insertImagePlacement(clients, documentId, im.index, im.src, opts.baseDir, opts.tabId, opts.segmentId);
         if (res.warning) warnings.push(res.warning);
         if (res.objectId) imageMap.push({ src: im.src, objectId: res.objectId });
       },
@@ -172,31 +175,43 @@ export async function insertContent(
   clients: GoogleClients,
   documentId: string,
   content: string,
-  opts: { at?: string; tab?: string; baseDir?: string } = {},
+  opts: { at?: string; tab?: string; baseDir?: string; segment?: SegmentKind; page?: SegmentPage; createSegment?: boolean } = {},
 ): Promise<{
-  status: 'ok' | 'not_found' | 'ambiguous';
+  status: 'ok' | 'not_found' | 'ambiguous' | 'no_segment';
   message?: string;
   matches?: { context: string }[];
   index?: number;
   characters?: number;
   warnings?: string[];
   images?: { src: string; objectId: string }[];
+  createdSegment?: string;
 }> {
-  const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
-  const tabId = resolveTabId(res.data, opts.tab);
-  const resolved = resolveIndex(res.data, tabId, opts.at ?? 'end');
+  const first = await clients.docs.documents.get({ documentId, includeTabsContent: true });
+  const tabId = resolveTabId(first.data, opts.tab);
+  // Same position vocabulary inside a header/footer — e.g. a letterhead address
+  // line under the logo (#23).
+  const seg = await resolveSegmentTarget(clients, documentId, first.data, {
+    segment: opts.segment,
+    page: opts.page,
+    create: opts.createSegment,
+    tabId,
+  });
+  if (seg.error) return { status: 'no_segment', message: seg.error };
+  const resolved = resolveIndex(seg.doc, tabId, opts.at ?? 'end', seg.segmentId);
   if ('error' in resolved) {
     const { status, message, matches } = resolved.error;
     return { status: status as 'not_found' | 'ambiguous', message, matches };
   }
   const { warnings, images } = await renderMarkdownInto(clients, documentId, content, {
     tabId,
+    segmentId: seg.segmentId,
     baseDir: opts.baseDir,
     startIndex: resolved.index,
   });
   return {
     status: 'ok',
     index: resolved.index,
+    ...(seg.created ? { createdSegment: `${opts.segment}` } : {}),
     characters: content.length,
     ...(warnings.length ? { warnings } : {}),
     ...(images.length ? { images } : {}),

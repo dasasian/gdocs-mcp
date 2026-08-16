@@ -1,7 +1,8 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
 import { project, type Projection } from './transformer.js';
-import { resolveTabId } from './structure.js';
+import { resolveTabId, type SegmentKind, type SegmentPage } from './structure.js';
+import { resolveSegmentTarget } from './segments.js';
 import { parseInline, segmentTextStyle } from './inline.js';
 
 // String-anchored editing (bet #3). The agent quotes a unique slice of text;
@@ -13,7 +14,7 @@ import { parseInline, segmentTextStyle } from './inline.js';
 // fallback (so "# Title" or "**x**" copied from a read still resolves).
 
 export interface EditResult {
-  status: 'ok' | 'not_found' | 'ambiguous';
+  status: 'ok' | 'not_found' | 'ambiguous' | 'no_segment';
   replaced?: number;
   matches?: { context: string }[];
   message?: string;
@@ -77,12 +78,17 @@ export async function editDoc(
   documentId: string,
   oldString: string,
   newString: string,
-  opts: { replaceAll?: boolean; tab?: string } = {},
+  opts: { replaceAll?: boolean; tab?: string; segment?: SegmentKind; page?: SegmentPage } = {},
 ): Promise<EditResult> {
   const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
   const revisionId = res.data.revisionId ?? undefined;
   const tabId = resolveTabId(res.data, opts.tab);
-  const proj = project(res.data, tabId);
+  // Editing a header/footer is the same string-anchored flow against a different
+  // content tree; every location/range below just carries its segmentId (#23).
+  const target = await resolveSegmentTarget(clients, documentId, res.data, { segment: opts.segment, page: opts.page, tabId });
+  if (target.error) return { status: 'no_segment', message: target.error };
+  const segmentId = target.segmentId;
+  const proj = project(res.data, tabId, segmentId);
 
   const { needle, positions } = locate(proj.text, oldString);
   if (positions.length === 0) {
@@ -106,14 +112,14 @@ export async function editDoc(
   const requests: docs_v1.Schema$Request[] = [];
   for (const a of targets) {
     const { startIndex, endIndex } = rangeFor(proj, a, a + needle.length);
-    requests.push({ deleteContentRange: { range: { startIndex, endIndex, tabId } } });
+    requests.push({ deleteContentRange: { range: { startIndex, endIndex, tabId, segmentId } } });
     if (!plain) continue;
-    requests.push({ insertText: { location: { index: startIndex, tabId }, text: plain } });
+    requests.push({ insertText: { location: { index: startIndex, tabId, segmentId }, text: plain } });
     // insertText inherits the style at the insertion point, so reset the whole
     // inserted range to plain first; segment styles below then re-apply intent.
     requests.push({
       updateTextStyle: {
-        range: { startIndex, endIndex: startIndex + plain.length, tabId },
+        range: { startIndex, endIndex: startIndex + plain.length, tabId, segmentId },
         textStyle: { bold: false, italic: false, underline: false, strikethrough: false },
         fields: 'bold,italic,underline,strikethrough',
       },
@@ -127,7 +133,7 @@ export async function editDoc(
       const { textStyle, fields } = segmentTextStyle(seg);
       if (fields.length) {
         requests.push({
-          updateTextStyle: { range: { startIndex: segStart, endIndex: segStart + seg.text.length, tabId }, textStyle, fields: fields.join(',') },
+          updateTextStyle: { range: { startIndex: segStart, endIndex: segStart + seg.text.length, tabId, segmentId }, textStyle, fields: fields.join(',') },
         });
       }
     }

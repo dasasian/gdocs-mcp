@@ -16,6 +16,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`export_doc`** — export a Doc to a local file: pdf (default), docx, odt, rtf, txt, html, epub, or md, via Drive `files.export`. Google renders server-side, so pagination and page setup match the editor. Note Drive refuses exports over 10 MB (#22).
 
 ### Changed
+- **Headers and footers are reachable everywhere text is (#23).** `read_doc`, `edit_doc`, `set_style`, `get_style`, `insert_content` and `insert_image` all take `segment: "body" | "header" | "footer"` (plus `page` for first-/even-page variants); `read_doc` also takes `segment: "all"`. Writes to a header/footer that doesn't exist return `no_segment` listing what does, and `createSegment: true` creates it (default header/footer only — the API cannot create first-/even-page ones). Implemented by threading `segmentId` through the existing request builders, not a parallel set of tools.
+- **A body read no longer looks empty when it isn't (#23).** `read_doc` now reports the headers/footers it did not render, with paragraph and image counts. This was a wrong answer, not a missing one: a letterhead's logo lives in the page header, so `read_doc` returned markdown with no image at all and the doc read as having no logo.
 - **`search_drive` / `list_folder` results now carry `parents`** — each entry lists its parent folder(s) as `{ id, name }`, so a hit can be traced upward (e.g. to create a sibling folder). Parent names are resolved once per distinct id, and degrade to the bare id if a lookup fails (#26).
 
 ## [0.1.1] — 2026-07-31

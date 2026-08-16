@@ -44,7 +44,7 @@ only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 
 | Tool | Role |
 |---|---|
-| `read_doc(doc, tab?, mode)` | Read as markdown+HTML. `mode`: `clean` (default) · `tracked` (`<ins>/<del>`+IDs) · `accepted` · `rejected` |
+| `read_doc(doc, tab?, mode, segment?)` | Read as markdown+HTML. `mode`: `clean` (default) · `tracked` (`<ins>/<del>`+IDs) · `accepted` · `rejected`. `segment`: `body`/`header`/`footer`/`all` (§3a) |
 | `edit_doc(doc, old_string, new_string, tab?, replace_all?, strict?)` | String-anchored edit (the workhorse) |
 | `overwrite_doc(doc, content\|contentFile, tab?)` | Wholesale replace — **guarded** (§4) |
 | `insert_content(doc, content\|contentFile, at?, tab?)` | Insert new content at a structural position (`end`/`top`/anchor) — the non-anchored counterpart to `edit_doc` (§4) |
@@ -64,6 +64,28 @@ only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 | `list_folder / search_drive / create_folder` | Drive navigation (results carry parent folder id+name) and folder creation |
 | `list_permissions / share_doc(email?|link) / unshare_doc` | Sharing (person or anyone-with-link) |
 | `add_account / list_accounts` | Multi-account (§9) |
+
+### 3a. Segments — the body is not the whole document
+
+Headers and footers are parallel content trees, addressed in write requests by
+`segmentId` (the body's is empty). Nothing about them is exotic: the same
+`insertText`/`updateTextStyle`/`insertInlineImage` requests work, just carrying a
+segmentId. So rather than a separate family of tools, every text tool takes
+`segment: 'body' | 'header' | 'footer'` (+ `page` for first-/even-page variants),
+resolved by `src/docs/segments.ts`.
+
+Two rules this design enforces:
+
+1. **A read must never look empty when it isn't.** A body read reports the
+   headers/footers it did not show, with paragraph and image counts. The bug
+   that motivated this (#23) was a letterhead whose logo lives in the header:
+   `read_doc` returned markdown with no image, which read as "this template has
+   no logo" — a wrong answer, not a missing one.
+2. **A write must never silently land in the wrong tree.** Targeting a
+   header/footer that doesn't exist returns `no_segment` with what does exist,
+   rather than falling back to the body. `createSegment: true` opts in to
+   creating it (default header/footer only — the API cannot create a
+   first-page/even-page one).
 
 ---
 

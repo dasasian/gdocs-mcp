@@ -2,7 +2,8 @@ import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
 import { project } from './transformer.js';
 import type { Projection } from './transformer.js';
-import { resolveTabId, contentOf } from './structure.js';
+import { resolveTabId, contentOf, type SegmentKind, type SegmentPage } from './structure.js';
+import { resolveSegmentTarget } from './segments.js';
 import { locate, rangeFor, contextAround } from './edit.js';
 import { hexToRgb } from './color.js';
 
@@ -31,7 +32,7 @@ export interface FormatStyle {
 }
 
 export interface FormatResult {
-  status: 'ok' | 'not_found' | 'ambiguous' | 'empty';
+  status: 'ok' | 'not_found' | 'ambiguous' | 'empty' | 'no_segment';
   applied?: string[];
   matches?: { context: string }[];
   message?: string;
@@ -106,7 +107,7 @@ function resolveRange(proj: Projection, target: StyleTarget): { a: number; b: nu
 
 // Docs-index ranges of currently-bold text within [lo, hi), across paragraphs and
 // table cells. Bold means the `bold` boolean or a heavy font weight (>=700).
-function boldSpans(doc: docs_v1.Schema$Document, tabId: string | undefined, lo: number, hi: number): { start: number; end: number }[] {
+function boldSpans(doc: docs_v1.Schema$Document, tabId: string | undefined, lo: number, hi: number, segmentId?: string): { start: number; end: number }[] {
   const spans: { start: number; end: number }[] = [];
   const walk = (content: docs_v1.Schema$StructuralElement[] | undefined): void => {
     for (const el of content ?? []) {
@@ -127,7 +128,7 @@ function boldSpans(doc: docs_v1.Schema$Document, tabId: string | undefined, lo: 
       }
     }
   };
-  walk(contentOf(doc, tabId));
+  walk(contentOf(doc, tabId, segmentId));
   return spans;
 }
 
@@ -136,16 +137,21 @@ export async function setStyle(
   documentId: string,
   target: StyleTarget,
   style: FormatStyle,
-  opts: { tab?: string } = {},
+  opts: { tab?: string; segment?: SegmentKind; page?: SegmentPage } = {},
 ): Promise<FormatResult> {
   const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
   const revisionId = res.data.revisionId ?? undefined;
   const tabId = resolveTabId(res.data, opts.tab);
-  const proj = project(res.data, tabId);
+  // With a segment target, `whole` means the whole header/footer, and every
+  // range carries its segmentId (#23).
+  const seg = await resolveSegmentTarget(clients, documentId, res.data, { segment: opts.segment, page: opts.page, tabId });
+  if (seg.error) return { status: 'no_segment', message: seg.error };
+  const segmentId = seg.segmentId;
+  const proj = project(res.data, tabId, segmentId);
 
   const resolved = resolveRange(proj, target);
   if ('status' in resolved) return resolved;
-  const range = { ...rangeFor(proj, resolved.a, resolved.b), tabId };
+  const range = { ...rangeFor(proj, resolved.a, resolved.b), tabId, segmentId };
   const requests: docs_v1.Schema$Request[] = [];
   const applied: string[] = [];
 
@@ -186,8 +192,8 @@ export async function setStyle(
   // re-assert bold over the spans that were bold, AFTER the font request, so bold
   // survives a font change (esp. whole-document "match the font throughout").
   if (style.fontFamily !== undefined && style.bold === undefined) {
-    for (const span of boldSpans(res.data, tabId, range.startIndex!, range.endIndex!)) {
-      requests.push({ updateTextStyle: { range: { startIndex: span.start, endIndex: span.end, tabId }, textStyle: { bold: true }, fields: 'bold' } });
+    for (const span of boldSpans(res.data, tabId, range.startIndex!, range.endIndex!, segmentId)) {
+      requests.push({ updateTextStyle: { range: { startIndex: span.start, endIndex: span.end, tabId, segmentId }, textStyle: { bold: true }, fields: 'bold' } });
     }
   }
 

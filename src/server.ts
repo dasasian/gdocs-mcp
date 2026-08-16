@@ -39,6 +39,17 @@ const tabArg = {
     .describe('Target a specific tab by tabId or title (from list_tabs). Defaults to the first tab.'),
 };
 
+const segmentArg = {
+  segment: z
+    .enum(['body', 'header', 'footer'])
+    .optional()
+    .describe('which content tree to target: body (default), or the page header/footer. Header/footer content is invisible to a body read — a letterhead logo lives there.'),
+  page: z
+    .enum(['default', 'first', 'even'])
+    .optional()
+    .describe('which header/footer, when a doc defines more than one (default-page, first-page, even-page). Omit to use whichever exists.'),
+};
+
 export function createServer(): McpServer {
   const server = new McpServer({ name: 'gdocs-mcp', version: '0.1.0' });
 
@@ -90,17 +101,19 @@ export function createServer(): McpServer {
     {
       title: 'Read a Google Doc',
       description:
-        'Read a Google Doc as markdown + inline HTML. mode: clean (committed text, default) · tracked (suggestions shown as <ins>/<del>) · accepted · rejected.',
+        'Read a Google Doc as markdown + inline HTML. mode: clean (committed text, default) · tracked (suggestions shown as <ins>/<del>) · accepted · rejected. segment picks the content tree: body (default), header, footer, or all (body plus every header/footer, each labelled). A body read always reports which headers/footers exist and what they hold, since their content — a letterhead logo, a page number — is NOT part of the body and would otherwise be invisible.',
       inputSchema: {
         documentId: z.string().describe('Google Doc id'),
         mode: z.enum(['clean', 'tracked', 'accepted', 'rejected']).optional().describe('read mode (default clean)'),
+        segment: z.enum(['body', 'header', 'footer', 'all']).optional().describe('content tree to read (default body)'),
+        page: segmentArg.page,
         ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, mode, tab, account }) => {
+    async ({ documentId, mode, segment, page, tab, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await readDoc(clients, documentId, mode ?? 'clean', tab));
+      return json(await readDoc(clients, documentId, mode ?? 'clean', tab, { segment, page }));
     },
   );
 
@@ -115,13 +128,14 @@ export function createServer(): McpServer {
         old_string: z.string().describe('exact text to replace (quote a unique slice from read_doc)'),
         new_string: z.string().describe('replacement text'),
         replace_all: z.boolean().optional().describe('replace every occurrence (default false)'),
+        ...segmentArg,
         ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, old_string, new_string, replace_all, tab, account }) => {
+    async ({ documentId, old_string, new_string, replace_all, segment, page, tab, account }) => {
       const clients = await clientsForAccount(account);
-      const result = await editDoc(clients, documentId, old_string, new_string, { replaceAll: replace_all, tab });
+      const result = await editDoc(clients, documentId, old_string, new_string, { replaceAll: replace_all, tab, segment, page });
       return json(result.status === 'ok' ? { ...result, note: DIRECT_EDIT_NOTE } : result);
     },
   );
@@ -136,7 +150,7 @@ export function createServer(): McpServer {
         documentId: z.string().describe('Google Doc id'),
         from: z.string().optional().describe('start anchor: a unique text snippet to style from (quote a slice from read_doc). Required unless whole_document is set.'),
         to: z.string().optional().describe('optional end anchor: a unique snippet; styles the whole span from the start of `from` to the end of `to` (a selection). Must appear after `from`.'),
-        whole_document: z.boolean().optional().describe('style the entire document (or tab) instead of a selection — e.g. to set one font throughout. Mutually exclusive with from/to.'),
+        whole_document: z.boolean().optional().describe('style the entire document (or tab, or the targeted header/footer) instead of a selection — e.g. to set one font throughout. Mutually exclusive with from/to.'),
         style: z
           .object({
             bold: z.boolean().optional(),
@@ -153,11 +167,12 @@ export function createServer(): McpServer {
             lineSpacing: z.number().optional().describe('percent of single spacing (100=single, 150=1.5x)'),
           })
           .describe('styles to apply'),
+        ...segmentArg,
         ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, from, to, whole_document, style, tab, account }) => {
+    async ({ documentId, from, to, whole_document, style, segment, page, tab, account }) => {
       if (whole_document && from !== undefined) {
         throw new Error('Provide either whole_document or from/to, not both.');
       }
@@ -166,7 +181,7 @@ export function createServer(): McpServer {
       }
       const target = whole_document ? { whole: true as const } : { from: from!, to };
       const clients = await clientsForAccount(account);
-      return json(await setStyle(clients, documentId, target, style, { tab }));
+      return json(await setStyle(clients, documentId, target, style, { tab, segment, page }));
     },
   );
 
@@ -222,13 +237,14 @@ export function createServer(): McpServer {
       inputSchema: {
         documentId: z.string(),
         target_string: z.string().describe('exact text to read the style of (quote a unique slice from read_doc)'),
+        ...segmentArg,
         ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, target_string, tab, account }) => {
+    async ({ documentId, target_string, segment, page, tab, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await getStyle(clients, documentId, target_string, { tab }));
+      return json(await getStyle(clients, documentId, target_string, { tab, segment, page }));
     },
   );
 
@@ -256,7 +272,7 @@ export function createServer(): McpServer {
     {
       title: 'Insert an image',
       description:
-        'Insert an inline image from a public URL. Position via at (top/end/or a unique text anchor), size via width/height (points), and align left/center/right. A direct edit, not a tracked suggestion. Note: floating/text-wrapped images are not supported by the Docs API.',
+        'Insert an inline image from a public URL. Position via at (top/end/or a unique text anchor), size via width/height (points), and align left/center/right. Set segment:"header" for a letterhead logo — that is where a repeating, correctly-sized logo belongs, and it is why a template’s logo is invisible to a body read. A direct edit, not a tracked suggestion. Note: floating/text-wrapped images are not supported by the Docs API.',
       inputSchema: {
         documentId: z.string(),
         uri: z.string().describe('public image URL'),
@@ -264,13 +280,18 @@ export function createServer(): McpServer {
         width: z.number().optional().describe('points'),
         height: z.number().optional().describe('points'),
         align: z.enum(['left', 'center', 'right']).optional(),
+        ...segmentArg,
+        createSegment: z
+          .boolean()
+          .optional()
+          .describe('when segment is header/footer and the doc has none, create it first (the letterhead case). Only the default header/footer can be created via the API.'),
         ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, uri, at, width, height, align, tab, account }) => {
+    async ({ documentId, uri, at, width, height, align, segment, page, createSegment, tab, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await insertImage(clients, documentId, uri, { at, width, height, align, tab }));
+      return json(await insertImage(clients, documentId, uri, { at, width, height, align, tab, segment, page, createSegment }));
     },
   );
 
@@ -438,16 +459,21 @@ export function createServer(): McpServer {
           .string()
           .optional()
           .describe('"end" (default) | "top" | a unique text snippet to insert right after'),
+        ...segmentArg,
+        createSegment: z
+          .boolean()
+          .optional()
+          .describe('when segment is header/footer and the doc has none, create it first (the letterhead case). Only the default header/footer can be created via the API.'),
         baseDir: z.string().optional().describe('absolute dir to resolve relative local image paths against'),
         ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, content, contentFile, at, baseDir, tab, account }) => {
+    async ({ documentId, content, contentFile, at, segment, page, createSegment, baseDir, tab, account }) => {
       const clients = await clientsForAccount(account);
       const src = await resolveContentSource({ content, contentFile, baseDir });
       if (src.content === undefined) throw new Error('Provide content or contentFile.');
-      const result = await insertContent(clients, documentId, src.content, { at, tab, baseDir: src.baseDir });
+      const result = await insertContent(clients, documentId, src.content, { at, tab, baseDir: src.baseDir, segment, page, createSegment });
       return json(result.status === 'ok' ? { ...result, note: DIRECT_EDIT_NOTE } : result);
     },
   );

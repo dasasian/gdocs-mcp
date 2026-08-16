@@ -32,7 +32,7 @@ export interface Projection {
 // Docs indices are UTF-16 code units and JS strings are UTF-16, so per-run
 // offsets align directly with Docs indices. Descends into table cells so
 // edit_doc can target (and surgically edit) cell text.
-export function project(doc: docs_v1.Schema$Document, tabId?: string): Projection {
+export function project(doc: docs_v1.Schema$Document, tabId?: string, segmentId?: string): Projection {
   const chars: string[] = [];
   const map: number[] = [];
   const walk = (content: docs_v1.Schema$StructuralElement[] | undefined): void => {
@@ -56,7 +56,7 @@ export function project(doc: docs_v1.Schema$Document, tabId?: string): Projectio
       }
     }
   };
-  walk(contentOf(doc, tabId));
+  walk(contentOf(doc, tabId, segmentId));
   return { text: chars.join(''), map };
 }
 
@@ -65,6 +65,8 @@ export interface RenderOpts {
   tracked?: boolean;
   /** target a specific tab (by id); default first tab / legacy body. */
   tabId?: string;
+  /** render a header/footer segment instead of the body (#23). */
+  segmentId?: string;
 }
 
 export function renderMarkdown(doc: docs_v1.Schema$Document, opts: RenderOpts = {}): string {
@@ -82,7 +84,7 @@ export function renderMarkdown(doc: docs_v1.Schema$Document, opts: RenderOpts = 
     counters = {};
   };
 
-  for (const el of contentOf(doc, opts.tabId)) {
+  for (const el of contentOf(doc, opts.tabId, opts.segmentId)) {
     const para = el.paragraph;
     if (!para) {
       flushList();

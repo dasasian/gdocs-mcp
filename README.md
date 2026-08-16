@@ -94,7 +94,7 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 
 | Tool | Description |
 |---|---|
-| `read_doc` | Read as markdown + inline HTML. Modes: `clean` · `tracked` (`<ins>/<del>`) · `accepted` · `rejected` |
+| `read_doc` | Read as markdown + inline HTML. Modes: `clean` · `tracked` (`<ins>/<del>`) · `accepted` · `rejected`. `segment`: `body` (default) / `header` / `footer` / `all` — a body read always reports what the headers/footers hold, so a letterhead never reads as empty |
 | `edit_doc` | Replace a unique text snippet (string-anchored, markup-tolerant; new text supports inline markdown) |
 | `set_style` | Style existing text in place — like selecting in Docs and applying formatting: a `from`/`to` selection, a single `from` snippet, or the `whole_document`. bold/italic/underline/strikethrough, color, font size/family, link, alignment, paragraph spacing (before/after/line) |
 | `get_page_setup` / `set_page_setup` | Read / set document-level page setup: margins, page size (preset or explicit), orientation (File > Page setup) |
@@ -106,7 +106,7 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 | `copy_doc` | Duplicate a doc (Drive’s “Make a copy”) — optional new name and target folder. Preserves what markdown can’t round-trip (headers/footers, image sizing, exact formatting), so prefer it over rebuilding a template |
 | `list_suggestions` | Pending suggestions as `before → after` diffs |
 | `apply_suggestions` | Accept or reject one or more suggestions atomically — required for overlapping/adjacent "clusters" |
-| `insert_image` | Insert an inline image (URL) — position, size, left/center/right align |
+| `insert_image` | Insert an inline image (URL) — position, size, left/center/right align. `segment: "header"` (+ `createSegment`) puts a letterhead logo where it repeats |
 | `download_images` | Download a doc’s embedded images to a local folder (pairs with `read_doc`’s image markers — the inverse of publishing) |
 | `insert_table` | Insert a rows×columns table — optional data fill, column widths, header shading |
 | `edit_table` | Table structure ops — insert/delete a row or column (surgical — locate the table by cell text) |
@@ -129,6 +129,7 @@ These are **Google-API constraints, not bugs** — the highlights are below; the
 - **No suggestion attribution** (author/timestamp) — suggestions are listed in document order.
 - **Comments** created via the API aren't anchored to text, and Drive returns author *name* only (no email).
 - **Images are inline only** (no floating/x,y positioning), and Google downscales/re-encodes embedded images, so pulled copies aren't byte-identical.
+- **Headers and footers are separate content trees** — not part of the body. Every text tool (`read_doc`, `edit_doc`, `set_style`, `get_style`, `insert_content`, `insert_image`) takes `segment: "header" | "footer"` to reach them, and `page` when a doc defines more than one.
 - **Markdown can't express computed style** (spacing, fonts, colors) or deep table styling — read it with `get_style`, set it with `set_style`/`set_table_style`. Code blocks aren't rendered from markdown yet (roadmap).
 
 See **[docs/limitations.md](docs/limitations.md)** for the full table, including how each is mitigated or surfaced.

@@ -1,6 +1,7 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
-import { contentOf, resolveTabId } from './structure.js';
+import { contentOf, resolveTabId, type SegmentKind, type SegmentPage } from './structure.js';
+import { resolveSegmentTarget } from './segments.js';
 import { project } from './transformer.js';
 import { locate, rangeFor, contextAround } from './edit.js';
 import { hexToRgb } from './color.js';
@@ -8,17 +9,19 @@ import { hexToRgb } from './color.js';
 // Objects markdown can't size/place: images (and tables). Position is `top`,
 // `end`, or a unique text anchor (insert right after the matched text).
 
-function tabEndIndex(doc: docs_v1.Schema$Document, tabId?: string): number {
-  const content = contentOf(doc, tabId);
+function tabEndIndex(doc: docs_v1.Schema$Document, tabId?: string, segmentId?: string): number {
+  const content = contentOf(doc, tabId, segmentId);
   const last = content[content.length - 1];
   return last?.endIndex ?? 2;
 }
 
 export interface InsertResult {
-  status: 'ok' | 'not_found' | 'ambiguous';
+  status: 'ok' | 'not_found' | 'ambiguous' | 'no_segment';
   objectId?: string;
   message?: string;
   matches?: { context: string }[];
+  /** set when the call had to create the header/footer it wrote into. */
+  createdSegment?: string;
 }
 
 // Resolve an `at` selector to a Docs insertion index.
@@ -26,10 +29,13 @@ export function resolveIndex(
   doc: docs_v1.Schema$Document,
   tabId: string | undefined,
   at: string,
+  segmentId?: string,
 ): { index: number } | { error: InsertResult } {
-  if (at === 'top') return { index: 1 };
-  if (at === 'end') return { index: tabEndIndex(doc, tabId) - 1 };
-  const proj = project(doc, tabId);
+  // A header/footer segment starts at index 0, not 1 (the body's leading
+  // section break doesn't exist there) — verified live.
+  if (at === 'top') return { index: segmentId ? 0 : 1 };
+  if (at === 'end') return { index: tabEndIndex(doc, tabId, segmentId) - 1 };
+  const proj = project(doc, tabId, segmentId);
   const { needle, positions } = locate(proj.text, at);
   if (positions.length === 0) return { error: { status: 'not_found', message: `anchor "${at}" not found` } };
   if (positions.length > 1) {
@@ -51,11 +57,31 @@ export async function insertImage(
   clients: GoogleClients,
   documentId: string,
   uri: string,
-  opts: { at?: string; width?: number; height?: number; align?: 'left' | 'center' | 'right'; tab?: string } = {},
+  opts: {
+    at?: string;
+    width?: number;
+    height?: number;
+    align?: 'left' | 'center' | 'right';
+    tab?: string;
+    segment?: SegmentKind;
+    page?: SegmentPage;
+    createSegment?: boolean;
+  } = {},
 ): Promise<InsertResult> {
-  const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
-  const tabId = resolveTabId(res.data, opts.tab);
-  const resolved = resolveIndex(res.data, tabId, opts.at ?? 'top');
+  const first = await clients.docs.documents.get({ documentId, includeTabsContent: true });
+  const tabId = resolveTabId(first.data, opts.tab);
+  // The letterhead case (#23): a logo belongs in the page header, where it
+  // repeats and stays sized — not pasted into the body of page 1.
+  const seg = await resolveSegmentTarget(clients, documentId, first.data, {
+    segment: opts.segment,
+    page: opts.page,
+    create: opts.createSegment,
+    tabId,
+  });
+  if (seg.error) return { status: 'no_segment', message: seg.error };
+  const segmentId = seg.segmentId;
+  const res = { data: seg.doc };
+  const resolved = resolveIndex(res.data, tabId, opts.at ?? 'top', segmentId);
   if ('error' in resolved) return resolved.error;
   const index = resolved.index;
 
@@ -68,15 +94,15 @@ export async function insertImage(
       : undefined;
 
   const requests: docs_v1.Schema$Request[] = [
-    { insertInlineImage: { location: { index, tabId }, uri, objectSize } },
+    { insertInlineImage: { location: { index, tabId, segmentId }, uri, objectSize } },
   ];
   // To align, isolate the image on its own paragraph (newline after it) and set
   // that paragraph's alignment. The image occupies one index unit at `index`.
   if (opts.align) {
-    requests.push({ insertText: { location: { index: index + 1, tabId }, text: '\n' } });
+    requests.push({ insertText: { location: { index: index + 1, tabId, segmentId }, text: '\n' } });
     requests.push({
       updateParagraphStyle: {
-        range: { startIndex: index, endIndex: index + 1, tabId },
+        range: { startIndex: index, endIndex: index + 1, tabId, segmentId },
         paragraphStyle: { alignment: ALIGN[opts.align] },
         fields: 'alignment',
       },
@@ -91,7 +117,11 @@ export async function insertImage(
     },
   });
   const reply = r.data.replies?.[0] as { insertInlineImage?: { objectId?: string } } | undefined;
-  return { status: 'ok', objectId: reply?.insertInlineImage?.objectId };
+  return {
+    status: 'ok',
+    objectId: reply?.insertInlineImage?.objectId,
+    ...(seg.created ? { createdSegment: `${opts.segment}` } : {}),
+  };
 }
 
 export interface TableOptions {
