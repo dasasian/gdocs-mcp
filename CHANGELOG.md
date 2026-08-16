@@ -6,7 +6,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.5.0] — 2026-08-16
+
 ### Changed
+
+> **Breaking: `unshare_doc` now requires `expectRole`.** A call passing only `documentId` and `email` will be rejected. Run `list_permissions` first and echo the role back.
+
 - **`unshare_doc` now requires `expectRole`.** Revoking access is the one operation in the surface with no undo — verified live, a Drive revision carries no permission data at all, so version history restores content and never sharing. Echo back the role `list_permissions` reported and the call proceeds only if the grant is still that; otherwise nothing is removed. An optional `expectTitle` refuses a wrong document id as well.
 
 ### Fixed

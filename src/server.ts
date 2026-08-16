@@ -51,7 +51,7 @@ const segmentArg = {
 };
 
 export function createServer(): McpServer {
-  const server = new McpServer({ name: 'gdocs-mcp', version: '0.4.0' });
+  const server = new McpServer({ name: 'gdocs-mcp', version: '0.5.0' });
 
   server.registerTool(
     'list_accounts',
