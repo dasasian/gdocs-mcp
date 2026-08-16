@@ -9,11 +9,28 @@ export interface Permission {
   id: string;
   type: string; // user | group | domain | anyone
   role: string;
+  /** null for domain and anyone grants — they name no person. */
   email: string | null;
   displayName: string | null;
+  /** the domain a `domain` grant covers. */
+  domain?: string;
+  /** domain/anyone grants only: true means the file also surfaces in their search,
+   *  not merely that it opens with the link. Materially different exposures. */
+  allowFileDiscovery?: boolean;
+  /** who this grant covers, in one readable string — a domain or anyone grant has
+   *  no email, so a caller printing `email` alone shows nothing at all. */
+  subject: string;
 }
 
-const FIELDS = 'permissions(id,type,role,emailAddress,displayName)';
+const FIELDS = 'permissions(id,type,role,emailAddress,displayName,domain,allowFileDiscovery)';
+
+// "alice@x.com" · "example.com (domain)" · "anyone with the link"
+function subjectOf(p: { type?: string | null; emailAddress?: string | null; domain?: string | null; displayName?: string | null }): string {
+  if (p.emailAddress) return p.emailAddress;
+  if (p.type === 'domain') return `${p.domain ?? 'unknown domain'} (domain)`;
+  if (p.type === 'anyone') return 'anyone with the link';
+  return p.displayName ?? p.type ?? 'unknown';
+}
 
 export async function listPermissions(clients: GoogleClients, fileId: string): Promise<Permission[]> {
   const res = await clients.drive.permissions.list({ fileId, fields: FIELDS });
@@ -23,6 +40,9 @@ export async function listPermissions(clients: GoogleClients, fileId: string): P
     role: p.role ?? '',
     email: p.emailAddress ?? null,
     displayName: p.displayName ?? null,
+    ...(p.domain ? { domain: p.domain } : {}),
+    ...(p.allowFileDiscovery != null ? { allowFileDiscovery: p.allowFileDiscovery } : {}),
+    subject: subjectOf(p),
   }));
 }
 

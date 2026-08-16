@@ -744,7 +744,7 @@ export function createServer(): McpServer {
     'list_permissions',
     {
       title: 'List who a doc is shared with',
-      description: 'List the permissions on a Google Doc (people, groups, domain, anyone-with-link) with their roles.',
+      description: 'List the permissions on a Google Doc (people, groups, domain, anyone-with-link) with their roles. Each entry carries a `subject` naming who it covers — an email, "<domain> (domain)", or "anyone with the link" — since a domain or link grant has no email. For those, `allowFileDiscovery: true` means the file also surfaces in that audience\'s search, not merely that it opens with the link. Note a doc created under a Workspace domain may already carry a domain grant before you share it.',
       inputSchema: { documentId: z.string(), ...accountArg },
     },
     async ({ documentId, account }) => {
