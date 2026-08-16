@@ -4,20 +4,29 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] — 2026-08-16
 
-### Added
-- **`segment`/`page` on the table and suggestion tools** — `insert_table`, `edit_table`, `set_table_style`, `list_suggestions` and `apply_suggestions` can now target a header or footer, the same way the text tools already could. A letterhead table or a tracked change on a footer disclaimer was previously unreachable, and failed *silently*: the cell text simply never matched, so `edit_table` reported "no table cell containing …" as though the table did not exist. These now report `no_segment` with the list of segments the doc actually has. `insert_table` also takes `createSegment` (as `insert_image` does), so a table can be placed in a header the doc doesn't have yet (#28).
+Six correctness fixes and the cleanup pass that uncovered them. Nearly all of it
+is one bug wearing different clothes: **a write whose effect the next read could
+not see**, so an agent could not verify its own work. `DESIGN.md` §2 now states
+the rule — a construct the writer accepts must be a construct the reader emits.
 
-### Added
+### Changed
+
+> **`read_doc` output format.** Anything that parses it should be checked.
+
 - **`read_doc` now shows text color, size and font.** A run carrying any of them comes back wrapped in `<span style="color:…;font-size:…pt;font-family:…">` — the exact spelling the writer already parsed, so it round-trips. `DESIGN.md` §2 made inline HTML the escape hatch for formatting markdown can't express and required it be "visible in the read", but the reader never emitted these, so a `set_style` colour change was invisible on the next read and an agent could not verify its own edit or preserve styling it was rewriting around. Emission is quiet by default: Google only populates these fields on runs that *override* them, so inherited text (including headings) is untouched (#30).
 - **Embedded images read back with their size.** `read_doc` now emits `<img src="image:<objectId>" width="…" height="…">` (points) instead of a bare `![](image:<objectId>)`, and the writer accepts an `<img>` line — so image dimensions survive a round-trip. `DESIGN.md` §2 named `<img width="400">` as the mechanism; it existed on neither side. The plain `![alt](src)` form still works unchanged for authoring. Writing an `image:<objectId>` marker back is now refused with an explanation, rather than failing as a missing local file, because Docs stores the embedded bytes and not a re-fetchable URL (#30).
-- **Inline code round-trips.** Docs has no code style, so the writer maps `` `x` `` to a monospace font; the reader now maps it back. Previously the backticks were dropped on read (#30).
 
+### Added
+
+- **`segment`/`page` on the table and suggestion tools** — `insert_table`, `edit_table`, `set_table_style`, `list_suggestions` and `apply_suggestions` can now target a header or footer, the same way the text tools already could. A letterhead table or a tracked change on a footer disclaimer was previously unreachable, and failed *silently*: the cell text simply never matched, so `edit_table` reported "no table cell containing …" as though the table did not exist. These now report `no_segment` with the list of segments the doc actually has. `insert_table` also takes `createSegment` (as `insert_image` does), so a table can be placed in a header the doc doesn't have yet (#28).
+- **Inline code round-trips.** Docs has no code style, so the writer maps `` `x` `` to a monospace font; the reader now maps it back. Previously the backticks were dropped on read (#30).
 - **`insert_table` cells accept inline markdown, and take per-column `align`.** Cell text now goes through the same renderer the markdown path uses, so `**bold**`, `` `code` `` and `[links](url)` work; `align: ["center","right"]` sets column alignment at creation (#29).
 - **`insert_image` accepts a local file path**, not just a public URL — it uploads to Drive, embeds, and removes the temp upload, the same way `![](./logo.png)` in pushed markdown already did. Relative paths resolve against `baseDir` (#29).
 
 ### Fixed
+
 - **`overwrite_doc` and `insert_content` inherited the styling of the text they replaced.** Google's `insertText` picks up the character formatting at the insertion point, and when a delete and an insert share one `batchUpdate` — which is exactly what an overwrite is — the new text inherits the formatting of the text just deleted. So pushing plain markdown into a bold, coloured or hyperlinked document produced bold, coloured, hyperlinked output that nothing in the markdown asked for. The rendered range now has its direct character styling cleared before the markdown's own styling is applied. Named styles still inherit, so a document's `NORMAL_TEXT` font is unaffected (#32).
 - **`read_doc` wrapped every hyperlink in a redundant colour span.** Docs writes its link blue in as a direct run colour, which the new colour rendering then surfaced. The default is now suppressed on links (as underline already was), while a deliberately coloured link still shows (#32).
 - **`insert_table` wrote literal markdown into cells.** `data: [["**Bold**"]]` inserted the asterisks as text. Because `read_doc` renders genuinely-bold text as `**Bold**` too, a read-back looked correct while the document held corrupt text, so callers had no way to notice (#29).

@@ -76,9 +76,12 @@ why enhancing an existing tool was rejected.
 MCP server → npm **and** the MCP registry. Full process + every gotcha: `../PUBLISHING.md`.
 The short version:
 
-1. Bump `version` in **both** `package.json` and `server.json` (including `server.json`'s
-   `packages[].version`) — a drift between them fails the registry publish. Update
-   `CHANGELOG.md` (`[Unreleased]` → `[X.Y.Z] — <date>`).
+1. Bump `version` in **four** places: `package.json`, `server.json` (top level **and**
+   `packages[].version`), and the `new McpServer({ version })` literal in `src/server.ts`
+   — that last one is what clients see on handshake and is easy to miss. A drift between
+   the first three fails the registry publish; a stale one in `server.ts` ships silently.
+   `grep -rn '<old-version>' src/ package.json server.json` should come back empty.
+   Update `CHANGELOG.md` (`[Unreleased]` → `[X.Y.Z] — <date>`).
 2. Commit `chore: release X.Y.Z` and push.
 3. `npm publish` — needs your OTP. Traps: a `404 on PUT` = lapsed token (`npm login`);
    `npm view` can 404 for ~2 min after a *successful* publish (confirm with

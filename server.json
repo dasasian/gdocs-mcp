@@ -3,7 +3,7 @@
   "name": "io.github.dasasian/gdocs-mcp",
   "description": "Treat a Google Doc like a local file: content editing, tracked-changes review, comments, tables.",
   "websiteUrl": "https://dasasian.com/gdocs-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "repository": {
     "url": "https://github.com/dasasian/gdocs-mcp",
     "source": "github"
@@ -12,7 +12,7 @@
     {
       "registryType": "npm",
       "identifier": "@dasasian/gdocs-mcp",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "transport": {
         "type": "stdio"
       }
