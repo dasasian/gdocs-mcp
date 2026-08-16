@@ -71,6 +71,14 @@ Legend for "What gdocs-mcp does": **mitigated** = a tool works around it; **surf
 
 ---
 
+## Sharing & access
+
+| Limitation | Why | What gdocs-mcp does |
+|---|---|---|
+| **A new doc may already be shared before you share it.** Under a Google Workspace domain, files can be created carrying a domain-wide grant — on `dasasian.com`, every doc this server creates starts as `{type: domain, role: reader, allowFileDiscovery: true}`, meaning anyone in the domain can read it *and* it surfaces in their Drive search. | A Workspace admin setting applied at creation, not something the server does or can opt out of. | **surfaced** — `list_permissions` shows the grant. Note it currently renders without naming the domain (#42), and no tool can remove a domain or group grant yet (#41). If a document must not be domain-readable, check `list_permissions` after creating it. |
+
+---
+
 ## Markdown rendering coverage
 
 | Limitation | Why | What gdocs-mcp does |
