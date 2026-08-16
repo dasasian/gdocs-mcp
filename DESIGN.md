@@ -51,8 +51,8 @@ only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 
 | Tool | Role |
 |---|---|
-| `read_doc(doc, tab?, mode, segment?)` | Read as markdown+HTML. `mode`: `clean` (default) · `tracked` (`<ins>/<del>`+IDs) · `accepted` · `rejected`. `segment`: `body`/`header`/`footer`/`all` (§3a) |
-| `edit_doc(doc, old_string, new_string, tab?, replace_all?, strict?)` | String-anchored edit (the workhorse) |
+| `read_doc(doc, tab?, mode, segment?)` | Read as markdown+HTML — colour/size/font as `<span style>`, images as `<img src="image:…" width height>` (§2). `mode`: `clean` (default) · `tracked` (`<ins>/<del>`+IDs) · `accepted` · `rejected`. `segment`: `body`/`header`/`footer`/`all` (§3a) |
+| `edit_doc(doc, old_string, new_string, tab?, replace_all?, strict?, segment?)` | String-anchored edit (the workhorse) |
 | `overwrite_doc(doc, content\|contentFile, tab?)` | Wholesale replace — **guarded** (§4) |
 | `insert_content(doc, content\|contentFile, at?, tab?)` | Insert new content at a structural position (`end`/`top`/anchor) — the non-anchored counterpart to `edit_doc` (§4) |
 | `export_doc(doc, dir, format?, filename?)` | Server-side render to pdf/docx/odt/rtf/txt/html/epub/md via Drive `files.export` |
@@ -62,10 +62,10 @@ only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 | `set_style(doc, {from,to?}\|whole_document, style, tab?)` | Style existing text **in place** by selection or whole-doc, no content change |
 | `get_style(doc, target_string, tab?)` | Read the computed style at an anchor (read side of `set_style`) |
 | `set_page_setup / get_page_setup(doc, tab?)` | Document page setup: margins, page size, orientation |
-| `insert_image(doc, at, source, width?, align?, tab?)` | Images (markdown can't size/place them) |
-| `insert_table(doc, rows, cols, data?, tab?)` · `edit_table(doc, cell, op, side?)` · `set_table_style(...)` | Tables: create, insert/delete row-or-column, style |
-| `list_suggestions(doc, tab?)` | Suggestions as before→after diffs |
-| `apply_suggestions(doc, resolutions[])` | Resolve one or more suggestions atomically (§6) |
+| `insert_image(doc, at, uri, width?, height?, align?, baseDir?, segment?, tab?)` | Images from a URL or a local file (markdown can't size/place them) |
+| `insert_table(doc, rows, cols, data?, align?, segment?, tab?)` · `edit_table(doc, cell, op, side?, segment?)` · `set_table_style(..., segment?)` | Tables: create (cells take inline markdown), insert/delete row-or-column, style. `segment` reaches a letterhead table (§3a) |
+| `list_suggestions(doc, tab?, segment?)` | Suggestions as before→after diffs |
+| `apply_suggestions(doc, resolutions[], segment?)` | Resolve one or more suggestions atomically (§6) |
 | `list_comments / add_comment(replyTo?) / resolve_comment` | Drive comments (`add_comment` also replies) |
 | `list_tabs / add_tab / rename_tab / delete_tab` | Tab structure |
 | `list_folder / search_drive / create_folder` | Drive navigation (results carry parent folder id+name) and folder creation |
