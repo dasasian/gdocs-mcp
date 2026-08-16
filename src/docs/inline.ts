@@ -1,11 +1,13 @@
 import type { docs_v1 } from 'googleapis';
 import { hexToRgb } from './color.js';
 
-// Parse a single level of inline markdown AND inline HTML into styled segments,
-// so edit_doc's new_string can carry **bold** / *italic* / ~~strike~~ / `code` /
-// [text](url) and <b>/<i>/<u>/<code>/<a href>/<span style="color:…;font-size:…">.
-// Non-nested (one level) — good enough for inline content; block constructs go
-// through other tools.
+// Parse inline markdown AND inline HTML into styled segments, so edit_doc's
+// new_string can carry **bold** / *italic* / ~~strike~~ / `code` / [text](url)
+// and <b>/<i>/<u>/<code>/<a href>/<span style="color:…;font-size:…">.
+// Containers nest: `<u>**x**</u>` is underlined and bold, because the reader
+// emits styles in layers and a round-trip has to survive them (#31). Code spans
+// are the exception — their contents are literal by definition. Block
+// constructs still go through other tools.
 
 export interface Segment {
   text: string;
@@ -23,6 +25,13 @@ export interface Segment {
 interface Pattern {
   re: RegExp;
   make: (m: RegExpExecArray) => Segment;
+  /**
+   * Capture group holding markup that may itself be styled, e.g. the `**AAA**`
+   * inside `<u>**AAA**</u>`. Those groups are re-parsed and the container's own
+   * styles layered on (#31). Omit for a pattern whose content is literal by
+   * definition — code spans — or that captures nothing.
+   */
+  inner?: number;
 }
 
 // Parse a CSS style attribute into the styles we support.
@@ -53,38 +62,40 @@ const decodeEscapes = (s: string): string =>
 // Order matters: links/HTML and double-markers before single-markers.
 const PATTERNS: Pattern[] = [
   // markdown
-  { re: /\[([^\]]+)\]\(([^)]+)\)/, make: (m) => ({ text: m[1], link: m[2] }) },
-  { re: /\*\*([^*]+)\*\*/, make: (m) => ({ text: m[1], bold: true }) },
+  { re: /\[([^\]]+)\]\(([^)]+)\)/, make: (m) => ({ text: m[1], link: m[2] }), inner: 1 },
+  { re: /\*\*([^*]+)\*\*/, make: (m) => ({ text: m[1], bold: true }), inner: 1 },
   // Underscore-bold with CommonMark word-boundary guards: `\w` (which includes `_`)
   // on either side blocks both intraword emphasis (a__b__c) and long underscore
   // runs used as signature blank lines (____ ____ from soft-joined lines).
-  { re: /(?<!\w)__([^_]+)__(?!\w)/, make: (m) => ({ text: m[1], bold: true }) },
-  { re: /~~([^~]+)~~/, make: (m) => ({ text: m[1], strikethrough: true }) },
-  { re: /\*([^*]+)\*/, make: (m) => ({ text: m[1], italic: true }) },
+  { re: /(?<!\w)__([^_]+)__(?!\w)/, make: (m) => ({ text: m[1], bold: true }), inner: 1 },
+  { re: /~~([^~]+)~~/, make: (m) => ({ text: m[1], strikethrough: true }), inner: 1 },
+  { re: /\*([^*]+)\*/, make: (m) => ({ text: m[1], italic: true }), inner: 1 },
   { re: /`([^`]+)`/, make: (m) => ({ text: m[1], code: true }) },
   // inline html
-  { re: /<(?:b|strong)>(.*?)<\/(?:b|strong)>/i, make: (m) => ({ text: m[1], bold: true }) },
-  { re: /<(?:i|em)>(.*?)<\/(?:i|em)>/i, make: (m) => ({ text: m[1], italic: true }) },
-  { re: /<u>(.*?)<\/u>/i, make: (m) => ({ text: m[1], underline: true }) },
-  { re: /<(?:s|del|strike)>(.*?)<\/(?:s|del|strike)>/i, make: (m) => ({ text: m[1], strikethrough: true }) },
+  { re: /<(?:b|strong)>(.*?)<\/(?:b|strong)>/i, make: (m) => ({ text: m[1], bold: true }), inner: 1 },
+  { re: /<(?:i|em)>(.*?)<\/(?:i|em)>/i, make: (m) => ({ text: m[1], italic: true }), inner: 1 },
+  { re: /<u>(.*?)<\/u>/i, make: (m) => ({ text: m[1], underline: true }), inner: 1 },
+  { re: /<(?:s|del|strike)>(.*?)<\/(?:s|del|strike)>/i, make: (m) => ({ text: m[1], strikethrough: true }), inner: 1 },
   { re: /<code>(.*?)<\/code>/i, make: (m) => ({ text: m[1], code: true }) },
   // <br> -> an in-paragraph line break (Docs vertical tab U+000B), the write-side
   // counterpart to read emitting <br> for the same char (transformer.ts).
   { re: /<br\s*\/?>/i, make: () => ({ text: '\v' }) },
-  { re: /<a\s+[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/i, make: (m) => ({ text: m[2], link: m[1] }) },
-  { re: /<span\s+[^>]*style="([^"]*)"[^>]*>(.*?)<\/span>/i, make: (m) => ({ text: m[2], ...parseStyleAttr(m[1]) }) },
+  { re: /<a\s+[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/i, make: (m) => ({ text: m[2], link: m[1] }), inner: 2 },
+  { re: /<span\s+[^>]*style="([^"]*)"[^>]*>(.*?)<\/span>/i, make: (m) => ({ text: m[2], ...parseStyleAttr(m[1]) }), inner: 2 },
 ];
 
-export function parseInline(input: string): Segment[] {
+// The walk itself, over already-escape-encoded text. Kept separate from
+// parseInline so the recursive step can't re-encode or decode early.
+function parseEncoded(input: string): Segment[] {
   const segments: Segment[] = [];
-  let rest = encodeEscapes(input);
+  let rest = input;
   while (rest.length) {
     // Find the earliest-starting marker across all patterns.
-    let best: { index: number; len: number; seg: Segment } | null = null;
-    for (const { re, make } of PATTERNS) {
+    let best: { index: number; len: number; seg: Segment; inner?: string } | null = null;
+    for (const { re, make, inner } of PATTERNS) {
       const m = new RegExp(re).exec(rest);
       if (m && (best === null || m.index < best.index)) {
-        best = { index: m.index, len: m[0].length, seg: make(m) };
+        best = { index: m.index, len: m[0].length, seg: make(m), inner: inner === undefined ? undefined : m[inner] };
       }
     }
     if (!best) {
@@ -92,9 +103,23 @@ export function parseInline(input: string): Segment[] {
       break;
     }
     if (best.index > 0) segments.push({ text: rest.slice(0, best.index) });
-    segments.push(best.seg);
+    if (best.inner === undefined) {
+      segments.push(best.seg);
+    } else {
+      // A container: re-parse its contents and layer this container's styles
+      // underneath each child, so `<u>**AAA**</u>` is underlined AND bold rather
+      // than an underlined literal `**AAA**` (#31). The inner match is always
+      // shorter than the whole match, so this terminates.
+      const { text: _outerText, ...styles } = best.seg;
+      for (const child of parseEncoded(best.inner)) segments.push({ ...styles, ...child });
+    }
     rest = rest.slice(best.index + best.len);
   }
+  return segments;
+}
+
+export function parseInline(input: string): Segment[] {
+  const segments = parseEncoded(encodeEscapes(input));
   // Restore escaped punctuation (sentinels) to literal chars in text (and any link url).
   for (const s of segments) {
     s.text = decodeEscapes(s.text);

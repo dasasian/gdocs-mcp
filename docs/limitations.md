@@ -75,5 +75,6 @@ Legend for "What gdocs-mcp does": **mitigated** = a tool works around it; **surf
 |---|---|---|
 | **Code blocks aren't rendered** from pushed markdown yet. | Not a Google limit — a not-yet-built writer feature. | **roadmap** — Tier-2 block rendering. |
 | **Tables/images embedded *in* pushed markdown** render on `create_doc`/`overwrite_doc`; standalone insertion is via `insert_table`/`insert_image`. | — | **mitigated**. |
+| **Two inline containers of the same tag can't nest** — `<span …><span …>x</span></span>` closes the outer span on the inner one's end tag. | The inline patterns are regexes; matching balanced same-tag nesting needs a real parser. | **documented** — the reader never emits this shape (every style of a run goes in one span), and one span carrying both properties (`style="color:blue;font-size:14pt"`) is the supported spelling. Different tags nest fine (`<u>**x**</u>`, #31). |
 
 > Only the code-block row here is a `gdocs-mcp` roadmap item; everything else on this page is a Google-API constraint.
