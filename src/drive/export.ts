@@ -46,11 +46,14 @@ export async function exportDoc(
   const mimeType = MIME[format];
   if (!mimeType) throw new Error(`Unsupported export format "${format}". Use one of: ${EXPORT_FORMATS.join(', ')}.`);
 
-  const meta = await clients.drive.files.get({ fileId, fields: 'name', supportsAllDrives: true });
+  // The title lookup and the export are independent — run them together, since
+  // a server-side PDF/DOCX render is the slow half.
+  // arraybuffer, not the default JSON parse — the export response is raw bytes.
+  const [meta, res] = await Promise.all([
+    clients.drive.files.get({ fileId, fields: 'name', supportsAllDrives: true }),
+    clients.drive.files.export({ fileId, mimeType }, { responseType: 'arraybuffer' }),
+  ]);
   const title = meta.data.name ?? 'document';
-
-  // arraybuffer, not the default JSON parse — the response is raw bytes.
-  const res = await clients.drive.files.export({ fileId, mimeType }, { responseType: 'arraybuffer' });
   const buf = Buffer.from(res.data as ArrayBuffer);
 
   mkdirSync(dir, { recursive: true });

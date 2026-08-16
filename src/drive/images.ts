@@ -78,20 +78,29 @@ export async function downloadImages(
   const token = (await clients.auth.getAccessToken()).token;
   mkdirSync(destDir, { recursive: true });
 
+  // Fetch every image concurrently (they're independent), then write them in
+  // document order so the image-N numbering stays stable.
+  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+  const fetched = await Promise.all(
+    Object.entries(objects).map(async ([objectId, obj]) => {
+      const contentUri = obj.inlineObjectProperties?.embeddedObject?.imageProperties?.contentUri;
+      if (!contentUri) return null;
+      const res = await fetch(contentUri, { headers });
+      if (!res.ok) return null;
+      return { objectId, buf: Buffer.from(await res.arrayBuffer()) };
+    }),
+  );
+
   const out: DownloadedImage[] = [];
   let n = 0;
-  for (const [objectId, obj] of Object.entries(objects)) {
-    const contentUri = obj.inlineObjectProperties?.embeddedObject?.imageProperties?.contentUri;
-    if (!contentUri) continue;
-    const res = await fetch(contentUri, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-    if (!res.ok) continue;
-    const buf = Buffer.from(await res.arrayBuffer());
+  for (const got of fetched) {
+    if (!got) continue;
     n += 1;
-    const filename = `image-${n}.${extFromBytes(buf)}`;
+    const filename = `image-${n}.${extFromBytes(got.buf)}`;
     const filePath = path.join(destDir, filename);
-    writeFileSync(filePath, buf);
-    const sha256 = createHash('sha256').update(buf).digest('hex');
-    out.push({ objectId, filename, path: filePath, bytes: buf.length, sha256 });
+    writeFileSync(filePath, got.buf);
+    const sha256 = createHash('sha256').update(got.buf).digest('hex');
+    out.push({ objectId: got.objectId, filename, path: filePath, bytes: got.buf.length, sha256 });
   }
   return out;
 }
