@@ -48,8 +48,11 @@ one, do this review and record the trade-off in the PR/commit:
    fields). Reads over a *range* are ambiguous (mixed styles) — that's why
    `get_style` stays single-anchor while `set_style` takes a selection.
 6. **Pair reads with writes.** `get_style`/`set_style`, `get_page_setup`/
-   `set_page_setup`. If you add a setter for a new dimension, consider whether a
-   matching getter is needed for round-tripping (it usually is).
+   `set_page_setup`. A setter for a new dimension gets a matching getter. Shipping
+   without one is a deliberate choice you state in the commit, not a default —
+   this rule used to say "consider", which is how `set_table_style` shipped with
+   no reader at all, leaving column widths and shading settable but invisible
+   (#33).
 
 If, after this, a new tool is still the right call — add it, and say in the commit
 why enhancing an existing tool was rejected.
