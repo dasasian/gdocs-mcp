@@ -10,7 +10,7 @@ import { createDoc, copyDoc, insertContent, overwriteDoc, updateDoc, listTabs, a
 import { setStyle } from './docs/format.js';
 import { setPageSetup, getPageSetup } from './docs/page.js';
 import { getStyle } from './docs/inspect.js';
-import { insertImage, insertTable, insertRow, deleteRow, insertColumn, deleteColumn, setTableStyle } from './docs/objects.js';
+import { insertImage, insertTable, insertRow, deleteRow, insertColumn, deleteColumn, setTableStyle, getTableStyle } from './docs/objects.js';
 import { listPermissions, shareDoc, unshareDoc, setLinkAccess } from './drive/sharing.js';
 import { listFolder, searchDrive, createFolder } from './drive/files.js';
 import { downloadImages } from './drive/images.js';
@@ -613,6 +613,26 @@ export function createServer(): McpServer {
         case 'delete_column':
           return json(await deleteColumn(clients, documentId, cell, seg));
       }
+    },
+  );
+
+  server.registerTool(
+    'get_table_style',
+    {
+      title: 'Read an existing table’s style',
+      description:
+        'Read the style of the table containing the given cell text: per-column widths (points), how many header rows are pinned, and the matched cell’s padding, background and per-side borders. The read counterpart to set_table_style — use it to check a change took, to preserve a table’s look while rewriting it, or to copy one table’s layout onto another. Column widths come back in the exact shape set_table_style accepts. Table-wide facts (widths, header rows) are reported for the whole table; padding/background/borders are reported for the MATCHED cell, since cells in one table can differ and a table-wide answer would have to guess. Note Docs gives every cell 5pt padding by default, so padding is reported even on a table nobody has styled.',
+      inputSchema: {
+        documentId: z.string(),
+        cell: z.string().describe('text of any cell in the target table (locates the table)'),
+        ...segmentArg,
+        ...tabArg,
+        ...accountArg,
+      },
+    },
+    async ({ documentId, cell, segment, page, tab, account }) => {
+      const clients = await clientsForAccount(account);
+      return json(await getTableStyle(clients, documentId, cell, { segment, page, tab }));
     },
   );
 

@@ -63,7 +63,7 @@ only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 | `get_style(doc, target_string, tab?)` | Read the computed style at an anchor (read side of `set_style`) |
 | `set_page_setup / get_page_setup(doc, tab?)` | Document page setup: margins, page size, orientation |
 | `insert_image(doc, at, uri, width?, height?, align?, baseDir?, segment?, tab?)` | Images from a URL or a local file (markdown can't size/place them) |
-| `insert_table(doc, rows, cols, data?, align?, segment?, tab?)` · `edit_table(doc, cell, op, side?, segment?)` · `set_table_style(..., segment?)` | Tables: create (cells take inline markdown), insert/delete row-or-column, style. `segment` reaches a letterhead table (§3a) |
+| `insert_table(doc, rows, cols, data?, align?, segment?, tab?)` · `edit_table(doc, cell, op, side?, segment?)` · `set_table_style / get_table_style(doc, cell, segment?)` | Tables: create (cells take inline markdown), insert/delete row-or-column, style and read style back. `segment` reaches a letterhead table (§3a) |
 | `list_suggestions(doc, tab?, segment?)` | Suggestions as before→after diffs |
 | `apply_suggestions(doc, resolutions[], segment?)` | Resolve one or more suggestions atomically (§6) |
 | `list_comments / add_comment(replyTo?) / resolve_comment` | Drive comments (`add_comment` also replies) |

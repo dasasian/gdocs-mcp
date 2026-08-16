@@ -7,7 +7,7 @@ import { ALIGN_BY_CSS, type CssAlign } from './markdown-spec.js';
 import { parseInline, segmentTextStyle } from './inline.js';
 import { project } from './transformer.js';
 import { locate, rangeFor, contextAround } from './edit.js';
-import { hexToRgb } from './color.js';
+import { hexToRgb, rgbToHex } from './color.js';
 
 // Objects markdown can't size/place: images (and tables). Position is `top`,
 // `end`, or a unique text anchor (insert right after the matched text).
@@ -313,6 +313,8 @@ interface TableLoc {
   cols: number;
   rowIndex: number;
   columnIndex: number;
+  /** the table itself, so a reader doesn't have to walk the content again. */
+  table: docs_v1.Schema$Table;
 }
 
 function locateTable(doc: docs_v1.Schema$Document, cellText: string, tabId?: string, segmentId?: string): TableLoc | null {
@@ -329,6 +331,7 @@ function locateTable(doc: docs_v1.Schema$Document, cellText: string, tabId?: str
             cols: rowsArr[0].tableCells?.length ?? cells.length,
             rowIndex: r,
             columnIndex: c,
+            table: el.table!,
           };
         }
       }
@@ -368,6 +371,113 @@ export interface TableStyleResult {
 // Edit style/layout of an EXISTING table (#8): cell padding, background, column
 // widths — reusing the same request types insert_table builds, but against a
 // located table rather than a freshly-created one.
+
+// ---- Reading table style (#33) ---------------------------------------------
+
+export interface BorderInfo {
+  /** points; 0 means Docs is hiding the border (they cannot be transparent). */
+  width?: number;
+  /** hex, e.g. "#cccccc". */
+  color?: string;
+  dashStyle?: string;
+}
+
+export interface TableStyleInfo {
+  status: 'ok' | 'not_found' | 'no_segment';
+  message?: string;
+  table?: { rows: number; columns: number; matchedCell: { rowIndex: number; columnIndex: number } };
+  /** every column that carries an explicit width, in points. Feeds straight back to set_table_style. */
+  columnWidths?: { index: number; width: number }[];
+  /** how many leading rows repeat on every page. */
+  headerRows?: number;
+  /** the MATCHED cell's own style. Cells in one table can differ, so a table-wide
+   *  answer would have to average or guess; this reports one cell exactly, the same
+   *  reason get_style takes a single anchor while set_style takes a selection. */
+  cell?: {
+    /** Docs gives every cell 5pt padding by default, so this is present on tables
+     *  nobody has styled. It is the real value, not a guess at intent. */
+    padding?: { left?: number; right?: number; top?: number; bottom?: number };
+    backgroundColor?: string;
+    /** per side, since sides genuinely differ; set_table_style applies one style to `sides`. */
+    borders?: { top?: BorderInfo; bottom?: BorderInfo; left?: BorderInfo; right?: BorderInfo };
+  };
+}
+
+const ptOf = (d: docs_v1.Schema$Dimension | undefined): number | undefined =>
+  d?.magnitude == null ? undefined : Math.round(d.magnitude * 100) / 100;
+
+function borderInfo(b: docs_v1.Schema$TableCellBorder | undefined): BorderInfo | undefined {
+  if (!b) return undefined;
+  const out: BorderInfo = {};
+  const w = ptOf(b.width);
+  if (w !== undefined) out.width = w;
+  const color = rgbToHex(b.color?.color?.rgbColor ?? undefined);
+  if (color) out.color = color;
+  if (b.dashStyle) out.dashStyle = b.dashStyle;
+  return Object.keys(out).length ? out : undefined;
+}
+
+// The read counterpart to setTableStyle. Located the same way — by the text of any
+// one cell — so the pair addresses tables identically.
+export async function getTableStyle(
+  clients: GoogleClients,
+  documentId: string,
+  cellText: string,
+  opts: SegmentOpts & { tab?: string } = {},
+): Promise<TableStyleInfo> {
+  const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
+  const tabId = resolveTabId(res.data, opts.tab);
+  const seg = await resolveSegmentTarget(clients, documentId, res.data, { segment: opts.segment, page: opts.page, tabId });
+  if (seg.error) return { status: 'no_segment', message: seg.error };
+  const loc = locateTable(seg.doc, cellText, tabId, seg.segmentId);
+  if (!loc) return { status: 'not_found', message: `no table cell containing "${cellText}"${seg.segmentId ? ` in the ${opts.segment}` : ''}` };
+
+  const out: TableStyleInfo = {
+    status: 'ok',
+    table: { rows: loc.rows, columns: loc.cols, matchedCell: { rowIndex: loc.rowIndex, columnIndex: loc.columnIndex } },
+  };
+
+  const widths = (loc.table.tableStyle?.tableColumnProperties ?? []).flatMap((cp, index) => {
+    const width = ptOf(cp.width ?? undefined);
+    // Docs reports EVENLY_DISTRIBUTED columns with no width; only a set one is a fact.
+    return width !== undefined && cp.widthType === 'FIXED_WIDTH' ? [{ index, width }] : [];
+  });
+  if (widths.length) out.columnWidths = widths;
+
+  let headerRows = 0;
+  for (const row of loc.table.tableRows ?? []) {
+    if (row.tableRowStyle?.tableHeader) headerRows += 1;
+    else break;
+  }
+  if (headerRows) out.headerRows = headerRows;
+
+  const style = loc.table.tableRows?.[loc.rowIndex]?.tableCells?.[loc.columnIndex]?.tableCellStyle ?? {};
+  const cell: NonNullable<TableStyleInfo['cell']> = {};
+  const padding = {
+    left: ptOf(style.paddingLeft ?? undefined),
+    right: ptOf(style.paddingRight ?? undefined),
+    top: ptOf(style.paddingTop ?? undefined),
+    bottom: ptOf(style.paddingBottom ?? undefined),
+  };
+  if (Object.values(padding).some((v) => v !== undefined)) {
+    cell.padding = Object.fromEntries(Object.entries(padding).filter(([, v]) => v !== undefined));
+  }
+  const bg = rgbToHex(style.backgroundColor?.color?.rgbColor ?? undefined);
+  if (bg) cell.backgroundColor = bg;
+  const borders = {
+    top: borderInfo(style.borderTop ?? undefined),
+    bottom: borderInfo(style.borderBottom ?? undefined),
+    left: borderInfo(style.borderLeft ?? undefined),
+    right: borderInfo(style.borderRight ?? undefined),
+  };
+  if (Object.values(borders).some(Boolean)) {
+    cell.borders = Object.fromEntries(Object.entries(borders).filter(([, v]) => v));
+  }
+  if (Object.keys(cell).length) out.cell = cell;
+
+  return out;
+}
+
 export async function setTableStyle(
   clients: GoogleClients,
   documentId: string,

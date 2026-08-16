@@ -289,3 +289,98 @@ describe('columnAlignRequests (#29)', () => {
     expect(columnAlignRequests(undefined, ['center'])).toEqual([]);
   });
 });
+
+// ---- #33: reading a table's style ------------------------------------------
+//
+// set_table_style was the only setter with no getter, so column widths, header
+// shading and borders were all settable and none of them could be read back.
+
+import { getTableStyle } from '../src/docs/objects.js';
+
+function styledTableDoc(): docs_v1.Schema$Document {
+  const cell = (t: string, style?: docs_v1.Schema$TableCellStyle): docs_v1.Schema$TableCell => ({
+    content: [{ paragraph: { elements: [{ textRun: { content: t } }] } }],
+    tableCellStyle: style,
+  });
+  const pt = (n: number) => ({ magnitude: n, unit: 'PT' });
+  const red = { color: { color: { rgbColor: { red: 0.8 } } } };
+  return {
+    tabs: [
+      {
+        documentTab: {
+          body: {
+            content: [
+              {
+                startIndex: 2,
+                table: {
+                  tableStyle: {
+                    tableColumnProperties: [
+                      { widthType: 'FIXED_WIDTH', width: pt(140) },
+                      { widthType: 'EVENLY_DISTRIBUTED' },
+                    ],
+                  },
+                  tableRows: [
+                    {
+                      tableRowStyle: { tableHeader: true },
+                      tableCells: [
+                        cell('H1', {
+                          backgroundColor: { color: { rgbColor: { red: 0.945, green: 0.953, blue: 0.957 } } },
+                          paddingLeft: pt(12),
+                          borderTop: { ...red, width: pt(2), dashStyle: 'DASH' },
+                        }),
+                        cell('H2'),
+                      ],
+                    },
+                    { tableCells: [cell('a'), cell('b')] },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      },
+    ],
+  } as unknown as docs_v1.Schema$Document;
+}
+
+describe('getTableStyle (#33)', () => {
+  it('reads table-wide facts and the matched cell together', async () => {
+    const r = await getTableStyle(clientsFor(styledTableDoc()), 'd', 'H1');
+    expect(r.status).toBe('ok');
+    expect(r.table).toMatchObject({ rows: 2, columns: 2, matchedCell: { rowIndex: 0, columnIndex: 0 } });
+    expect(r.headerRows).toBe(1);
+    expect(r.cell?.backgroundColor).toBe('#f1f3f4');
+    expect(r.cell?.padding).toEqual({ left: 12 });
+    expect(r.cell?.borders?.top).toEqual({ width: 2, color: '#cc0000', dashStyle: 'DASH' });
+  });
+
+  // The point of the getter: its output is the setter's input.
+  it('returns columnWidths in the shape set_table_style accepts', async () => {
+    const r = await getTableStyle(clientsFor(styledTableDoc()), 'd', 'H1');
+    expect(r.columnWidths).toEqual([{ index: 0, width: 140 }]);
+  });
+
+  it('omits a column with no explicit width rather than inventing one', async () => {
+    const r = await getTableStyle(clientsFor(styledTableDoc()), 'd', 'H1');
+    expect(r.columnWidths?.some((c) => c.index === 1)).toBe(false);
+  });
+
+  it('reports the matched cell, not the first — cells differ', async () => {
+    const r = await getTableStyle(clientsFor(styledTableDoc()), 'd', 'b');
+    expect(r.table?.matchedCell).toEqual({ rowIndex: 1, columnIndex: 1 });
+    expect(r.cell).toBeUndefined(); // that cell carries no style of its own
+  });
+
+  it('reports nothing rather than defaults for an unstyled table', async () => {
+    const r = await getTableStyle(clientsFor(styledTableDoc()), 'd', 'H2');
+    expect(r.headerRows).toBe(1); // table-wide, still true
+    expect(r.cell).toBeUndefined();
+  });
+
+  it('distinguishes a missing table from an unreachable segment', async () => {
+    expect((await getTableStyle(clientsFor(styledTableDoc()), 'd', 'nope')).status).toBe('not_found');
+    const seg = await getTableStyle(clientsFor(styledTableDoc()), 'd', 'H1', { segment: 'footer' });
+    expect(seg.status).toBe('no_segment');
+    expect(seg.message).toContain('no footer');
+  });
+});

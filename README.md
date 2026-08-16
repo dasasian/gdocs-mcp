@@ -112,6 +112,7 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 | `insert_table` | Insert a rows×columns table — data fill (cells accept inline markdown), per-column `align`, column widths, header shading; `segment`/`createSegment` for a letterhead table |
 | `edit_table` | Table structure ops — insert/delete a row or column (surgical — locate the table by cell text); `segment` for header/footer tables |
 | `set_table_style` | Style an existing table (located by cell text): cell padding, background, cell borders (`width: 0` = borderless), column widths, pinned header rows — scope table/row/column/cell; `segment` for header/footer tables |
+| `get_table_style` | Read a table's style (located by cell text): column widths, pinned header rows, and the matched cell's padding, background and per-side borders — the read counterpart to `set_table_style` |
 | `list_comments` / `add_comment` / `resolve_comment` | Comment threads (`add_comment` also replies, via `replyTo`) |
 | `list_tabs` / `add_tab` / `rename_tab` / `delete_tab` | Tab structure |
 | `list_folder` / `search_drive` | Browse a Drive folder / search files+folders by name — results carry their parent folder(s) (id + name) |

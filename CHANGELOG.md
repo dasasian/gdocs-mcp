@@ -6,7 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+- **`get_table_style`** — reads a table's column widths, pinned header rows, and the matched cell's padding, background and per-side borders, located by cell text like its setter. `set_table_style` was the only setter with no getter, so everything it wrote was invisible on read. `columnWidths` comes back in the shape the setter accepts, so one table's layout can be copied onto another (#33).
 
 ## [0.3.0] — 2026-08-16
 
