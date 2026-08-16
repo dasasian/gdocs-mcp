@@ -1,4 +1,4 @@
-import { createReadStream, mkdirSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { GoogleClients } from '../google/clients.js';
@@ -20,6 +20,28 @@ const MIME: Record<string, string> = {
 
 export function mimeForImage(p: string): string {
   return MIME[path.extname(p).toLowerCase()] ?? 'application/octet-stream';
+}
+
+
+// What an image `src` refers to. One resolver so the insert_image tool and the
+// markdown renderer agree on what a URL, a local path, and read_doc's
+// `image:<objectId>` marker each mean (#29).
+export type ImageSource = { kind: 'url'; uri: string } | { kind: 'local'; path: string } | { error: string };
+
+export function resolveImageSource(src: string, baseDir?: string): ImageSource {
+  if (/^https?:\/\//i.test(src)) return { kind: 'url', uri: src };
+  // read_doc's handle for an image already embedded in a document. Docs keeps the
+  // bytes, not a fetchable URL, so it can't be re-embedded from the id alone.
+  if (src.startsWith('image:')) {
+    return {
+      error: `image "${src}" refers to an image already embedded in a document; its bytes are not re-fetchable. Use download_images and point at the local file, or give a URL.`,
+    };
+  }
+  const decoded = decodeURIComponent(src);
+  const abs = path.isAbsolute(decoded) ? decoded : baseDir ? path.resolve(baseDir, decoded) : null;
+  if (!abs) return { error: `image "${src}" is a local path but no baseDir was provided` };
+  if (!existsSync(abs)) return { error: `image not found: ${abs}` };
+  return { kind: 'local', path: abs };
 }
 
 export interface UploadedImage {

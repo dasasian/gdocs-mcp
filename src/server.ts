@@ -272,14 +272,15 @@ export function createServer(): McpServer {
     {
       title: 'Insert an image',
       description:
-        'Insert an inline image from a public URL. Position via at (top/end/or a unique text anchor), size via width/height (points), and align left/center/right. Set segment:"header" for a letterhead logo — that is where a repeating, correctly-sized logo belongs, and it is why a template’s logo is invisible to a body read. A direct edit, not a tracked suggestion. Note: floating/text-wrapped images are not supported by the Docs API.',
+        'Insert an inline image from a public URL or a local file (uploaded to Drive, embedded, then the temp upload removed). Position via at (top/end/or a unique text anchor), size via width/height (points), and align left/center/right. Set segment:"header" for a letterhead logo — that is where a repeating, correctly-sized logo belongs, and it is why a template’s logo is invisible to a body read. A direct edit, not a tracked suggestion. Note: floating/text-wrapped images are not supported by the Docs API.',
       inputSchema: {
         documentId: z.string(),
-        uri: z.string().describe('public image URL'),
+        uri: z.string().describe('public image URL, or a path to a local image file (absolute, or relative to baseDir)'),
         at: z.string().optional().describe('"top", "end", or a unique text snippet to insert after (default top)'),
         width: z.number().optional().describe('points'),
         height: z.number().optional().describe('points'),
         align: z.enum(['left', 'center', 'right']).optional(),
+        baseDir: z.string().optional().describe('absolute dir to resolve a relative local `uri` against'),
         ...segmentArg,
         createSegment: z
           .boolean()
@@ -289,9 +290,9 @@ export function createServer(): McpServer {
         ...accountArg,
       },
     },
-    async ({ documentId, uri, at, width, height, align, segment, page, createSegment, tab, account }) => {
+    async ({ documentId, uri, at, width, height, align, baseDir, segment, page, createSegment, tab, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await insertImage(clients, documentId, uri, { at, width, height, align, tab, segment, page, createSegment }));
+      return json(await insertImage(clients, documentId, uri, { at, width, height, align, baseDir, tab, segment, page, createSegment }));
     },
   );
 
@@ -300,7 +301,7 @@ export function createServer(): McpServer {
     {
       title: 'Insert a table',
       description:
-        'Insert a rows×columns table, optionally populated from a 2D array of cell text. Position via at (top/end/or a unique text anchor, default end). A direct edit, not a tracked suggestion.',
+        'Insert a rows×columns table, optionally populated from a 2D array of cell text — cell text may use inline markdown (**bold**, *italic*, `code`, [links](url)). Per-column alignment via align. Position via at (top/end/or a unique text anchor, default end). A direct edit, not a tracked suggestion.',
       inputSchema: {
         documentId: z.string(),
         rows: z.number().int().positive(),
@@ -308,6 +309,10 @@ export function createServer(): McpServer {
         data: z.array(z.array(z.string())).optional().describe('row-major cell text, e.g. [["A","B"],["1","2"]]'),
         columnWidths: z.array(z.number()).optional().describe('fixed width per column, in points'),
         headerShade: z.string().optional().describe('hex background color for the first row, e.g. #f1f3f4'),
+        align: z
+          .array(z.enum(['left', 'center', 'right', 'justify']).nullable())
+          .optional()
+          .describe('per-column text alignment, e.g. ["left","right"]; null or "left" leaves a column at the default'),
         at: z.string().optional().describe('"top", "end", or a unique text snippet to insert after (default end)'),
         ...segmentArg,
         createSegment: z
@@ -318,9 +323,9 @@ export function createServer(): McpServer {
         ...accountArg,
       },
     },
-    async ({ documentId, rows, columns, data, columnWidths, headerShade, at, segment, page, createSegment, tab, account }) => {
+    async ({ documentId, rows, columns, data, columnWidths, headerShade, align, at, segment, page, createSegment, tab, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await insertTable(clients, documentId, rows, columns, { at, tab, data, columnWidths, headerShade, segment, page, createSegment }));
+      return json(await insertTable(clients, documentId, rows, columns, { at, tab, data, columnWidths, headerShade, align, segment, page, createSegment }));
     },
   );
 
