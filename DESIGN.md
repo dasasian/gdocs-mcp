@@ -38,7 +38,7 @@ Markdown is otherwise a ceiling — it cannot express alignment, color, fonts, i
 ## 3. Tool surface
 
 The canonical, always-current list is the table in `README.md`; this is the
-conceptual map. The surface is kept deliberately small (~31 tools) — see
+conceptual map. The surface is kept deliberately small (~33 tools) — see
 `CLAUDE.md` for the add-vs-enhance discipline (merge symmetric verbs; a new tool
 only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 
@@ -49,6 +49,7 @@ only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 | `overwrite_doc(doc, content\|contentFile, tab?)` | Wholesale replace — **guarded** (§4) |
 | `create_doc(content\|contentFile, folder?)` | New doc (`contentFile` reads a long body server-side, no inline retype) |
 | `update_doc(doc, name?, folder?)` | Rename and/or move (metadata) |
+| `copy_doc(doc, name?, folder?)` | Duplicate a doc (Drive `files.copy`) — a create-verb, kept distinct from `update_doc` |
 | `set_style(doc, {from,to?}\|whole_document, style, tab?)` | Style existing text **in place** by selection or whole-doc, no content change |
 | `get_style(doc, target_string, tab?)` | Read the computed style at an anchor (read side of `set_style`) |
 | `set_page_setup / get_page_setup(doc, tab?)` | Document page setup: margins, page size, orientation |
@@ -58,6 +59,7 @@ only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 | `apply_suggestions(doc, resolutions[])` | Resolve one or more suggestions atomically (§6) |
 | `list_comments / add_comment(replyTo?) / resolve_comment` | Drive comments (`add_comment` also replies) |
 | `list_tabs / add_tab / rename_tab / delete_tab` | Tab structure |
+| `list_folder / search_drive / create_folder` | Drive navigation (results carry parent folder id+name) and folder creation |
 | `list_permissions / share_doc(email?|link) / unshare_doc` | Sharing (person or anyone-with-link) |
 | `add_account / list_accounts` | Multi-account (§9) |
 

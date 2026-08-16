@@ -89,6 +89,52 @@ describe('setTableStyle', () => {
     expect(r.status).toBe('empty');
   });
 
+  it('sets all four borders by default, with color/dash defaults (#21)', async () => {
+    const b = vi.fn().mockResolvedValue({});
+    const r = await setTableStyle(clientsFor(tableDoc(), b), 'd', 'r0c0', { border: { width: 0 } });
+    const ucs = reqs(b)[0].updateTableCellStyle!;
+    expect(ucs.fields).toBe('borderTop,borderBottom,borderLeft,borderRight');
+    expect(ucs.tableCellStyle!.borderTop).toEqual({
+      width: { magnitude: 0, unit: 'PT' },
+      color: { color: { rgbColor: { red: 0, green: 0, blue: 0 } } },
+      dashStyle: 'SOLID',
+    });
+    expect(r.applied).toContain('table:borderTop');
+  });
+
+  it('restricts borders to the requested sides', async () => {
+    const b = vi.fn().mockResolvedValue({});
+    await setTableStyle(clientsFor(tableDoc(), b), 'd', 'r0c0', {
+      scope: 'row',
+      border: { width: 2, color: '#ff0000', dashStyle: 'DASH', sides: ['bottom'] },
+    });
+    const ucs = reqs(b)[0].updateTableCellStyle!;
+    expect(ucs.fields).toBe('borderBottom');
+    expect(ucs.tableCellStyle!.borderBottom).toMatchObject({ width: { magnitude: 2 }, dashStyle: 'DASH' });
+    expect(ucs.tableRange).toMatchObject({ rowSpan: 1, columnSpan: 3 });
+  });
+
+  it('pins the top N rows via pinTableHeaderRows (#19)', async () => {
+    const b = vi.fn().mockResolvedValue({});
+    const r = await setTableStyle(clientsFor(tableDoc(), b), 'd', 'r1c0', { headerRows: 1 });
+    const pin = reqs(b).find((x) => x.pinTableHeaderRows)!.pinTableHeaderRows!;
+    expect(pin).toMatchObject({ tableStartLocation: { index: 2 }, pinnedHeaderRowsCount: 1 });
+    expect(r.applied).toContain('headerRows:1');
+  });
+
+  it('unpins with headerRows: 0', async () => {
+    const b = vi.fn().mockResolvedValue({});
+    await setTableStyle(clientsFor(tableDoc(), b), 'd', 'r0c0', { headerRows: 0 });
+    expect(reqs(b)[0].pinTableHeaderRows!.pinnedHeaderRowsCount).toBe(0);
+  });
+
+  it('clamps headerRows to the table height', async () => {
+    const b = vi.fn().mockResolvedValue({});
+    const r = await setTableStyle(clientsFor(tableDoc(), b), 'd', 'r0c0', { headerRows: 9 });
+    expect(reqs(b)[0].pinTableHeaderRows!.pinnedHeaderRowsCount).toBe(2);
+    expect(r.applied).toContain('headerRows:2');
+  });
+
   it('returns not_found when no cell matches', async () => {
     const r = await setTableStyle(clientsFor(tableDoc()), 'd', 'nope', { padding: { left: 10 } });
     expect(r.status).toBe('not_found');

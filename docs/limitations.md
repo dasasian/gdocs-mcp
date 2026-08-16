@@ -52,9 +52,10 @@ Legend for "What gdocs-mcp does": **mitigated** = a tool works around it; **surf
 
 | Limitation | Why (API reason) | What gdocs-mcp does |
 |---|---|---|
-| **Deeper table styling flattens on read-back.** Merged cells, cell colors, and column widths become a plain markdown table when read. | Markdown has no representation for them. | **mitigated (write side)** — `set_table_style` sets cell padding, background, and column widths on an existing table; `insert_table` sets widths + header shading at creation. Reading these back is not available. |
+| **Deeper table styling flattens on read-back.** Merged cells, cell colors, and column widths become a plain markdown table when read. | Markdown has no representation for them. | **mitigated (write side)** — `set_table_style` sets cell padding, background, borders, column widths, and pinned header rows on an existing table; `insert_table` sets widths + header shading at creation. Reading these back is not available. |
 | **No whole-table page alignment.** | The Docs API doesn't expose table-level page positioning. | **hard limit**. |
-| **Can't tell which rows land on which printed/scrolled page**, so nothing can verify or fix a row split across a page boundary. | Pagination is computed at render time by the Docs layout engine (font metrics, page size, margins); it's never part of the document JSON `batchUpdate`/`documents.get` return. | **hard limit** — must be checked visually in the editor. Pinning a header row to repeat on every page is a separate, currently-unexposed request (#19). |
+| **`tableRowStyle.tableHeader` can be read but not written.** Sending it on `updateTableRowStyle` fails live with `Unallowed field: tableHeader`. | It's an output-only mirror of the pinned-rows state. | **worked around** — `set_table_style(headerRows: N)` uses the dedicated `pinTableHeaderRows` request instead. |
+| **Can't tell which rows land on which printed/scrolled page**, so nothing can verify or fix a row split across a page boundary. | Pagination is computed at render time by the Docs layout engine (font metrics, page size, margins); it's never part of the document JSON `batchUpdate`/`documents.get` return. | **hard limit** — must be checked visually in the editor. (Pinning header rows to repeat on every page *is* supported: `set_table_style(headerRows: N)` — #19.) |
 
 ---
 

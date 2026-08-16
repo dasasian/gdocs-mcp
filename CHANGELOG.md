@@ -6,7 +6,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+- **`copy_doc`** — duplicate a Doc via Drive `files.copy`, with an optional new name and target folder. Copying preserves what a markdown round-trip cannot rebuild (headers/footers, image sizing, exact formatting), so a template can be reused instead of recreated. Kept as its own tool rather than an `update_doc` mode: it creates a file rather than mutating one (#24).
+- **`create_folder`** — create a Drive folder, optionally inside a parent (URL or id). Previously the only way to make a folder was the Drive UI (#25).
+- **`set_table_style({ border })`** — cell border width (pt), color (hex), dash style, and which sides, over the same `scope` as padding/background. `border: { width: 0 }` makes a table borderless (#21).
+- **`set_table_style({ headerRows })`** — repeat the top N rows on every page (Docs' "pin header rows"); `0` unpins (#19).
+
+### Changed
+- **`search_drive` / `list_folder` results now carry `parents`** — each entry lists its parent folder(s) as `{ id, name }`, so a hit can be traced upward (e.g. to create a sibling folder). Parent names are resolved once per distinct id, and degrade to the bare id if a lookup fails (#26).
 
 ## [0.1.1] — 2026-07-31
 

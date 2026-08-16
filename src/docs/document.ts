@@ -226,6 +226,36 @@ export async function createDoc(
   };
 }
 
+// Duplicate a doc via Drive files.copy (#24) — the "Make a copy" verb. Kept
+// separate from update_doc even though it shares name/folder params: it creates
+// a file rather than mutating one, so it belongs with the create verbs.
+// Copying preserves everything create_doc can't reconstruct from markdown —
+// headers/footers, image sizing, exact formatting.
+export async function copyDoc(
+  clients: GoogleClients,
+  documentId: string,
+  opts: { name?: string; folder?: string } = {},
+): Promise<{ documentId: string; name: string; folderId?: string; parents: string[]; url: string }> {
+  const folderId = opts.folder ? parseDriveId(opts.folder) : undefined;
+  const res = await clients.drive.files.copy({
+    fileId: documentId,
+    requestBody: {
+      ...(opts.name !== undefined ? { name: opts.name } : {}),
+      ...(folderId ? { parents: [folderId] } : {}),
+    },
+    fields: 'id,name,parents',
+    supportsAllDrives: true,
+  });
+  const id = res.data.id ?? '';
+  return {
+    documentId: id,
+    name: res.data.name ?? '',
+    ...(folderId ? { folderId } : {}),
+    parents: res.data.parents ?? [],
+    url: `https://docs.google.com/document/d/${id}/edit`,
+  };
+}
+
 // Move an existing doc into a folder (by folder URL or id).
 export async function moveDoc(
   clients: GoogleClients,

@@ -217,8 +217,17 @@ export interface TableStyleOptions {
   padding?: { left?: number; right?: number; top?: number; bottom?: number };
   /** cell background as hex, e.g. "#f1f3f4". */
   backgroundColor?: string;
+  /** cell borders (#21). width 0 hides them; sides defaults to all four. */
+  border?: {
+    width?: number;
+    color?: string;
+    dashStyle?: 'SOLID' | 'DOT' | 'DASH';
+    sides?: ('top' | 'bottom' | 'left' | 'right')[];
+  };
   /** set specific column widths (points), by column index. */
   columnWidths?: { index: number; width: number }[];
+  /** repeat the top N rows on every page (#19). 0 unpins. */
+  headerRows?: number;
 }
 
 export interface TableStyleResult {
@@ -262,6 +271,23 @@ export async function setTableStyle(
     cellStyle.backgroundColor = { color: { rgbColor: hexToRgb(opts.backgroundColor) } };
     cellFields.push('backgroundColor');
   }
+  if (opts.border) {
+    // A border can't be transparent — width 0 is how Docs hides one, so a
+    // borderless table is border:{width:0} (#21). Color/dash carry defaults so a
+    // width-only or color-only call still sends a complete border object.
+    const b = opts.border;
+    const border: docs_v1.Schema$TableCellBorder = {
+      width: dim(b.width ?? 1),
+      color: { color: { rgbColor: hexToRgb(b.color ?? '#000000') } },
+      dashStyle: b.dashStyle ?? 'SOLID',
+    };
+    const sides = b.sides?.length ? b.sides : (['top', 'bottom', 'left', 'right'] as const);
+    for (const side of sides) {
+      const field = `border${side[0].toUpperCase()}${side.slice(1)}` as 'borderTop' | 'borderBottom' | 'borderLeft' | 'borderRight';
+      cellStyle[field] = border;
+      cellFields.push(field);
+    }
+  }
 
   if (cellFields.length) {
     // Cover the requested scope with one tableRange.
@@ -298,6 +324,15 @@ export async function setTableStyle(
       },
     });
     applied.push(`width:col${cw.index}`);
+  }
+
+  if (opts.headerRows !== undefined) {
+    // Pin the top N rows so they repeat on each page (#19). Note this is its own
+    // request type — tableRowStyle.tableHeader is read-only, and sending it on
+    // updateTableRowStyle is rejected live with "Unallowed field: tableHeader".
+    const n = Math.max(0, Math.min(Math.floor(opts.headerRows), loc.rows));
+    requests.push({ pinTableHeaderRows: { tableStartLocation, pinnedHeaderRowsCount: n } });
+    applied.push(`headerRows:${n}`);
   }
 
   if (!requests.length) return { status: 'empty', message: 'no style fields provided' };

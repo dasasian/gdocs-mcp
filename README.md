@@ -101,16 +101,18 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 | `get_style` | Read the computed (inherited-resolved) style at a text anchor — paragraph spacing, alignment, fonts, colors that markdown can't show (read counterpart to `set_style`) |
 | `overwrite_doc` | Replace a doc/tab body with markdown-rendered content — guarded against orphaning comments/suggestions |
 | `create_doc` / `update_doc` | Create (from markdown, optionally in a folder) / rename and/or move a doc |
+| `copy_doc` | Duplicate a doc (Drive’s “Make a copy”) — optional new name and target folder. Preserves what markdown can’t round-trip (headers/footers, image sizing, exact formatting), so prefer it over rebuilding a template |
 | `list_suggestions` | Pending suggestions as `before → after` diffs |
 | `apply_suggestions` | Accept or reject one or more suggestions atomically — required for overlapping/adjacent "clusters" |
 | `insert_image` | Insert an inline image (URL) — position, size, left/center/right align |
 | `download_images` | Download a doc’s embedded images to a local folder (pairs with `read_doc`’s image markers — the inverse of publishing) |
 | `insert_table` | Insert a rows×columns table — optional data fill, column widths, header shading |
 | `edit_table` | Table structure ops — insert/delete a row or column (surgical — locate the table by cell text) |
-| `set_table_style` | Style an existing table (located by cell text): cell padding, background, column widths — scope table/row/column/cell |
+| `set_table_style` | Style an existing table (located by cell text): cell padding, background, cell borders (`width: 0` = borderless), column widths, pinned header rows — scope table/row/column/cell |
 | `list_comments` / `add_comment` / `resolve_comment` | Comment threads (`add_comment` also replies, via `replyTo`) |
 | `list_tabs` / `add_tab` / `rename_tab` / `delete_tab` | Tab structure |
-| `list_folder` / `search_drive` | Browse a Drive folder / search files+folders by name |
+| `list_folder` / `search_drive` | Browse a Drive folder / search files+folders by name — results carry their parent folder(s) (id + name) |
+| `create_folder` | Create a Drive folder, optionally inside a parent folder |
 | `list_permissions` / `share_doc` / `unshare_doc` | Sharing (`share_doc` handles both people and anyone-with-link) |
 | `list_accounts` | Authorized Google accounts |
 | `set_project_default` / `get_project_config` | Set/show this project’s default account + folder (writes `.gdocs-mcp.json`) |

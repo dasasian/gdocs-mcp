@@ -6,13 +6,13 @@ import { listSuggestions, applySuggestions } from './docs/suggestions.js';
 import { listComments, addComment, replyComment, resolveComment } from './drive/comments.js';
 import { readDoc } from './docs/read.js';
 import { editDoc } from './docs/edit.js';
-import { createDoc, overwriteDoc, renameDoc, moveDoc, listTabs, addTab, renameTab, deleteTab, resolveContentSource } from './docs/document.js';
+import { createDoc, copyDoc, overwriteDoc, renameDoc, moveDoc, listTabs, addTab, renameTab, deleteTab, resolveContentSource } from './docs/document.js';
 import { setStyle } from './docs/format.js';
 import { setPageSetup, getPageSetup } from './docs/page.js';
 import { getStyle } from './docs/inspect.js';
 import { insertImage, insertTable, insertRow, deleteRow, insertColumn, deleteColumn, setTableStyle } from './docs/objects.js';
 import { listPermissions, shareDoc, unshareDoc, setLinkAccess } from './drive/sharing.js';
-import { listFolder, searchDrive } from './drive/files.js';
+import { listFolder, searchDrive, createFolder } from './drive/files.js';
 import { downloadImages } from './drive/images.js';
 
 function json(data: unknown) {
@@ -421,6 +421,25 @@ export function createServer(): McpServer {
   );
 
   server.registerTool(
+    'copy_doc',
+    {
+      title: 'Duplicate an existing Doc',
+      description:
+        'Duplicate a Google Doc (Drive’s "Make a copy"), optionally with a new name and/or into a Drive folder (URL or id). Prefer this over recreating a doc with create_doc when a template is involved — a copy preserves headers/footers, image sizing and exact formatting, none of which survive a markdown round-trip. Defaults: Drive’s "Copy of …" name, and the source doc’s folder.',
+      inputSchema: {
+        documentId: z.string().describe('the doc to copy (URL or id)'),
+        name: z.string().optional().describe('name for the copy (default: Drive’s "Copy of …")'),
+        folder: z.string().optional().describe('Drive folder URL or id to put the copy in (default: same as source)'),
+        ...accountArg,
+      },
+    },
+    async ({ documentId, name, folder, account }) => {
+      const clients = await clientsForAccount(account);
+      return json(await copyDoc(clients, documentId, { name, folder }));
+    },
+  );
+
+  server.registerTool(
     'update_doc',
     {
       title: 'Update a doc’s name and/or folder',
@@ -519,7 +538,7 @@ export function createServer(): McpServer {
     {
       title: 'Style an existing table',
       description:
-        'Edit style/layout of an existing table (located by any cell’s text): cell padding (pt), background color (hex), and column widths (pt). scope selects which cells padding/background hit — table (default), row, column, or cell (the row/column of the matched cell). Fixes e.g. thin left padding that clips the first letter of cells. A direct edit, not a tracked suggestion.',
+        'Edit style/layout of an existing table (located by any cell’s text): cell padding (pt), background color (hex), cell borders, column widths (pt), and pinned header rows. scope selects which cells padding/background/border hit — table (default), row, column, or cell (the row/column of the matched cell). Fixes e.g. thin left padding that clips the first letter of cells; border {width:0} makes a table borderless; headerRows repeats the top rows on every page. A direct edit, not a tracked suggestion.',
       inputSchema: {
         documentId: z.string(),
         cell: z.string().describe('text of any cell in the target table (locates the table)'),
@@ -534,17 +553,33 @@ export function createServer(): McpServer {
           .optional()
           .describe('cell padding in points'),
         backgroundColor: z.string().optional().describe('hex, e.g. #f1f3f4'),
+        border: z
+          .object({
+            width: z.number().optional().describe('points; 0 hides the border (borders cannot be transparent)'),
+            color: z.string().optional().describe('hex, e.g. #cccccc (default #000000)'),
+            dashStyle: z.enum(['SOLID', 'DOT', 'DASH']).optional(),
+            sides: z
+              .array(z.enum(['top', 'bottom', 'left', 'right']))
+              .optional()
+              .describe('which edges to set (default all four)'),
+          })
+          .optional()
+          .describe('cell borders, over the same scope as padding/background'),
         columnWidths: z
           .array(z.object({ index: z.number(), width: z.number() }))
           .optional()
           .describe('set specific column widths (points) by column index'),
+        headerRows: z
+          .number()
+          .optional()
+          .describe('repeat the top N rows on every page (Docs’ "pin header rows"); 0 unpins. Independent of scope.'),
         ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, cell, scope, padding, backgroundColor, columnWidths, tab, account }) => {
+    async ({ documentId, cell, scope, padding, backgroundColor, border, columnWidths, headerRows, tab, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await setTableStyle(clients, documentId, cell, { scope, padding, backgroundColor, columnWidths, tab }));
+      return json(await setTableStyle(clients, documentId, cell, { scope, padding, backgroundColor, border, columnWidths, headerRows, tab }));
     },
   );
 
@@ -552,7 +587,8 @@ export function createServer(): McpServer {
     'list_folder',
     {
       title: 'List a Drive folder',
-      description: 'List the files and subfolders directly inside a Drive folder (by URL or id). Defaults to My Drive root.',
+      description:
+        'List the files and subfolders directly inside a Drive folder (by URL or id). Defaults to My Drive root. Each entry carries its parent folder(s) (id + name) so a result can be traced upward.',
       inputSchema: {
         folder: z.string().optional().describe('folder URL or id (default My Drive root)'),
         ...accountArg,
@@ -568,7 +604,8 @@ export function createServer(): McpServer {
     'search_drive',
     {
       title: 'Search Drive by name',
-      description: 'Find files/folders whose name contains the query. Optionally restrict to folders or documents.',
+      description:
+        'Find files/folders whose name contains the query. Optionally restrict to folders or documents. Each result carries its parent folder(s) (id + name), so you can tell where a hit lives — and create a sibling next to it.',
       inputSchema: {
         query: z.string(),
         type: z.enum(['folder', 'document', 'any']).optional().describe('restrict results (default any)'),
@@ -578,6 +615,24 @@ export function createServer(): McpServer {
     async ({ query, type, account }) => {
       const clients = await clientsForAccount(account);
       return json(await searchDrive(clients, query, type ?? 'any'));
+    },
+  );
+
+  server.registerTool(
+    'create_folder',
+    {
+      title: 'Create a Drive folder',
+      description:
+        'Create a folder in Google Drive, optionally inside a parent folder (URL or id); otherwise it goes to My Drive root. To nest under a folder you only know by name, search_drive for it first and pass its id.',
+      inputSchema: {
+        name: z.string().describe('name for the new folder'),
+        folder: z.string().optional().describe('parent folder URL or id (default My Drive root)'),
+        ...accountArg,
+      },
+    },
+    async ({ name, folder, account }) => {
+      const clients = await clientsForAccount(account);
+      return json(await createFolder(clients, name, folder));
     },
   );
 
