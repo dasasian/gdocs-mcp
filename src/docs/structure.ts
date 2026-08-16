@@ -13,6 +13,14 @@ export function flattenTabs(doc: docs_v1.Schema$Document): docs_v1.Schema$Tab[] 
   return out;
 }
 
+// Partial-response masks for reads that never touch body content. The Docs API
+// refuses a mask that mixes legacy top-level fields with tabs content ("Field
+// mask may not contain legacy text-level Document resource fields while
+// requesting tabs content"), so these are tabs-only — see TAB_METADATA_FIELDS'
+// callers for how the legacy (untabbed) shape is still handled.
+export const TAB_METADATA_FIELDS = 'tabs.tabProperties,tabs.childTabs';
+export const PAGE_SETUP_FIELDS = 'revisionId,tabs.tabProperties,tabs.childTabs,tabs.documentTab.documentStyle';
+
 export function findTab(doc: docs_v1.Schema$Document, tabId: string): docs_v1.Schema$Tab | undefined {
   return flattenTabs(doc).find((t) => t.tabProperties?.tabId === tabId);
 }
