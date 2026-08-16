@@ -38,7 +38,7 @@ Markdown is otherwise a ceiling — it cannot express alignment, color, fonts, i
 ## 3. Tool surface
 
 The canonical, always-current list is the table in `README.md`; this is the
-conceptual map. The surface is kept deliberately small (~33 tools) — see
+conceptual map. The surface is kept deliberately small (~35 tools) — see
 `CLAUDE.md` for the add-vs-enhance discipline (merge symmetric verbs; a new tool
 only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 
@@ -47,6 +47,8 @@ only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 | `read_doc(doc, tab?, mode)` | Read as markdown+HTML. `mode`: `clean` (default) · `tracked` (`<ins>/<del>`+IDs) · `accepted` · `rejected` |
 | `edit_doc(doc, old_string, new_string, tab?, replace_all?, strict?)` | String-anchored edit (the workhorse) |
 | `overwrite_doc(doc, content\|contentFile, tab?)` | Wholesale replace — **guarded** (§4) |
+| `insert_content(doc, content\|contentFile, at?, tab?)` | Insert new content at a structural position (`end`/`top`/anchor) — the non-anchored counterpart to `edit_doc` (§4) |
+| `export_doc(doc, dir, format?, filename?)` | Server-side render to pdf/docx/odt/rtf/txt/html/epub/md via Drive `files.export` |
 | `create_doc(content\|contentFile, folder?)` | New doc (`contentFile` reads a long body server-side, no inline retype) |
 | `update_doc(doc, name?, folder?)` | Rename and/or move (metadata) |
 | `copy_doc(doc, name?, folder?)` | Duplicate a doc (Drive `files.copy`) — a create-verb, kept distinct from `update_doc` |

@@ -22,7 +22,7 @@ export interface InsertResult {
 }
 
 // Resolve an `at` selector to a Docs insertion index.
-function resolveIndex(
+export function resolveIndex(
   doc: docs_v1.Schema$Document,
   tabId: string | undefined,
   at: string,

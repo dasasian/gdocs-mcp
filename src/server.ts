@@ -6,7 +6,7 @@ import { listSuggestions, applySuggestions } from './docs/suggestions.js';
 import { listComments, addComment, replyComment, resolveComment } from './drive/comments.js';
 import { readDoc } from './docs/read.js';
 import { editDoc } from './docs/edit.js';
-import { createDoc, copyDoc, overwriteDoc, renameDoc, moveDoc, listTabs, addTab, renameTab, deleteTab, resolveContentSource } from './docs/document.js';
+import { createDoc, copyDoc, insertContent, overwriteDoc, renameDoc, moveDoc, listTabs, addTab, renameTab, deleteTab, resolveContentSource } from './docs/document.js';
 import { setStyle } from './docs/format.js';
 import { setPageSetup, getPageSetup } from './docs/page.js';
 import { getStyle } from './docs/inspect.js';
@@ -14,6 +14,7 @@ import { insertImage, insertTable, insertRow, deleteRow, insertColumn, deleteCol
 import { listPermissions, shareDoc, unshareDoc, setLinkAccess } from './drive/sharing.js';
 import { listFolder, searchDrive, createFolder } from './drive/files.js';
 import { downloadImages } from './drive/images.js';
+import { exportDoc, EXPORT_FORMATS, type ExportFormat } from './drive/export.js';
 
 function json(data: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
@@ -417,6 +418,57 @@ export function createServer(): McpServer {
       const clients = await clientsForAccount(account);
       const src = await resolveContentSource({ content, contentFile, baseDir });
       return json(await createDoc(clients, title, src.content, { folder, baseDir: src.baseDir }));
+    },
+  );
+
+  server.registerTool(
+    'insert_content',
+    {
+      title: 'Insert content at a position',
+      description:
+        'Insert NEW markdown-rendered content at a structural position — no anchor text required. `at`: "end" (default, the end of the doc/tab) · "top" · a unique text snippet to insert immediately after. Use this where edit_doc can\u2019t reach: adding a paragraph after a table that ends the doc (a table\u2019s cells can\u2019t anchor an insert outside the table, and the trailing empty paragraph has no text to match), or appending to an empty doc. Use edit_doc instead when you are replacing or extending existing text. Content is full markdown (headings, lists, tables, images), same renderer as create_doc. A direct edit, not a tracked suggestion.',
+      inputSchema: {
+        documentId: z.string(),
+        content: z.string().optional().describe('markdown content to insert (or use contentFile)'),
+        contentFile: z
+          .string()
+          .optional()
+          .describe('path to a local markdown/text file to insert, read directly by the server \u2014 preferred for long content. Absolute, or relative to baseDir. Mutually exclusive with content.'),
+        at: z
+          .string()
+          .optional()
+          .describe('"end" (default) | "top" | a unique text snippet to insert right after'),
+        baseDir: z.string().optional().describe('absolute dir to resolve relative local image paths against'),
+        ...tabArg,
+        ...accountArg,
+      },
+    },
+    async ({ documentId, content, contentFile, at, baseDir, tab, account }) => {
+      const clients = await clientsForAccount(account);
+      const src = await resolveContentSource({ content, contentFile, baseDir });
+      if (src.content === undefined) throw new Error('Provide content or contentFile.');
+      const result = await insertContent(clients, documentId, src.content, { at, tab, baseDir: src.baseDir });
+      return json(result.status === 'ok' ? { ...result, note: DIRECT_EDIT_NOTE } : result);
+    },
+  );
+
+  server.registerTool(
+    'export_doc',
+    {
+      title: 'Export a doc to a file',
+      description:
+        'Export a Google Doc to a real file on disk \u2014 pdf (default), docx, odt, rtf, txt, html, epub, or md. Google renders it server-side (File > Download in the UI), so page setup, pagination and layout match the editor. Returns the local path and byte size. Note: Drive refuses to export files larger than 10 MB.',
+      inputSchema: {
+        documentId: z.string(),
+        dir: z.string().describe('absolute local folder to save the export into (created if missing)'),
+        format: z.enum(EXPORT_FORMATS as [ExportFormat, ...ExportFormat[]]).optional().describe('default pdf'),
+        filename: z.string().optional().describe('override the filename (default: the doc\u2019s title + extension)'),
+        ...accountArg,
+      },
+    },
+    async ({ documentId, dir, format, filename, account }) => {
+      const clients = await clientsForAccount(account);
+      return json(await exportDoc(clients, documentId, dir, { format, filename }));
     },
   );
 

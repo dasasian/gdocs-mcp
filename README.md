@@ -100,6 +100,8 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 | `get_page_setup` / `set_page_setup` | Read / set document-level page setup: margins, page size (preset or explicit), orientation (File > Page setup) |
 | `get_style` | Read the computed (inherited-resolved) style at a text anchor — paragraph spacing, alignment, fonts, colors that markdown can't show (read counterpart to `set_style`) |
 | `overwrite_doc` | Replace a doc/tab body with markdown-rendered content — guarded against orphaning comments/suggestions |
+| `insert_content` | Insert new markdown content at a position — `at: "end"` (default) / `"top"` / a unique anchor. The way to add a paragraph after a table that ends the doc, where `edit_doc` has nothing to anchor on |
+| `export_doc` | Export a doc to a local file — pdf (default), docx, odt, rtf, txt, html, epub, md (rendered server-side by Google) |
 | `create_doc` / `update_doc` | Create (from markdown, optionally in a folder) / rename and/or move a doc |
 | `copy_doc` | Duplicate a doc (Drive’s “Make a copy”) — optional new name and target folder. Preserves what markdown can’t round-trip (headers/footers, image sizing, exact formatting), so prefer it over rebuilding a template |
 | `list_suggestions` | Pending suggestions as `before → after` diffs |

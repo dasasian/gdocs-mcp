@@ -22,7 +22,7 @@ canonical tool list is the table in `README.md`; known API dead-ends are in
 
 The tool count is a **budget, not a free-for-all** — every tool's schema costs
 context on every call and enlarges the model's selection space, which measurably
-lowers accuracy. We deliberately keep the surface small (~33 tools). Before adding
+lowers accuracy. We deliberately keep the surface small (~35 tools). Before adding
 one, do this review and record the trade-off in the PR/commit:
 
 1. **Default to enhancing an existing tool.** Can this be a new parameter or a

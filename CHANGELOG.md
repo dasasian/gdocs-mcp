@@ -12,6 +12,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`set_table_style({ border })`** — cell border width (pt), color (hex), dash style, and which sides, over the same `scope` as padding/background. `border: { width: 0 }` makes a table borderless (#21).
 - **`set_table_style({ headerRows })`** — repeat the top N rows on every page (Docs' "pin header rows"); `0` unpins (#19).
 
+- **`insert_content`** — insert new markdown-rendered content at a structural position: `at: "end"` (default), `"top"`, or a unique text anchor to insert right after. This is the only path to content that `edit_doc` cannot anchor: a paragraph after a table that ends the doc (a table cell can't anchor an insert outside the table, and Docs' mandatory trailing empty paragraph has no text to match). Kept as its own tool rather than an `edit_doc` mode so `edit_doc` stays "replace this exact text" (#20).
+- **`export_doc`** — export a Doc to a local file: pdf (default), docx, odt, rtf, txt, html, epub, or md, via Drive `files.export`. Google renders server-side, so pagination and page setup match the editor. Note Drive refuses exports over 10 MB (#22).
+
 ### Changed
 - **`search_drive` / `list_folder` results now carry `parents`** — each entry lists its parent folder(s) as `{ id, name }`, so a hit can be traced upward (e.g. to create a sibling folder). Parent names are resolved once per distinct id, and degrade to the bare id if a lookup fails (#26).
 

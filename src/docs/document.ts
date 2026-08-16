@@ -9,6 +9,7 @@ import { markdownToRequests } from './write.js';
 import { parseInline, segmentTextStyle } from './inline.js';
 import { findProjectConfig } from '../auth/accounts.js';
 import { uploadImageForInsert } from '../drive/images.js';
+import { resolveIndex } from './objects.js';
 
 // Insert a markdown image at `index`. Remote URLs embed directly; a local path is
 // resolved against baseDir, uploaded, embedded, and the temp upload deleted.
@@ -133,9 +134,9 @@ async function renderMarkdownInto(
   clients: GoogleClients,
   documentId: string,
   markdown: string,
-  opts: { tabId?: string; preRequests?: docs_v1.Schema$Request[]; requiredRevisionId?: string; baseDir?: string } = {},
+  opts: { tabId?: string; preRequests?: docs_v1.Schema$Request[]; requiredRevisionId?: string; baseDir?: string; startIndex?: number } = {},
 ): Promise<{ warnings: string[]; images: { src: string; objectId: string }[] }> {
-  const { requests, tables, images } = markdownToRequests(markdown, 1, opts.tabId);
+  const { requests, tables, images } = markdownToRequests(markdown, opts.startIndex ?? 1, opts.tabId);
   const all = [...(opts.preRequests ?? []), ...requests];
   if (all.length) {
     await clients.docs.documents.batchUpdate({
@@ -159,6 +160,47 @@ async function renderMarkdownInto(
   ].sort((a, b) => b.index - a.index);
   for (const p of placements) await p.run();
   return { warnings, images: imageMap };
+}
+
+// Insert new markdown-rendered content at a STRUCTURAL position (#20), rather
+// than by replacing anchor text the way edit_doc does. This is the only path to
+// "add a paragraph after the table that ends the doc": a table's last cell can't
+// anchor an insert outside the table (the Docs API forbids ranges crossing a cell
+// boundary), and Docs' mandatory trailing empty paragraph has no text to match on.
+// `at`: 'end' (default) · 'top' · a unique text anchor to insert right after.
+export async function insertContent(
+  clients: GoogleClients,
+  documentId: string,
+  content: string,
+  opts: { at?: string; tab?: string; baseDir?: string } = {},
+): Promise<{
+  status: 'ok' | 'not_found' | 'ambiguous';
+  message?: string;
+  matches?: { context: string }[];
+  index?: number;
+  characters?: number;
+  warnings?: string[];
+  images?: { src: string; objectId: string }[];
+}> {
+  const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
+  const tabId = resolveTabId(res.data, opts.tab);
+  const resolved = resolveIndex(res.data, tabId, opts.at ?? 'end');
+  if ('error' in resolved) {
+    const { status, message, matches } = resolved.error;
+    return { status: status as 'not_found' | 'ambiguous', message, matches };
+  }
+  const { warnings, images } = await renderMarkdownInto(clients, documentId, content, {
+    tabId,
+    baseDir: opts.baseDir,
+    startIndex: resolved.index,
+  });
+  return {
+    status: 'ok',
+    index: resolved.index,
+    characters: content.length,
+    ...(warnings.length ? { warnings } : {}),
+    ...(images.length ? { images } : {}),
+  };
 }
 
 // Extract a Drive file/folder id from a URL (…/folders/ID, …/d/ID) or a raw id.
