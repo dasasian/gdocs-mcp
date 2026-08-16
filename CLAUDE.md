@@ -70,3 +70,23 @@ why enhancing an existing tool was rejected.
   live verification in the body. `git add -A` before committing.
 - **Keep the docs in sync** when the tool surface changes: `README.md` table,
   `CHANGELOG.md`, `DESIGN.md` §3, and `docs/limitations.md`.
+
+## Releasing
+
+MCP server → npm **and** the MCP registry. Full process + every gotcha: `../PUBLISHING.md`.
+The short version:
+
+1. Bump `version` in **both** `package.json` and `server.json` (including `server.json`'s
+   `packages[].version`) — a drift between them fails the registry publish. Update
+   `CHANGELOG.md` (`[Unreleased]` → `[X.Y.Z] — <date>`).
+2. Commit `chore: release X.Y.Z` and push.
+3. `npm publish` — needs your OTP. Traps: a `404 on PUT` = lapsed token (`npm login`);
+   `npm view` can 404 for ~2 min after a *successful* publish (confirm with
+   `npm access list packages`, don't re-publish).
+4. `git tag vX.Y.Z && git push origin vX.Y.Z` — fires `publish-mcp-registry.yml`, which
+   publishes `server.json` to the registry via OIDC (npm `X.Y.Z` must already be live).
+   **Never run `mcp-publisher` from your laptop** — it 403s on the org namespace.
+5. `gh release create vX.Y.Z` with the CHANGELOG notes; verify the registry shows `X.Y.Z`
+   as `isLatest` (the search returns all versions — read the `isLatest` one).
+6. Update the `dasasian.com/gdocs-mcp` page in `dasasian-web` (version line + any changed
+   facts). Only `npm publish` and the release need your credentials; an agent drives the rest.
