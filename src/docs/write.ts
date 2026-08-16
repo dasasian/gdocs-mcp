@@ -19,6 +19,23 @@ type Block =
   | { type: 'table'; rows: string[][]; aligns: (CellAlign | null)[] }
   | { type: 'image'; alt: string; src: string; width?: number; height?: number };
 
+// Every direct character-formatting field, cleared by listing it in `fields`
+// while leaving it out of `textStyle`. Kept exhaustive on purpose: a field
+// missing here is a field that can leak across an overwrite (#32).
+const RESET_TEXT_FIELDS = [
+  'bold',
+  'italic',
+  'underline',
+  'strikethrough',
+  'smallCaps',
+  'backgroundColor',
+  'foregroundColor',
+  'fontSize',
+  'weightedFontFamily',
+  'baselineOffset',
+  'link',
+].join(',');
+
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
 const LIST_RE = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
 // A whole line that is just an image: ![alt](src), with an optional trailing
@@ -244,6 +261,20 @@ export function buildContentRequests(blocks: Block[], startIndex: number, tabId?
   const requests: docs_v1.Schema$Request[] = [];
   if (!text) return { requests, text, tables, images };
   requests.push({ insertText: { location: { index: startIndex, tabId, segmentId }, text } });
+  // Inserted text inherits the character formatting at the insertion point — and
+  // when a delete and an insert share one batchUpdate (overwrite_doc), it inherits
+  // the formatting of the text that was just deleted. So plain markdown could come
+  // back bold, coloured or linked, with nothing in the markdown asking for it
+  // (#32). The markdown is the whole story, so clear direct run styling over the
+  // inserted range first; the ops below then apply exactly what it does ask for.
+  // Named styles still inherit — this only clears DIRECT formatting.
+  requests.push({
+    updateTextStyle: {
+      range: { startIndex, endIndex: startIndex + text.length, tabId, segmentId },
+      textStyle: {},
+      fields: RESET_TEXT_FIELDS,
+    },
+  });
   for (const h of headingOps) {
     requests.push({
       updateParagraphStyle: {

@@ -34,6 +34,7 @@ Legend for "What gdocs-mcp does": **mitigated** = a tool works around it; **surf
 | Limitation | Why (API reason) | What gdocs-mcp does |
 |---|---|---|
 | **Markdown can't express computed style** — paragraph spacing, line spacing, font, size, color. | `read_doc` projects the doc to markdown, which only represents structure/content, not paragraph/run style. A "gap" between paragraphs may be *spacing*, not a blank line. | **mitigated** — text color, size and font now read back as `<span style="…">`, the same spelling the writer parses, so a `set_style` change is visible on the next read and round-trips (#30). Paragraph/line spacing is still style-only: `get_style` reads the effective (inherited-resolved) style at a text anchor, and `set_style` sets it. |
+| **Inserted text inherits formatting from the insertion point** — and inside a single `batchUpdate`, from text deleted earlier in that same batch. | Google Docs behaviour: `insertText` carries the character style of the surrounding position, and a batched delete+insert is treated as continuous. | **mitigated** — the markdown writer clears direct character styling over the range it inserts before applying what the markdown specifies, so `overwrite_doc`/`insert_content` produce what was written, not what was there (#32). Named styles are untouched, so document-level fonts still inherit. |
 
 ---
 

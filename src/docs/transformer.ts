@@ -135,6 +135,9 @@ function renderImage(objectId: string, objects: Record<string, docs_v1.Schema$In
   return `<img ${attrs.join(' ')}>`;
 }
 
+// Docs' automatic hyperlink colour.
+const LINK_BLUE = '#1155cc';
+
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 const escapeAttr = (s: string): string => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 
@@ -247,7 +250,11 @@ function renderRun(run: docs_v1.Schema$TextRun, opts: RenderOpts): string {
   // has an empty textStyle — so this stays quiet on ordinary text.
   const css: string[] = [];
   const color = rgbToHex(s.foregroundColor?.color?.rgbColor ?? undefined);
-  if (color) css.push(`color:${color}`);
+  // Docs styles links itself, writing its link blue in as a DIRECT run colour.
+  // Emitting that would wrap every link in a span saying nothing the `[](…)`
+  // doesn't. Suppress only the exact default, so a deliberately coloured link
+  // still shows — the same reason underline is skipped on links just above.
+  if (color && !(s.link?.url && color === LINK_BLUE)) css.push(`color:${color}`);
   if (s.fontSize?.magnitude) css.push(`font-size:${s.fontSize.magnitude}pt`);
   if (family && !isCode) css.push(`font-family:${family}`);
   if (css.length) text = `<span style="${css.join(';')}">${text}</span>`;
