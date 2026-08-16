@@ -75,6 +75,7 @@ Legend for "What gdocs-mcp does": **mitigated** = a tool works around it; **surf
 
 | Limitation | Why | What gdocs-mcp does |
 |---|---|---|
+| **Permission changes are in no version history.** Docs' version history restores content; a revision carries `exportLinks, lastModifyingUser, kind, id, mimeType, modifiedTime, published` and nothing about sharing. A revoked grant leaves no record of who had what. | Version history is a document-content feature; permissions are Drive ACLs, kept separately and not versioned. | **mitigated** — `unshare_doc` requires `expectRole`, so the caller must read the grant before removing it, and echoes back what it removed so the role is at least known afterwards (#43). |
 | **A new doc may already be shared before you share it.** Under a Google Workspace domain, files can be created carrying a domain-wide grant — on `dasasian.com`, every doc this server creates starts as `{type: domain, role: reader, allowFileDiscovery: true}`, meaning anyone in the domain can read it *and* it surfaces in their Drive search. | A Workspace admin setting applied at creation, not something the server does or can opt out of. | **surfaced** — `list_permissions` names the grant (`x.com (domain)`) and says whether the file is discoverable in that domain's search; `unshare_doc` revokes it by `permissionId`. If a document must not be domain-readable, check `list_permissions` after creating it. |
 
 ---

@@ -782,7 +782,7 @@ export function createServer(): McpServer {
     {
       title: 'Remove someone’s access',
       description:
-        'Revoke a grant on a Google Doc. Pass `email` for a person or a group. A grant with no email — a domain-wide grant, or anyone-with-link — has no email to pass, so address it by `permissionId` from list_permissions (run that first; it also tells you the role you are about to remove). Refuses to touch the owner. Note a doc created under a Workspace domain may carry a domain grant nobody explicitly added.',
+        'Revoke a grant on a Google Doc. Pass `email` for a person or a group. A grant with no email — a domain-wide grant, or anyone-with-link — has no email to pass, so address it by `permissionId` from list_permissions (run that first; it also tells you the role you are about to remove). Refuses to touch the owner. `expectRole` is REQUIRED — run list_permissions first and echo the role back; a permission change is recorded nowhere and cannot be restored from version history, so this is the only thing standing between a misaimed call and a silent, unrecoverable revocation. Note a doc created under a Workspace domain may carry a domain grant nobody explicitly added.',
       inputSchema: {
         documentId: z.string(),
         email: z.string().optional().describe('person or group to revoke; omit when using permissionId'),
@@ -790,12 +790,18 @@ export function createServer(): McpServer {
           .string()
           .optional()
           .describe('id from list_permissions — the only way to revoke a domain or anyone-with-link grant'),
+        expectRole: z
+          .string()
+          .describe(
+            "REQUIRED — the grant's current role as list_permissions reported it (reader/commenter/writer). Verified first: if it changed since you looked, nothing is removed. Revoking leaves no record anywhere, so this makes you look before you cut.",
+          ),
+        expectTitle: z.string().optional().describe('the doc’s title; verified before revoking so a wrong id is refused'),
         ...accountArg,
       },
     },
-    async ({ documentId, email, permissionId, account }) => {
+    async ({ documentId, email, permissionId, expectRole, expectTitle, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await unshareDoc(clients, documentId, { email, permissionId }));
+      return json(await unshareDoc(clients, documentId, { email, permissionId, expectRole, expectTitle }));
     },
   );
 

@@ -63,7 +63,7 @@ export async function shareDoc(
 }
 
 export interface UnshareResult {
-  status: 'ok' | 'not_found' | 'refused';
+  status: 'ok' | 'not_found' | 'refused' | 'mismatch';
   /** what was actually removed, echoed so the caller can confirm and log it. */
   removed?: { subject: string; role: string; type: string; permissionId: string };
   message?: string;
@@ -77,10 +77,28 @@ export interface UnshareResult {
 export async function unshareDoc(
   clients: GoogleClients,
   fileId: string,
-  target: { email?: string; permissionId?: string },
+  target: {
+    email?: string;
+    permissionId?: string;
+    /** the role list_permissions reported — proceed only if it is still that.
+     *  Required: revoking leaves no trace, so the caller must have looked first. */
+    expectRole: string;
+    /** the doc's title, if the caller wants a wrong id refused as well. */
+    expectTitle?: string;
+  },
 ): Promise<UnshareResult> {
   if (!target.email && !target.permissionId) {
     return { status: 'refused', message: 'pass email (a person or group) or permissionId (from list_permissions, for a domain or link grant).' };
+  }
+  if (target.expectTitle !== undefined) {
+    const meta = await clients.drive.files.get({ fileId, fields: 'name', supportsAllDrives: true });
+    const actual = meta.data.name ?? '';
+    if (actual !== target.expectTitle) {
+      return {
+        status: 'mismatch',
+        message: `expectTitle "${target.expectTitle}" != live doc title "${actual}". Refusing to change sharing on a different doc than intended.`,
+      };
+    }
   }
   const perms = await listPermissions(clients, fileId);
   const perm = target.permissionId
@@ -99,6 +117,14 @@ export async function unshareDoc(
   // enough to be worth its own message rather than a raw API error.
   if (perm.role === 'owner') {
     return { status: 'refused', message: `${perm.subject} is the owner; ownership cannot be revoked this way.` };
+  }
+  // The grant may have changed since the caller listed it. Removing a writer when
+  // you meant to remove a reader is not recoverable from anywhere.
+  if (perm.role !== target.expectRole) {
+    return {
+      status: 'mismatch',
+      message: `${perm.subject} currently has role "${perm.role}", not "${target.expectRole}". It changed since you listed. Re-run list_permissions and retry.`,
+    };
   }
   await clients.drive.permissions.delete({ fileId, permissionId: perm.id });
   return { status: 'ok', removed: { subject: perm.subject, role: perm.role, type: perm.type, permissionId: perm.id } };

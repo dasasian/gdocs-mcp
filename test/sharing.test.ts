@@ -92,7 +92,7 @@ function clientsForUnshare(permissions: unknown[], del = vi.fn().mockResolvedVal
 describe('unshareDoc (#41)', () => {
   it('revokes a domain grant by permissionId — previously impossible', async () => {
     const { clients, del } = clientsForUnshare(RAW);
-    const r = await unshareDoc(clients, 'd', { permissionId: '3' });
+    const r = await unshareDoc(clients, 'd', { permissionId: '3', expectRole: 'reader' });
     expect(r.status).toBe('ok');
     expect(r.removed).toEqual({ subject: 'x.com (domain)', role: 'reader', type: 'domain', permissionId: '3' });
     expect(del.mock.calls[0][0]).toMatchObject({ permissionId: '3' });
@@ -100,12 +100,12 @@ describe('unshareDoc (#41)', () => {
 
   it('revokes the anyone-with-link grant too', async () => {
     const { clients } = clientsForUnshare(RAW);
-    expect((await unshareDoc(clients, 'd', { permissionId: '4' })).removed?.subject).toBe('anyone with the link');
+    expect((await unshareDoc(clients, 'd', { permissionId: '4', expectRole: 'reader' })).removed?.subject).toBe('anyone with the link');
   });
 
   it('still revokes a person by email', async () => {
     const { clients, del } = clientsForUnshare(RAW);
-    const r = await unshareDoc(clients, 'd', { email: 'alice@x.com' });
+    const r = await unshareDoc(clients, 'd', { email: 'alice@x.com', expectRole: 'commenter' });
     expect(r.status).toBe('ok');
     expect(r.removed?.role).toBe('commenter');
     expect(del.mock.calls[0][0]).toMatchObject({ permissionId: '2' });
@@ -113,12 +113,12 @@ describe('unshareDoc (#41)', () => {
 
   it('echoes the role it removed, so the caller can undo it if that was wrong', async () => {
     const { clients } = clientsForUnshare(RAW);
-    expect((await unshareDoc(clients, 'd', { email: 'team@x.com' })).removed?.role).toBe('writer');
+    expect((await unshareDoc(clients, 'd', { email: 'team@x.com', expectRole: 'writer' })).removed?.role).toBe('writer');
   });
 
   it('refuses the owner rather than letting Drive reject it', async () => {
     const { clients, del } = clientsForUnshare(RAW);
-    const r = await unshareDoc(clients, 'd', { permissionId: '1' });
+    const r = await unshareDoc(clients, 'd', { permissionId: '1', expectRole: 'owner' });
     expect(r.status).toBe('refused');
     expect(r.message).toContain('owner');
     expect(del).not.toHaveBeenCalled();
@@ -126,7 +126,7 @@ describe('unshareDoc (#41)', () => {
 
   it('lists what is present when nothing matches, so the caller need not re-list', async () => {
     const { clients, del } = clientsForUnshare(RAW);
-    const r = await unshareDoc(clients, 'd', { email: 'nobody@x.com' });
+    const r = await unshareDoc(clients, 'd', { email: 'nobody@x.com', expectRole: 'reader' });
     expect(r.status).toBe('not_found');
     expect(r.present).toHaveLength(RAW.length);
     expect(r.present?.[2]).toContain('x.com (domain)');
@@ -135,7 +135,57 @@ describe('unshareDoc (#41)', () => {
 
   it('refuses when given no selector at all', async () => {
     const { clients, del } = clientsForUnshare(RAW);
-    expect((await unshareDoc(clients, 'd', {})).status).toBe('refused');
+    expect((await unshareDoc(clients, 'd', { expectRole: 'reader' })).status).toBe('refused');
     expect(del).not.toHaveBeenCalled();
+  });
+});
+
+// ---- #43: the guard on the one operation with no undo ----------------------
+//
+// Verified live: a Drive revision carries exportLinks, lastModifyingUser, kind,
+// id, mimeType, modifiedTime, published — and no permission data at all. Version
+// history restores content, never sharing. So a wrong revocation cannot be found
+// afterwards, let alone undone; expectRole makes the caller look first.
+
+describe('unshareDoc guards (#43)', () => {
+  it('refuses when the role changed since the caller listed', async () => {
+    const { clients, del } = clientsForUnshare(RAW);
+    const r = await unshareDoc(clients, 'd', { email: 'alice@x.com', expectRole: 'reader' });
+    expect(r.status).toBe('mismatch');
+    expect(r.message).toContain('commenter'); // says what it actually is
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it('proceeds when the role still matches', async () => {
+    const { clients, del } = clientsForUnshare(RAW);
+    expect((await unshareDoc(clients, 'd', { email: 'alice@x.com', expectRole: 'commenter' })).status).toBe('ok');
+    expect(del).toHaveBeenCalled();
+  });
+
+  it('checks the document before the permission, so a wrong id never reaches a grant', async () => {
+    const del = vi.fn().mockResolvedValue({});
+    const { clients } = clientsForUnshare(RAW, del);
+    (clients.drive as unknown as { files: unknown }).files = { get: vi.fn().mockResolvedValue({ data: { name: 'Some Other Doc' } }) };
+    const r = await unshareDoc(clients, 'd', { email: 'alice@x.com', expectRole: 'commenter', expectTitle: 'My Doc' });
+    expect(r.status).toBe('mismatch');
+    expect(r.message).toContain('Some Other Doc');
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it('proceeds when the title matches', async () => {
+    const del = vi.fn().mockResolvedValue({});
+    const { clients } = clientsForUnshare(RAW, del);
+    (clients.drive as unknown as { files: unknown }).files = { get: vi.fn().mockResolvedValue({ data: { name: 'My Doc' } }) };
+    const r = await unshareDoc(clients, 'd', { email: 'alice@x.com', expectRole: 'commenter', expectTitle: 'My Doc' });
+    expect(r.status).toBe('ok');
+  });
+
+  // Only pay for the title check when the caller asked for it.
+  it('does not fetch the doc when expectTitle is omitted', async () => {
+    const get = vi.fn();
+    const { clients } = clientsForUnshare(RAW);
+    (clients.drive as unknown as { files: unknown }).files = { get };
+    await unshareDoc(clients, 'd', { email: 'alice@x.com', expectRole: 'commenter' });
+    expect(get).not.toHaveBeenCalled();
   });
 });
