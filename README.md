@@ -104,13 +104,13 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 | `export_doc` | Export a doc to a local file — pdf (default), docx, odt, rtf, txt, html, epub, md (rendered server-side by Google) |
 | `create_doc` / `update_doc` | Create (from markdown, optionally in a folder) / rename and/or move a doc |
 | `copy_doc` | Duplicate a doc (Drive’s “Make a copy”) — optional new name and target folder. Preserves what markdown can’t round-trip (headers/footers, image sizing, exact formatting), so prefer it over rebuilding a template |
-| `list_suggestions` | Pending suggestions as `before → after` diffs |
-| `apply_suggestions` | Accept or reject one or more suggestions atomically — required for overlapping/adjacent "clusters" |
+| `list_suggestions` | Pending suggestions as `before → after` diffs — `segment` to read a header/footer's |
+| `apply_suggestions` | Accept or reject one or more suggestions atomically — required for overlapping/adjacent "clusters"; `segment` to resolve a header/footer's |
 | `insert_image` | Insert an inline image (URL) — position, size, left/center/right align. `segment: "header"` (+ `createSegment`) puts a letterhead logo where it repeats |
 | `download_images` | Download a doc’s embedded images to a local folder (pairs with `read_doc`’s image markers — the inverse of publishing) |
-| `insert_table` | Insert a rows×columns table — optional data fill, column widths, header shading |
-| `edit_table` | Table structure ops — insert/delete a row or column (surgical — locate the table by cell text) |
-| `set_table_style` | Style an existing table (located by cell text): cell padding, background, cell borders (`width: 0` = borderless), column widths, pinned header rows — scope table/row/column/cell |
+| `insert_table` | Insert a rows×columns table — optional data fill, column widths, header shading; `segment`/`createSegment` for a letterhead table |
+| `edit_table` | Table structure ops — insert/delete a row or column (surgical — locate the table by cell text); `segment` for header/footer tables |
+| `set_table_style` | Style an existing table (located by cell text): cell padding, background, cell borders (`width: 0` = borderless), column widths, pinned header rows — scope table/row/column/cell; `segment` for header/footer tables |
 | `list_comments` / `add_comment` / `resolve_comment` | Comment threads (`add_comment` also replies, via `replyTo`) |
 | `list_tabs` / `add_tab` / `rename_tab` / `delete_tab` | Tab structure |
 | `list_folder` / `search_drive` | Browse a Drive folder / search files+folders by name — results carry their parent folder(s) (id + name) |
@@ -129,7 +129,7 @@ These are **Google-API constraints, not bugs** — the highlights are below; the
 - **No suggestion attribution** (author/timestamp) — suggestions are listed in document order.
 - **Comments** created via the API aren't anchored to text, and Drive returns author *name* only (no email).
 - **Images are inline only** (no floating/x,y positioning), and Google downscales/re-encodes embedded images, so pulled copies aren't byte-identical.
-- **Headers and footers are separate content trees** — not part of the body. Every text tool (`read_doc`, `edit_doc`, `set_style`, `get_style`, `insert_content`, `insert_image`) takes `segment: "header" | "footer"` to reach them, and `page` when a doc defines more than one.
+- **Headers and footers are separate content trees** — not part of the body. Every content tool (`read_doc`, `edit_doc`, `set_style`, `get_style`, `insert_content`, `insert_image`, `insert_table`, `edit_table`, `set_table_style`, `list_suggestions`, `apply_suggestions`) takes `segment: "header" | "footer"` to reach them, and `page` when a doc defines more than one.
 - **Markdown can't express computed style** (spacing, fonts, colors) or deep table styling — read it with `get_style`, set it with `set_style`/`set_table_style`. Code blocks aren't rendered from markdown yet (roadmap).
 
 See **[docs/limitations.md](docs/limitations.md)** for the full table, including how each is mitigated or surfaced.

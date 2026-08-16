@@ -6,7 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+- **`segment`/`page` on the table and suggestion tools** — `insert_table`, `edit_table`, `set_table_style`, `list_suggestions` and `apply_suggestions` can now target a header or footer, the same way the text tools already could. A letterhead table or a tracked change on a footer disclaimer was previously unreachable, and failed *silently*: the cell text simply never matched, so `edit_table` reported "no table cell containing …" as though the table did not exist. These now report `no_segment` with the list of segments the doc actually has. `insert_table` also takes `createSegment` (as `insert_image` does), so a table can be placed in a header the doc doesn't have yet (#28).
+
+### Fixed
+- **`edit_doc` could not match text containing `__`.** `old_string` is resolved by exact match first, then by a markup-stripped retry; the strip step ran its own copy of the markdown grammar, which had drifted from the writer's. The writer guards underscore-bold with CommonMark word boundaries, the strip step did not — so a signature rule (`____ ____`) or an intraword `a__b__c` copied out of `read_doc` was mangled into something the document never contained, and the edit was refused. The strip step now derives its plain text from the writer's own parser (#27).
 
 ## [0.2.0] — 2026-08-15
 

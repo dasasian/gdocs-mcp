@@ -404,3 +404,73 @@ describe('applySuggestions — surfaces conflicts (#11)', () => {
     expect(res.conflicts).toBeUndefined();
   });
 });
+
+// ---- #28: suggestions living in a header/footer ---------------------------
+//
+// The Docs API cannot author a suggestion, so a header suggestion can't be made
+// on a live doc for an end-to-end check. These pin the two halves that matter:
+// the read walks the header's content tree, and the write addresses that same
+// segment (indices are per-segment — a range without the segmentId would land
+// in the body at the same numeric offset).
+
+const HEADER_SEG = 'kix.hdr1';
+
+// A doc whose *header* carries the suggested runs; the body has plain text at
+// the very same indices, so anything that ignores segmentId hits the wrong tree.
+function docWithHeaderRuns(runs: { content: string; start: number; ins?: string; del?: string }[]): docs_v1.Schema$Document {
+  const elements = runs.map((r) => ({
+    startIndex: r.start,
+    endIndex: r.start + r.content.length,
+    textRun: {
+      content: r.content,
+      ...(r.ins ? { suggestedInsertionIds: [r.ins] } : {}),
+      ...(r.del ? { suggestedDeletionIds: [r.del] } : {}),
+    },
+  }));
+  return {
+    revisionId: 'rev1',
+    title: 'Test Doc',
+    documentStyle: { defaultHeaderId: HEADER_SEG },
+    headers: { [HEADER_SEG]: { headerId: HEADER_SEG, content: [{ paragraph: { elements } }] } },
+    body: { content: [{ paragraph: { elements: [{ startIndex: 1, endIndex: 20, textRun: { content: 'plain body text.\n' } }] } }] },
+  };
+}
+
+describe('suggestions in a header (#28)', () => {
+  const doc = () => docWithHeaderRuns([{ content: 'new', start: 1, ins: 's1' }]);
+
+  it('parseSuggestions finds nothing in the body but finds the header suggestion', () => {
+    expect(parseSuggestions(doc())).toEqual([]);
+    const found = parseSuggestions(doc(), undefined, HEADER_SEG);
+    expect(found.map((s) => s.id)).toEqual(['s1']);
+    expect(formatSuggestionPreview(found[0])).toBe('insert: "new"');
+  });
+
+  it('collectRuns reads the header tree, not the body', () => {
+    expect(collectRuns(doc(), undefined, HEADER_SEG).map((r) => r.text)).toEqual(['new']);
+    expect(collectRuns(doc()).map((r) => r.text)).toEqual(['plain body text.\n']);
+  });
+
+  it('applySuggestions addresses the header segment on every write range', async () => {
+    const batchUpdate = vi.fn().mockResolvedValue({});
+    const res = await applySuggestions(clientsFor(doc(), batchUpdate), 'd', 'Test Doc', [
+      { suggestionId: 's1', decision: 'accept', expectedChange: 'insert: "new"' },
+    ], undefined, { segment: 'header' });
+
+    expect(res.status).toBe('ok');
+    const reqs = batchUpdate.mock.calls[0][0].requestBody.requests;
+    expect(reqs[0].deleteContentRange.range.segmentId).toBe(HEADER_SEG);
+    expect(reqs[1].insertText.location.segmentId).toBe(HEADER_SEG);
+  });
+
+  it('refuses with no_segment when the target segment does not exist', async () => {
+    const batchUpdate = vi.fn().mockResolvedValue({});
+    const res = await applySuggestions(clientsFor(doc(), batchUpdate), 'd', 'Test Doc', [
+      { suggestionId: 's1', decision: 'accept', expectedChange: 'insert: "new"' },
+    ], undefined, { segment: 'footer' });
+
+    expect(res.status).toBe('no_segment');
+    expect(res.errors?.[0]).toContain('no footer');
+    expect(batchUpdate).not.toHaveBeenCalled();
+  });
+});

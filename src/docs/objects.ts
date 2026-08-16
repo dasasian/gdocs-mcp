@@ -123,12 +123,22 @@ export async function insertImage(
   };
 }
 
-export interface TableOptions {
+// Segment targeting is uniform across the table ops (#28): a table can live in a
+// header/footer just as easily as the body (a letterhead is the common case), so
+// they all take the same segment/page pair the text tools use.
+export interface SegmentOpts {
+  segment?: SegmentKind;
+  page?: SegmentPage;
+}
+
+export interface TableOptions extends SegmentOpts {
   at?: string;
   tab?: string;
   data?: string[][];
   columnWidths?: number[]; // points per column
   headerShade?: string; // hex bg color for row 0, e.g. "#f1f3f4"
+  /** when segment is header/footer and the doc has none, create it first. */
+  createSegment?: boolean;
 }
 
 // ---- Table structure ops (surgical: preserve the rest of the table) ----
@@ -142,7 +152,7 @@ function cellTextOf(cell: docs_v1.Schema$TableCell): string {
 }
 
 export interface StructureResult {
-  status: 'ok' | 'not_found';
+  status: 'ok' | 'not_found' | 'no_segment';
   message?: string;
   location?: { rowIndex: number; columnIndex: number };
 }
@@ -151,15 +161,19 @@ async function tableOp(
   clients: GoogleClients,
   documentId: string,
   cellText: string,
-  tab: string | undefined,
+  opts: SegmentOpts & { tab?: string },
   build: (tcl: docs_v1.Schema$TableCellLocation) => docs_v1.Schema$Request,
 ): Promise<StructureResult> {
   const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
-  const tabId = resolveTabId(doc, tab);
-  const loc = locateTable(doc, cellText, tabId);
-  if (!loc) return { status: 'not_found', message: `no table cell containing "${cellText}"` };
+  const tabId = resolveTabId(doc, opts.tab);
+  // create:false — you can't restructure a table in a header that doesn't exist,
+  // so an absent segment is an error to report, not something to conjure up.
+  const seg = await resolveSegmentTarget(clients, documentId, doc, { segment: opts.segment, page: opts.page, tabId });
+  if (seg.error) return { status: 'no_segment', message: seg.error };
+  const loc = locateTable(seg.doc, cellText, tabId, seg.segmentId);
+  if (!loc) return { status: 'not_found', message: `no table cell containing "${cellText}"${seg.segmentId ? ` in the ${opts.segment}` : ''}` };
   const tcl: docs_v1.Schema$TableCellLocation = {
-    tableStartLocation: { index: loc.tableStart, tabId },
+    tableStartLocation: { index: loc.tableStart, tabId, segmentId: seg.segmentId },
     rowIndex: loc.rowIndex,
     columnIndex: loc.columnIndex,
   };
@@ -167,20 +181,20 @@ async function tableOp(
   return { status: 'ok', location: { rowIndex: loc.rowIndex, columnIndex: loc.columnIndex } };
 }
 
-export function insertRow(clients: GoogleClients, documentId: string, cellText: string, opts: { below?: boolean; tab?: string } = {}) {
-  return tableOp(clients, documentId, cellText, opts.tab, (tcl) => ({ insertTableRow: { tableCellLocation: tcl, insertBelow: opts.below ?? true } }));
+export function insertRow(clients: GoogleClients, documentId: string, cellText: string, opts: SegmentOpts & { below?: boolean; tab?: string } = {}) {
+  return tableOp(clients, documentId, cellText, opts, (tcl) => ({ insertTableRow: { tableCellLocation: tcl, insertBelow: opts.below ?? true } }));
 }
 
-export function deleteRow(clients: GoogleClients, documentId: string, cellText: string, opts: { tab?: string } = {}) {
-  return tableOp(clients, documentId, cellText, opts.tab, (tcl) => ({ deleteTableRow: { tableCellLocation: tcl } }));
+export function deleteRow(clients: GoogleClients, documentId: string, cellText: string, opts: SegmentOpts & { tab?: string } = {}) {
+  return tableOp(clients, documentId, cellText, opts, (tcl) => ({ deleteTableRow: { tableCellLocation: tcl } }));
 }
 
-export function insertColumn(clients: GoogleClients, documentId: string, cellText: string, opts: { right?: boolean; tab?: string } = {}) {
-  return tableOp(clients, documentId, cellText, opts.tab, (tcl) => ({ insertTableColumn: { tableCellLocation: tcl, insertRight: opts.right ?? true } }));
+export function insertColumn(clients: GoogleClients, documentId: string, cellText: string, opts: SegmentOpts & { right?: boolean; tab?: string } = {}) {
+  return tableOp(clients, documentId, cellText, opts, (tcl) => ({ insertTableColumn: { tableCellLocation: tcl, insertRight: opts.right ?? true } }));
 }
 
-export function deleteColumn(clients: GoogleClients, documentId: string, cellText: string, opts: { tab?: string } = {}) {
-  return tableOp(clients, documentId, cellText, opts.tab, (tcl) => ({ deleteTableColumn: { tableCellLocation: tcl } }));
+export function deleteColumn(clients: GoogleClients, documentId: string, cellText: string, opts: SegmentOpts & { tab?: string } = {}) {
+  return tableOp(clients, documentId, cellText, opts, (tcl) => ({ deleteTableColumn: { tableCellLocation: tcl } }));
 }
 
 // Locate a table (and the matched cell's position + the table's dimensions) by
@@ -193,8 +207,8 @@ interface TableLoc {
   columnIndex: number;
 }
 
-function locateTable(doc: docs_v1.Schema$Document, cellText: string, tabId?: string): TableLoc | null {
-  for (const el of contentOf(doc, tabId)) {
+function locateTable(doc: docs_v1.Schema$Document, cellText: string, tabId?: string, segmentId?: string): TableLoc | null {
+  for (const el of contentOf(doc, tabId, segmentId)) {
     const rowsArr = el.table?.tableRows;
     if (!rowsArr || el.startIndex == null) continue;
     for (let r = 0; r < rowsArr.length; r++) {
@@ -215,7 +229,7 @@ function locateTable(doc: docs_v1.Schema$Document, cellText: string, tabId?: str
   return null;
 }
 
-export interface TableStyleOptions {
+export interface TableStyleOptions extends SegmentOpts {
   tab?: string;
   /** which cells padding/background apply to; default 'table' (the whole table). */
   scope?: 'table' | 'row' | 'column' | 'cell';
@@ -237,7 +251,7 @@ export interface TableStyleOptions {
 }
 
 export interface TableStyleResult {
-  status: 'ok' | 'not_found' | 'empty';
+  status: 'ok' | 'not_found' | 'empty' | 'no_segment';
   message?: string;
   applied?: string[];
   table?: { rows: number; columns: number; matchedCell: { rowIndex: number; columnIndex: number } };
@@ -254,11 +268,13 @@ export async function setTableStyle(
 ): Promise<TableStyleResult> {
   const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
   const tabId = resolveTabId(res.data, opts.tab);
-  const loc = locateTable(res.data, cellText, tabId);
-  if (!loc) return { status: 'not_found', message: `no table cell containing "${cellText}"` };
+  const seg = await resolveSegmentTarget(clients, documentId, res.data, { segment: opts.segment, page: opts.page, tabId });
+  if (seg.error) return { status: 'no_segment', message: seg.error };
+  const loc = locateTable(seg.doc, cellText, tabId, seg.segmentId);
+  if (!loc) return { status: 'not_found', message: `no table cell containing "${cellText}"${seg.segmentId ? ` in the ${opts.segment}` : ''}` };
 
   const scope = opts.scope ?? 'table';
-  const tableStartLocation = { index: loc.tableStart, tabId };
+  const tableStartLocation = { index: loc.tableStart, tabId, segmentId: seg.segmentId };
   const requests: docs_v1.Schema$Request[] = [];
   const applied: string[] = [];
 
@@ -366,7 +382,17 @@ export async function insertTable(
 ): Promise<InsertResult> {
   const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
   const tabId = resolveTabId(res.data, opts.tab);
-  const resolved = resolveIndex(res.data, tabId, opts.at ?? 'end');
+  // Unlike the structure ops, inserting may legitimately need the segment made
+  // first — same createSegment flag insert_image uses for the letterhead case.
+  const seg = await resolveSegmentTarget(clients, documentId, res.data, {
+    segment: opts.segment,
+    page: opts.page,
+    create: opts.createSegment,
+    tabId,
+  });
+  if (seg.error) return { status: 'no_segment', message: seg.error };
+  const segmentId = seg.segmentId;
+  const resolved = resolveIndex(seg.doc, tabId, opts.at ?? 'end', segmentId);
   if ('error' in resolved) return resolved.error;
   const insertIndex = resolved.index;
 
@@ -374,8 +400,8 @@ export async function insertTable(
   await clients.docs.documents.batchUpdate({
     documentId,
     requestBody: {
-      requests: [{ insertTable: { location: { index: insertIndex, tabId }, rows, columns } }],
-      writeControl: writeControlFor(res.data.revisionId),
+      requests: [{ insertTable: { location: { index: insertIndex, tabId, segmentId }, rows, columns } }],
+      writeControl: writeControlFor(seg.doc.revisionId),
     },
   });
 
@@ -386,7 +412,7 @@ export async function insertTable(
   // go descending so earlier inserts don't shift later cell indices; width/shade
   // use logical table locations (stable regardless of text).
   const after = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
-  const tableEl = tableInsertedAt(after, insertIndex, tabId);
+  const tableEl = tableInsertedAt(after, insertIndex, tabId, segmentId);
   const tableStart = tableEl?.startIndex;
   if (!tableEl?.table?.tableRows || tableStart == null) return { status: 'ok' };
 
@@ -402,7 +428,7 @@ export async function insertTable(
       });
     });
     inserts.sort((a, b) => b.index - a.index);
-    for (const i of inserts) requests.push({ insertText: { location: { index: i.index, tabId }, text: i.text } });
+    for (const i of inserts) requests.push({ insertText: { location: { index: i.index, tabId, segmentId }, text: i.text } });
   }
 
   if (opts.columnWidths) {
@@ -410,7 +436,7 @@ export async function insertTable(
       if (i < columns) {
         requests.push({
           updateTableColumnProperties: {
-            tableStartLocation: { index: tableStart, tabId },
+            tableStartLocation: { index: tableStart, tabId, segmentId },
             columnIndices: [i],
             tableColumnProperties: { widthType: 'FIXED_WIDTH', width: { magnitude: w, unit: 'PT' } },
             fields: 'width,widthType',
@@ -424,7 +450,7 @@ export async function insertTable(
     requests.push({
       updateTableCellStyle: {
         tableRange: {
-          tableCellLocation: { tableStartLocation: { index: tableStart, tabId }, rowIndex: 0, columnIndex: 0 },
+          tableCellLocation: { tableStartLocation: { index: tableStart, tabId, segmentId }, rowIndex: 0, columnIndex: 0 },
           rowSpan: 1,
           columnSpan: columns,
         },

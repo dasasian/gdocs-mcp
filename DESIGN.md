@@ -70,9 +70,18 @@ only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 Headers and footers are parallel content trees, addressed in write requests by
 `segmentId` (the body's is empty). Nothing about them is exotic: the same
 `insertText`/`updateTextStyle`/`insertInlineImage` requests work, just carrying a
-segmentId. So rather than a separate family of tools, every text tool takes
+segmentId. So rather than a separate family of tools, every content tool takes
 `segment: 'body' | 'header' | 'footer'` (+ `page` for first-/even-page variants),
 resolved by `src/docs/segments.ts`.
+
+"Every content tool" is load-bearing, and was not true at first: the text tools
+got this in #23, but the table ops and the suggestion tools kept walking the body
+only, so a letterhead table and a tracked change on a footer disclaimer were
+unreachable — and, worse, unreachable *silently*, since a body-scoped scan simply
+never matched. #28 closed that by threading the same primitive through, rather
+than giving tables and suggestions a mechanism of their own. A tool that reads or
+writes document content and does not accept `segment` is a bug, not a design
+choice.
 
 Two rules this design enforces:
 
@@ -83,7 +92,10 @@ Two rules this design enforces:
    no logo" — a wrong answer, not a missing one.
 2. **A write must never silently land in the wrong tree.** Targeting a
    header/footer that doesn't exist returns `no_segment` with what does exist,
-   rather than falling back to the body. `createSegment: true` opts in to
+   rather than falling back to the body. This is also why indices are always
+   paired with their segmentId on the way out: offsets are per-segment, so a
+   range read from a header but written without its id would land at the same
+   numeric offset in the body. `createSegment: true` opts in to
    creating it (default header/footer only — the API cannot create a
    first-page/even-page one).
 
