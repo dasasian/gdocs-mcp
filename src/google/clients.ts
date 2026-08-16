@@ -1,9 +1,6 @@
-import { writeFile, mkdir } from 'node:fs/promises';
-import path from 'node:path';
 import { OAuth2Client } from 'google-auth-library';
 import { google, type docs_v1, type drive_v3 } from 'googleapis';
-import { loadClientSecret, loadToken, resolveAccount } from '../auth/accounts.js';
-import { TOKENS_DIR } from '../config.js';
+import { loadClientSecret, loadToken, resolveAccount, saveToken } from '../auth/accounts.js';
 
 export interface GoogleClients {
   account: string;
@@ -22,11 +19,7 @@ export async function clientsForAccount(explicitAccount?: string): Promise<Googl
   const auth = new OAuth2Client({ clientId, clientSecret });
   auth.setCredentials(tokens);
   auth.on('tokens', async (t) => {
-    const merged = { ...tokens, ...t };
-    await mkdir(TOKENS_DIR, { recursive: true });
-    await writeFile(path.join(TOKENS_DIR, `${account}.json`), JSON.stringify(merged, null, 2), {
-      mode: 0o600,
-    });
+    await saveToken(account, { ...tokens, ...t });
   });
 
   return {

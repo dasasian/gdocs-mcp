@@ -1,7 +1,8 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
-import { contentOf, resolveTabId, findTab, type SegmentKind, type SegmentPage } from './structure.js';
+import { contentOf, resolveTabId, findTab, flattenTabs, tableInsertedAt, writeControlFor, type SegmentKind, type SegmentPage } from './structure.js';
 import { resolveSegmentTarget } from './segments.js';
+import { ALIGN_BY_CSS } from './markdown-spec.js';
 import { parseSuggestions } from './suggestions.js';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -50,7 +51,6 @@ async function insertImagePlacement(
 
 // Insert a table at `index` and fill its cells (descending so inserts don't shift
 // later cells). Cell text is plain in this narrow first cut.
-const PARA_ALIGN: Record<'center' | 'right', string> = { center: 'CENTER', right: 'END' };
 
 async function insertTableAt(
   clients: GoogleClients,
@@ -69,9 +69,7 @@ async function insertTableAt(
     requestBody: { requests: [{ insertTable: { location: { index, tabId, segmentId }, rows: R, columns: C } }] },
   });
   const after = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
-  const tableEl = contentOf(after, tabId, segmentId)
-    .filter((e) => e.table && (e.startIndex ?? 0) >= index)
-    .sort((a, b) => (a.startIndex ?? 0) - (b.startIndex ?? 0))[0];
+  const tableEl = tableInsertedAt(after, index, tabId, segmentId);
   if (!tableEl?.table?.tableRows) return;
   // Collect cell (index, markdown) descending so inserts don't shift later cells.
   const cells: { index: number; md: string }[] = [];
@@ -108,9 +106,7 @@ async function insertTableAt(
   // indices are current; paragraph-style ops don't change length.
   if (aligns.some((a) => a === 'center' || a === 'right')) {
     const aligned = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
-    const tableEl2 = contentOf(aligned, tabId, segmentId)
-      .filter((e) => e.table && (e.startIndex ?? 0) >= index)
-      .sort((a, b) => (a.startIndex ?? 0) - (b.startIndex ?? 0))[0];
+    const tableEl2 = tableInsertedAt(aligned, index, tabId, segmentId);
     const alignReqs: docs_v1.Schema$Request[] = [];
     tableEl2?.table?.tableRows?.forEach((row) =>
       row.tableCells?.forEach((cell, c) => {
@@ -120,7 +116,7 @@ async function insertTableAt(
           alignReqs.push({
             updateParagraphStyle: {
               range: { startIndex: para.startIndex, endIndex: para.endIndex ?? para.startIndex + 1, tabId, segmentId },
-              paragraphStyle: { alignment: PARA_ALIGN[a] },
+              paragraphStyle: { alignment: ALIGN_BY_CSS[a] },
               fields: 'alignment',
             },
           });
@@ -144,7 +140,7 @@ async function renderMarkdownInto(
   if (all.length) {
     await clients.docs.documents.batchUpdate({
       documentId,
-      requestBody: { requests: all, writeControl: opts.requiredRevisionId ? { requiredRevisionId: opts.requiredRevisionId } : undefined },
+      requestBody: { requests: all, writeControl: writeControlFor(opts.requiredRevisionId) },
     });
   }
   // Structural inserts (tables + images) descending by index so earlier indices stay valid.
@@ -318,22 +314,25 @@ export async function moveDoc(
   clients: GoogleClients,
   documentId: string,
   folder: string,
-  opts: { expectTitle?: string } = {},
-): Promise<{ status: 'ok' | 'mismatch'; documentId: string; folderId?: string; parents?: string[]; name?: string; message?: string }> {
+  opts: { expectTitle?: string; name?: string } = {},
+): Promise<{ status: 'ok' | 'mismatch'; documentId: string; folderId?: string; parents?: string[]; name?: string; renamedTo?: string; message?: string }> {
   const folderId = parseDriveId(folder);
   const meta = await clients.drive.files.get({ fileId: documentId, fields: 'parents,name', supportsAllDrives: true });
   const name = meta.data.name ?? '';
   if (opts.expectTitle !== undefined && opts.expectTitle !== name) {
     return { status: 'mismatch', documentId, name, message: `expectTitle "${opts.expectTitle}" != live doc title "${name}". Refusing to move a different doc than intended.` };
   }
+  // A rename requested alongside the move rides on this same call — Drive's
+  // files.update sets the name and reparents in one request.
   const res = await clients.drive.files.update({
     fileId: documentId,
+    ...(opts.name !== undefined ? { requestBody: { name: opts.name } } : {}),
     addParents: folderId,
     removeParents: (meta.data.parents ?? []).join(','),
-    fields: 'id,parents',
+    fields: 'id,parents,name',
     supportsAllDrives: true,
   });
-  return { status: 'ok', documentId, folderId, parents: res.data.parents ?? [], name };
+  return { status: 'ok', documentId, folderId, parents: res.data.parents ?? [], name, renamedTo: opts.name === undefined ? undefined : res.data.name ?? opts.name };
 }
 
 // Rename = change the Drive file name (which is the doc title).
@@ -348,6 +347,26 @@ export async function renameDoc(
     fields: 'id,name',
   });
   return { documentId, name: res.data.name ?? name };
+}
+
+// The `update_doc` tool: rename and/or move. Both together is a single Drive
+// write; a move whose expectTitle doesn't match refuses the rename too, so a
+// wrong documentId can never be half-applied.
+export async function updateDoc(
+  clients: GoogleClients,
+  documentId: string,
+  opts: { name?: string; folder?: string; expectTitle?: string },
+): Promise<Record<string, unknown>> {
+  const { name, folder, expectTitle } = opts;
+  if (name === undefined && folder === undefined) throw new Error('Provide name and/or folder to update.');
+  if (folder === undefined) return { rename: await renameDoc(clients, documentId, name as string) };
+
+  const moved = await moveDoc(clients, documentId, folder, { expectTitle, name });
+  const result: Record<string, unknown> = { move: moved };
+  if (moved.status === 'ok' && name !== undefined) {
+    result.rename = { documentId, name: moved.renamedTo ?? name };
+  }
+  return result;
 }
 
 // Wholesale replace of a doc body (or one tab) with rendered markdown — GUARDED.
@@ -466,22 +485,15 @@ export interface TabInfo {
 // Read tab structure (flattened, depth-first). Tabs are read-only via the API.
 export async function listTabs(clients: GoogleClients, documentId: string): Promise<TabInfo[]> {
   const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
-  const out: TabInfo[] = [];
-  const walk = (tabs: docs_v1.Schema$Tab[] | undefined): void => {
-    for (const t of tabs ?? []) {
-      const p = t.tabProperties;
-      if (p?.tabId) {
-        out.push({
-          tabId: p.tabId,
-          title: p.title ?? '',
-          index: p.index ?? 0,
-          nestingLevel: p.nestingLevel ?? 0,
-          parentTabId: p.parentTabId ?? null,
-        });
-      }
-      walk(t.childTabs ?? undefined);
-    }
-  };
-  walk(doc.tabs ?? undefined);
-  return out;
+  return flattenTabs(doc).flatMap((t) => {
+    const p = t.tabProperties;
+    if (!p?.tabId) return [];
+    return [{
+      tabId: p.tabId,
+      title: p.title ?? '',
+      index: p.index ?? 0,
+      nestingLevel: p.nestingLevel ?? 0,
+      parentTabId: p.parentTabId ?? null,
+    }];
+  });
 }

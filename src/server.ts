@@ -6,7 +6,7 @@ import { listSuggestions, applySuggestions } from './docs/suggestions.js';
 import { listComments, addComment, replyComment, resolveComment } from './drive/comments.js';
 import { readDoc } from './docs/read.js';
 import { editDoc } from './docs/edit.js';
-import { createDoc, copyDoc, insertContent, overwriteDoc, renameDoc, moveDoc, listTabs, addTab, renameTab, deleteTab, resolveContentSource } from './docs/document.js';
+import { createDoc, copyDoc, insertContent, overwriteDoc, updateDoc, listTabs, addTab, renameTab, deleteTab, resolveContentSource } from './docs/document.js';
 import { setStyle } from './docs/format.js';
 import { setPageSetup, getPageSetup } from './docs/page.js';
 import { getStyle } from './docs/inspect.js';
@@ -532,16 +532,8 @@ export function createServer(): McpServer {
       },
     },
     async ({ documentId, name, folder, expectTitle, account }) => {
-      if (name === undefined && folder === undefined) throw new Error('Provide name and/or folder to update.');
       const clients = await clientsForAccount(account);
-      const result: Record<string, unknown> = {};
-      if (folder !== undefined) {
-        const moved = await moveDoc(clients, documentId, folder, { expectTitle });
-        result.move = moved;
-        if (moved.status !== 'ok') return json(result); // mismatch — don't rename either
-      }
-      if (name !== undefined) result.rename = await renameDoc(clients, documentId, name);
-      return json(result);
+      return json(await updateDoc(clients, documentId, { name, folder, expectTitle }));
     },
   );
 

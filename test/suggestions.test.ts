@@ -8,7 +8,6 @@ import type { Suggestion } from '../src/docs/suggestions.js';
 import {
   parseSuggestions,
   formatSuggestionPreview,
-  applySuggestion,
   applySuggestions,
   clusterSuggestions,
   resolveRegionText,
@@ -78,7 +77,7 @@ describe('formatSuggestionPreview', () => {
   });
 });
 
-describe('applySuggestion staleness check', () => {
+describe('applySuggestions staleness check', () => {
   const doc: docs_v1.Schema$Document = {
     revisionId: 'rev1',
     title: 'Test Doc',
@@ -106,21 +105,26 @@ describe('applySuggestion staleness check', () => {
   it('refuses to apply when expectedChange does not match the live suggestion', async () => {
     const batchUpdate = vi.fn().mockResolvedValue({});
     const clients = fakeClients(batchUpdate);
-    const result = await applySuggestion(clients, 'doc1', 'Test Doc', 's1', 'reject', 'insert: "something else"');
-    expect(result.status).toBe('stale');
+    const result = await applySuggestions(clients, 'doc1', 'Test Doc', [
+      { suggestionId: 's1', decision: 'reject', expectedChange: 'insert: "something else"' },
+    ]);
+    expect(result.status).toBe('error');
+    expect(result.errors?.[0]).toContain('expectedChange mismatch');
     expect(batchUpdate).not.toHaveBeenCalled();
   });
 
   it('applies when expectedChange matches the live suggestion', async () => {
     const batchUpdate = vi.fn().mockResolvedValue({});
     const clients = fakeClients(batchUpdate);
-    const result = await applySuggestion(clients, 'doc1', 'Test Doc', 's1', 'reject', 'insert: "add"');
+    const result = await applySuggestions(clients, 'doc1', 'Test Doc', [
+      { suggestionId: 's1', decision: 'reject', expectedChange: 'insert: "add"' },
+    ]);
     expect(result.status).toBe('ok');
     expect(batchUpdate).toHaveBeenCalledTimes(1);
   });
 });
 
-describe('applySuggestion / applySuggestions — documentTitle check (#9)', () => {
+describe('applySuggestions — documentTitle check (#9)', () => {
   const doc: docs_v1.Schema$Document = {
     revisionId: 'rev1',
     title: 'Test Doc',
@@ -145,14 +149,7 @@ describe('applySuggestion / applySuggestions — documentTitle check (#9)', () =
     };
   }
 
-  it('applySuggestion refuses when documentTitle does not match the live document', async () => {
-    const batchUpdate = vi.fn().mockResolvedValue({});
-    const result = await applySuggestion(fakeClients(batchUpdate), 'doc1', 'Wrong Doc', 's1', 'reject', 'insert: "add"');
-    expect(result.status).toBe('wrong_doc');
-    expect(batchUpdate).not.toHaveBeenCalled();
-  });
-
-  it('applySuggestions refuses when documentTitle does not match the live document', async () => {
+  it('refuses when documentTitle does not match the live document', async () => {
     const batchUpdate = vi.fn().mockResolvedValue({});
     const result = await applySuggestions(fakeClients(batchUpdate), 'doc1', 'Wrong Doc', [
       { suggestionId: 's1', decision: 'reject', expectedChange: 'insert: "add"' },
@@ -267,12 +264,14 @@ const clusterDoc = () =>
     { content: 'old', start: 4, del: 's2' },
   ]);
 
-describe('applySuggestion — cluster safety (#7)', () => {
+describe('applySuggestions — cluster safety (#7)', () => {
   it('refuses to resolve a clustered suggestion and does NOT mutate', async () => {
     const batchUpdate = vi.fn().mockResolvedValue({});
-    const res = await applySuggestion(clientsFor(clusterDoc(), batchUpdate), 'd', 'Test Doc', 's1', 'accept', 'insert: "new"');
-    expect(res.status).toBe('cluster');
-    expect(res.cluster?.map((c) => c.suggestionId).sort()).toEqual(['s1', 's2']);
+    const res = await applySuggestions(clientsFor(clusterDoc(), batchUpdate), 'd', 'Test Doc', [
+      { suggestionId: 's1', decision: 'accept', expectedChange: 'insert: "new"' },
+    ]);
+    expect(res.status).toBe('incomplete');
+    expect(res.errors?.[0]).toContain('s2');
     expect(batchUpdate).not.toHaveBeenCalled();
   });
 
@@ -282,7 +281,9 @@ describe('applySuggestion — cluster safety (#7)', () => {
       { content: '3 weeks', start: 8, del: 's1' },
     ]);
     const batchUpdate = vi.fn().mockResolvedValue({});
-    const res = await applySuggestion(clientsFor(doc, batchUpdate), 'd', 'Test Doc', 's1', 'accept', '"3 weeks" → "2 weeks"');
+    const res = await applySuggestions(clientsFor(doc, batchUpdate), 'd', 'Test Doc', [
+      { suggestionId: 's1', decision: 'accept', expectedChange: '"3 weeks" → "2 weeks"' },
+    ]);
     expect(res.status).toBe('ok');
     expect(batchUpdate).toHaveBeenCalledTimes(1);
     const reqs = batchUpdate.mock.calls[0][0].requestBody.requests;
@@ -327,7 +328,7 @@ describe('applySuggestions — atomic cluster resolution (#7)', () => {
   });
 });
 
-describe('applySuggestion — style metadata on edit runs (#7 regression)', () => {
+describe('applySuggestions — style metadata on edit runs (#7 regression)', () => {
   it('resolves an insertion run that also carries suggestedTextStyleChanges (not treated as style-only)', async () => {
     const doc = {
       revisionId: 'r',
@@ -345,7 +346,9 @@ describe('applySuggestion — style metadata on edit runs (#7 regression)', () =
       },
     } as unknown as docs_v1.Schema$Document;
     const batchUpdate = vi.fn().mockResolvedValue({});
-    const res = await applySuggestion(clientsFor(doc, batchUpdate), 'd', 'Test Doc', 's1', 'accept', 'insert: "new"');
+    const res = await applySuggestions(clientsFor(doc, batchUpdate), 'd', 'Test Doc', [
+      { suggestionId: 's1', decision: 'accept', expectedChange: 'insert: "new"' },
+    ]);
     expect(res.status).toBe('ok');
     expect(batchUpdate).toHaveBeenCalledTimes(1);
   });

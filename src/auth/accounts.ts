@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { CLIENT_SECRET_PATH, TOKENS_DIR, PROJECT_DEFAULT_ACCOUNT } from '../config.js';
@@ -13,20 +13,13 @@ export interface ProjectConfig {
 // .mcp.json entry. We search upward from the working directory (like .git /
 // package.json discovery), so it works from the project root or a subdirectory.
 export function findProjectConfig(fromDir: string = process.cwd()): ProjectConfig {
-  let dir = fromDir;
-  for (;;) {
-    const p = path.join(dir, '.gdocs-mcp.json');
-    if (existsSync(p)) {
-      try {
-        const cfg = JSON.parse(readFileSync(p, 'utf8')) as ProjectConfig;
-        return { account: cfg.account, folder: cfg.folder };
-      } catch {
-        return {}; // ignore a malformed file
-      }
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) return {};
-    dir = parent;
+  const p = findProjectConfigPath(fromDir);
+  if (!p) return {};
+  try {
+    const cfg = JSON.parse(readFileSync(p, 'utf8')) as ProjectConfig;
+    return { account: cfg.account, folder: cfg.folder };
+  } catch {
+    return {}; // ignore a malformed file
   }
 }
 
@@ -89,6 +82,13 @@ export async function listAccounts(): Promise<string[]> {
   if (!existsSync(TOKENS_DIR)) return [];
   const files = await readdir(TOKENS_DIR);
   return files.filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -'.json'.length));
+}
+
+// The one place token files are written — same path and 0600 mode for both the
+// initial add-account consent and later silent refreshes.
+export async function saveToken(email: string, tokens: unknown): Promise<void> {
+  await mkdir(TOKENS_DIR, { recursive: true });
+  await writeFile(tokenPath(email), JSON.stringify(tokens, null, 2), { mode: 0o600 });
 }
 
 export async function loadToken(email: string): Promise<Record<string, unknown>> {

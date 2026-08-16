@@ -1,6 +1,6 @@
 import type { docs_v1 } from 'googleapis';
 import { parseInline, segmentTextStyle } from './inline.js';
-import { HEADING_BY_LEVEL } from './markdown-spec.js';
+import { HEADING_BY_LEVEL, ALIGN_BY_CSS } from './markdown-spec.js';
 
 // markdown -> Docs block requests (the inverse of transformer.ts's reader, sharing
 // markdown-spec constants). The hard part is sequencing: the Docs API is
@@ -18,9 +18,6 @@ type Block =
   | { type: 'list'; ordered: boolean; items: { level: number; text: string }[] }
   | { type: 'table'; rows: string[][]; aligns: (CellAlign | null)[] }
   | { type: 'image'; alt: string; src: string };
-
-// Docs paragraph alignment enum, keyed by the CSS value read (transformer.ts) emits.
-const PARA_ALIGN: Record<ParaAlign, string> = { left: 'START', center: 'CENTER', right: 'END', justify: 'JUSTIFIED' };
 
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
 const LIST_RE = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
@@ -231,7 +228,7 @@ export function buildContentRequests(blocks: Block[], startIndex: number, tabId?
     requests.push({
       updateParagraphStyle: {
         range: { startIndex: a.start, endIndex: a.end, tabId, segmentId },
-        paragraphStyle: { alignment: PARA_ALIGN[a.align] },
+        paragraphStyle: { alignment: ALIGN_BY_CSS[a.align] },
         fields: 'alignment',
       },
     });

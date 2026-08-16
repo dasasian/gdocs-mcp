@@ -2,8 +2,9 @@ import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
 import { project } from './transformer.js';
 import type { Projection } from './transformer.js';
-import { resolveTabId, contentOf, type SegmentKind, type SegmentPage } from './structure.js';
+import { resolveTabId, contentOf, writeControlFor, type SegmentKind, type SegmentPage } from './structure.js';
 import { resolveSegmentTarget } from './segments.js';
+import { ALIGN_BY_CSS } from './markdown-spec.js';
 import { locate, rangeFor, contextAround } from './edit.js';
 import { hexToRgb } from './color.js';
 
@@ -37,13 +38,6 @@ export interface FormatResult {
   matches?: { context: string }[];
   message?: string;
 }
-
-const ALIGN: Record<NonNullable<FormatStyle['align']>, string> = {
-  left: 'START',
-  center: 'CENTER',
-  right: 'END',
-  justify: 'JUSTIFIED',
-};
 
 // Build the textStyle object + its fields mask from the requested style.
 export function buildTextStyle(style: FormatStyle): { textStyle: docs_v1.Schema$TextStyle; fields: string[] } {
@@ -164,7 +158,7 @@ export async function setStyle(
   const paragraphStyle: docs_v1.Schema$ParagraphStyle = {};
   const pFields: string[] = [];
   if (style.align !== undefined) {
-    paragraphStyle.alignment = ALIGN[style.align];
+    paragraphStyle.alignment = ALIGN_BY_CSS[style.align];
     pFields.push('alignment');
     applied.push('alignment');
   }
@@ -201,7 +195,7 @@ export async function setStyle(
 
   await clients.docs.documents.batchUpdate({
     documentId,
-    requestBody: { requests, writeControl: revisionId ? { requiredRevisionId: revisionId } : undefined },
+    requestBody: { requests, writeControl: writeControlFor(revisionId) },
   });
   return { status: 'ok', applied };
 }

@@ -1,7 +1,8 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
-import { contentOf, resolveTabId, type SegmentKind, type SegmentPage } from './structure.js';
+import { contentOf, resolveTabId, tableInsertedAt, writeControlFor, type SegmentKind, type SegmentPage } from './structure.js';
 import { resolveSegmentTarget } from './segments.js';
+import { ALIGN_BY_CSS } from './markdown-spec.js';
 import { project } from './transformer.js';
 import { locate, rangeFor, contextAround } from './edit.js';
 import { hexToRgb } from './color.js';
@@ -50,8 +51,6 @@ export function resolveIndex(
   const p = positions[0];
   return { index: rangeFor(proj, p, p + needle.length).endIndex };
 }
-
-const ALIGN: Record<'left' | 'center' | 'right', string> = { left: 'START', center: 'CENTER', right: 'END' };
 
 export async function insertImage(
   clients: GoogleClients,
@@ -103,7 +102,7 @@ export async function insertImage(
     requests.push({
       updateParagraphStyle: {
         range: { startIndex: index, endIndex: index + 1, tabId, segmentId },
-        paragraphStyle: { alignment: ALIGN[opts.align] },
+        paragraphStyle: { alignment: ALIGN_BY_CSS[opts.align] },
         fields: 'alignment',
       },
     });
@@ -113,7 +112,7 @@ export async function insertImage(
     documentId,
     requestBody: {
       requests,
-      writeControl: res.data.revisionId ? { requiredRevisionId: res.data.revisionId } : undefined,
+      writeControl: writeControlFor(res.data.revisionId),
     },
   });
   const reply = r.data.replies?.[0] as { insertInlineImage?: { objectId?: string } } | undefined;
@@ -142,29 +141,6 @@ function cellTextOf(cell: docs_v1.Schema$TableCell): string {
   return s.trim();
 }
 
-interface CellLoc {
-  tableStartIndex: number;
-  rowIndex: number;
-  columnIndex: number;
-}
-
-// Find the first table cell whose text contains `cellText`.
-function locateCell(doc: docs_v1.Schema$Document, cellText: string, tabId?: string): CellLoc | null {
-  for (const el of contentOf(doc, tabId)) {
-    const rows = el.table?.tableRows;
-    if (!rows || el.startIndex == null) continue;
-    for (let r = 0; r < rows.length; r++) {
-      const cells = rows[r].tableCells ?? [];
-      for (let c = 0; c < cells.length; c++) {
-        if (cellTextOf(cells[c]).includes(cellText)) {
-          return { tableStartIndex: el.startIndex, rowIndex: r, columnIndex: c };
-        }
-      }
-    }
-  }
-  return null;
-}
-
 export interface StructureResult {
   status: 'ok' | 'not_found';
   message?: string;
@@ -180,10 +156,10 @@ async function tableOp(
 ): Promise<StructureResult> {
   const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
   const tabId = resolveTabId(doc, tab);
-  const loc = locateCell(doc, cellText, tabId);
+  const loc = locateTable(doc, cellText, tabId);
   if (!loc) return { status: 'not_found', message: `no table cell containing "${cellText}"` };
   const tcl: docs_v1.Schema$TableCellLocation = {
-    tableStartLocation: { index: loc.tableStartIndex, tabId },
+    tableStartLocation: { index: loc.tableStart, tabId },
     rowIndex: loc.rowIndex,
     columnIndex: loc.columnIndex,
   };
@@ -371,7 +347,7 @@ export async function setTableStyle(
     documentId,
     requestBody: {
       requests,
-      writeControl: res.data.revisionId ? { requiredRevisionId: res.data.revisionId } : undefined,
+      writeControl: writeControlFor(res.data.revisionId),
     },
   });
   return {
@@ -399,7 +375,7 @@ export async function insertTable(
     documentId,
     requestBody: {
       requests: [{ insertTable: { location: { index: insertIndex, tabId }, rows, columns } }],
-      writeControl: res.data.revisionId ? { requiredRevisionId: res.data.revisionId } : undefined,
+      writeControl: writeControlFor(res.data.revisionId),
     },
   });
 
@@ -410,8 +386,7 @@ export async function insertTable(
   // go descending so earlier inserts don't shift later cell indices; width/shade
   // use logical table locations (stable regardless of text).
   const after = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
-  const tables = contentOf(after, tabId).filter((e) => e.table && (e.startIndex ?? 0) >= insertIndex);
-  const tableEl = tables.sort((a, b) => (a.startIndex ?? 0) - (b.startIndex ?? 0))[0];
+  const tableEl = tableInsertedAt(after, insertIndex, tabId);
   const tableStart = tableEl?.startIndex;
   if (!tableEl?.table?.tableRows || tableStart == null) return { status: 'ok' };
 
@@ -464,7 +439,7 @@ export async function insertTable(
       documentId,
       requestBody: {
         requests,
-        writeControl: after.revisionId ? { requiredRevisionId: after.revisionId } : undefined,
+        writeControl: writeControlFor(after.revisionId),
       },
     });
   }

@@ -1,6 +1,6 @@
 import type { docs_v1 } from 'googleapis';
 import { contentOf, listsOf } from './structure.js';
-import { LEVEL_BY_HEADING } from './markdown-spec.js';
+import { LEVEL_BY_HEADING, CSS_BY_ALIGN } from './markdown-spec.js';
 
 const ORDERED_GLYPHS = new Set(['DECIMAL', 'ZERO_DECIMAL', 'UPPER_ALPHA', 'ALPHA', 'UPPER_ROMAN', 'ROMAN']);
 
@@ -139,7 +139,7 @@ function renderParagraph(para: docs_v1.Schema$Paragraph, opts: RenderOpts): stri
   // Non-default alignment on a normal paragraph -> HTML wrapper (markdown can't).
   const align = para.paragraphStyle?.alignment;
   if (!para.bullet && align && align !== 'START' && align !== 'ALIGNMENT_UNSPECIFIED') {
-    const css = align === 'CENTER' ? 'center' : align === 'END' ? 'right' : 'justify';
+    const css = CSS_BY_ALIGN[align] ?? 'justify';
     return `<p style="text-align:${css}">${inline}</p>`;
   }
   return inline;

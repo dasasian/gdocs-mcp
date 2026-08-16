@@ -25,3 +25,22 @@ export const LEVEL_BY_HEADING: Record<string, number> = {
   HEADING_6: 6,
   TITLE: 1,
 };
+
+// CSS text-align value (what the reader emits and the writer parses) -> Docs
+// paragraph alignment enum. Every caller that needs a subset just indexes in.
+export const ALIGN_BY_CSS = {
+  left: 'START',
+  center: 'CENTER',
+  right: 'END',
+  justify: 'JUSTIFIED',
+} as const;
+
+export type CssAlign = keyof typeof ALIGN_BY_CSS;
+
+// Docs paragraph alignment enum -> CSS value. START is the default and is
+// deliberately absent, so the reader can skip emitting a wrapper for it.
+export const CSS_BY_ALIGN: Record<string, CssAlign> = {
+  CENTER: 'center',
+  END: 'right',
+  JUSTIFIED: 'justify',
+};
