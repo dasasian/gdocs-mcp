@@ -7,6 +7,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **A domain or group grant could be seen but never revoked.** `unshare_doc` matched on email, and a domain or anyone-with-link grant has none — so the domain-wide grant every doc gets under a Workspace was permanent as far as the tool surface was concerned. It now also accepts a `permissionId` from `list_permissions`, which covers every grant type, echoes back what it removed, refuses the owner, and lists what is present when nothing matches (#41).
 - **`list_permissions` could not name a domain or link grant.** It never asked Drive for `domain` or `allowFileDiscovery`, so a domain-wide grant came back with a null email and no way to tell which domain it covered — rendering as `null:reader`. Every entry now carries a `subject` naming its audience (`alice@x.com`, `x.com (domain)`, `anyone with the link`), and domain/link grants report whether the file is discoverable in search rather than only reachable by link (#42).
 
 ## [0.4.0] — 2026-08-16

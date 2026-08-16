@@ -62,15 +62,46 @@ export async function shareDoc(
   return { id: res.data.id ?? '', email, role };
 }
 
+export interface UnshareResult {
+  status: 'ok' | 'not_found' | 'refused';
+  /** what was actually removed, echoed so the caller can confirm and log it. */
+  removed?: { subject: string; role: string; type: string; permissionId: string };
+  message?: string;
+  /** on not_found, what the doc does have — so the caller can pick without a second call. */
+  present?: string[];
+}
+
+// Revoke a grant. `email` covers people and groups; anything without an email —
+// a domain grant, anyone-with-link — has to be addressed by the permissionId that
+// list_permissions returns, which is also what makes the caller look first.
 export async function unshareDoc(
   clients: GoogleClients,
   fileId: string,
-  email: string,
-): Promise<{ removed: string | null; message?: string }> {
-  const perm = (await listPermissions(clients, fileId)).find((p) => p.email === email);
-  if (!perm) return { removed: null, message: `no direct permission for ${email}` };
+  target: { email?: string; permissionId?: string },
+): Promise<UnshareResult> {
+  if (!target.email && !target.permissionId) {
+    return { status: 'refused', message: 'pass email (a person or group) or permissionId (from list_permissions, for a domain or link grant).' };
+  }
+  const perms = await listPermissions(clients, fileId);
+  const perm = target.permissionId
+    ? perms.find((p) => p.id === target.permissionId)
+    : perms.find((p) => p.email === target.email);
+
+  if (!perm) {
+    const who = target.permissionId ? `permissionId ${target.permissionId}` : target.email;
+    return {
+      status: 'not_found',
+      message: `no permission matching ${who} on this doc.`,
+      present: perms.map((p) => `${p.subject} (${p.role}, id ${p.id})`),
+    };
+  }
+  // Drive rejects deleting the owner, and doing so by accident would be alarming
+  // enough to be worth its own message rather than a raw API error.
+  if (perm.role === 'owner') {
+    return { status: 'refused', message: `${perm.subject} is the owner; ownership cannot be revoked this way.` };
+  }
   await clients.drive.permissions.delete({ fileId, permissionId: perm.id });
-  return { removed: email };
+  return { status: 'ok', removed: { subject: perm.subject, role: perm.role, type: perm.type, permissionId: perm.id } };
 }
 
 // Anyone-with-the-link access. role 'none' disables link sharing.

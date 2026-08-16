@@ -781,12 +781,21 @@ export function createServer(): McpServer {
     'unshare_doc',
     {
       title: 'Remove someone’s access',
-      description: 'Revoke a person’s direct access to a Google Doc by email.',
-      inputSchema: { documentId: z.string(), email: z.string(), ...accountArg },
+      description:
+        'Revoke a grant on a Google Doc. Pass `email` for a person or a group. A grant with no email — a domain-wide grant, or anyone-with-link — has no email to pass, so address it by `permissionId` from list_permissions (run that first; it also tells you the role you are about to remove). Refuses to touch the owner. Note a doc created under a Workspace domain may carry a domain grant nobody explicitly added.',
+      inputSchema: {
+        documentId: z.string(),
+        email: z.string().optional().describe('person or group to revoke; omit when using permissionId'),
+        permissionId: z
+          .string()
+          .optional()
+          .describe('id from list_permissions — the only way to revoke a domain or anyone-with-link grant'),
+        ...accountArg,
+      },
     },
-    async ({ documentId, email, account }) => {
+    async ({ documentId, email, permissionId, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await unshareDoc(clients, documentId, email));
+      return json(await unshareDoc(clients, documentId, { email, permissionId }));
     },
   );
 

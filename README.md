@@ -117,7 +117,7 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 | `list_tabs` / `add_tab` / `rename_tab` / `delete_tab` | Tab structure |
 | `list_folder` / `search_drive` | Browse a Drive folder / search files+folders by name — results carry their parent folder(s) (id + name) |
 | `create_folder` | Create a Drive folder, optionally inside a parent folder |
-| `list_permissions` / `share_doc` / `unshare_doc` | Sharing (`share_doc` handles both people and anyone-with-link) |
+| `list_permissions` / `share_doc` / `unshare_doc` | Sharing (`share_doc` handles both people and anyone-with-link). `list_permissions` names every audience, including domain-wide grants a Workspace adds on creation; `unshare_doc` revokes those by `permissionId` |
 | `list_accounts` | Authorized Google accounts |
 | `set_project_default` / `get_project_config` | Set/show this project’s default account + folder (writes `.gdocs-mcp.json`) |
 
