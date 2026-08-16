@@ -3,18 +3,19 @@
 </p>
 
 <p align="center">
+  <a href="https://www.npmjs.com/package/@dasasian/gdocs-mcp"><img alt="npm version" src="https://img.shields.io/npm/v/@dasasian/gdocs-mcp?style=flat-square&color=235a9b&label=npm"></a>
+  <a href="https://github.com/dasasian/gdocs-mcp/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/dasasian/gdocs-mcp/ci.yml?branch=main&style=flat-square&label=CI"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-235a9b?style=flat-square"></a>
   <a href="https://modelcontextprotocol.io"><img alt="Model Context Protocol server" src="https://img.shields.io/badge/MCP-server-235a9b?style=flat-square"></a>
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178c6?style=flat-square">
   <img alt="Node 18+" src="https://img.shields.io/badge/node-18%2B-5fa04e?style=flat-square">
-  <img alt="Status: alpha" src="https://img.shields.io/badge/status-alpha-c89b3c?style=flat-square">
 </p>
 
 # @dasasian/gdocs-mcp
 
 An [MCP](https://modelcontextprotocol.io) server that lets an AI agent (like Claude Code) treat a **Google Doc like a local file** — read it, edit it by content, review and resolve **suggestions**, manage **comments**, and work across **tabs** and **multiple Google accounts**.
 
-> **Status:** early / alpha. The full tool surface is implemented and validated against the live API; a few block-rendering features are still in progress (see [Roadmap](#roadmap)).
+> **Status:** beta. The tool surface is complete and every change is verified against the live API, not just unit tests. Markdown code blocks are the one construct still to render (see [Roadmap](#roadmap)).
 
 ## Why this exists
 
@@ -32,7 +33,7 @@ Most Google Docs MCP servers treat a doc as flat text. This one fills the gap no
 npm install -g @dasasian/gdocs-mcp
 ```
 
-Or from source (during alpha):
+Or from source:
 
 ```sh
 git clone https://github.com/dasasian/gdocs-mcp && cd gdocs-mcp

@@ -1,0 +1,29 @@
+version: 2
+
+# Grouped and monthly on purpose. This is a small dependency tree with two things
+# that matter — googleapis and the MCP SDK — so a weekly stream of individual PRs
+# would be noise that trains you to ignore it. Security updates are not affected
+# by the schedule; GitHub raises those immediately.
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      dev-dependencies:
+        dependency-type: development
+        update-types: [minor, patch]
+      production-minor-patch:
+        dependency-type: production
+        update-types: [minor, patch]
+
+  # The workflows publish to npm and the MCP registry via OIDC, so a stale or
+  # yanked action here is a supply-chain problem, not a convenience one.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
