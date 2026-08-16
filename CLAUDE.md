@@ -41,6 +41,13 @@ one, do this review and record the trade-off in the PR/commit:
    hide `delete_*` / `unshare_doc` / `overwrite_doc` behind a generic `op` enum —
    their confirmation guards (`expectTitle`, `expectQuote`, `force`) must stay
    legible at the call site.
+   **A guard must be a fact the caller had to fetch, not one they supplied.**
+   `expectTitle` comes from a read, `expectQuote` from `list_comments`,
+   `expectedChange`/`documentTitle` from `list_suggestions`, `expectRole` from
+   `list_permissions` — echoing one back proves the caller looked, and that the
+   thing hasn't changed since. A guard over something they typed proves nothing:
+   `unshare_doc` takes `expectRole` and NOT `expectEmail`, because the email is
+   the selector (#43).
 5. **Uniform-vocabulary targets can merge; target-dependent style can't.** A tool
    is clearest to the model when its style/param fields don't change based on the
    target. `set_style` covers `from`/`to`/`whole` because they share one text+
