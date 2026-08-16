@@ -44,3 +44,8 @@ export const CSS_BY_ALIGN: Record<string, CssAlign> = {
   END: 'right',
   JUSTIFIED: 'justify',
 };
+
+// Docs has no inline-code style, so `code` maps to a monospace font. The reader
+// maps it back, which is what makes `` `x` `` survive a round-trip — keep the
+// two directions on this one constant.
+export const CODE_FONT = 'Courier New';

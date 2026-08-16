@@ -83,3 +83,58 @@ describe('renderMarkdown', () => {
     expect(renderMarkdown(d, { tracked: true })).toBe('<ins data-sug="s1">new</ins><del data-sug="s1">old</del>');
   });
 });
+
+// ---- #30: color/size/font must be visible in the read ----------------------
+//
+// DESIGN.md §2 makes inline HTML the escape hatch for formatting markdown can't
+// express, and requires it be "visible in the read" so an agent can verify its
+// own style changes. The writer parsed <span style="…"> all along; the reader
+// never produced it, so a set_style colour change was invisible on re-read.
+
+const md = (content: docs_v1.Schema$StructuralElement[]) => renderMarkdown(doc(content));
+
+describe('renderRun — Docs-only formatting (#30)', () => {
+  it('emits color, font-size and font-family as the span the writer parses', () => {
+    expect(md([para([run('red', 1, { foregroundColor: { color: { rgbColor: { red: 1 } } } })])])).toBe(
+      '<span style="color:#ff0000">red</span>',
+    );
+    expect(md([para([run('big', 1, { fontSize: { magnitude: 18, unit: 'PT' } })])])).toBe(
+      '<span style="font-size:18pt">big</span>',
+    );
+    expect(md([para([run('serif', 1, { weightedFontFamily: { fontFamily: 'Georgia' } })])])).toBe(
+      '<span style="font-family:Georgia">serif</span>',
+    );
+  });
+
+  it('combines several into one span, in the order inline.ts reads back', () => {
+    expect(
+      md([para([run('x', 1, { foregroundColor: { color: { rgbColor: {} } } , fontSize: { magnitude: 9, unit: 'PT' } })])]),
+    ).toBe('<span style="color:#000000;font-size:9pt">x</span>');
+  });
+
+  // The reason #31 had to land first: this shape was unparseable before.
+  it('nests markdown emphasis inside the span', () => {
+    expect(md([para([run('b', 1, { bold: true, foregroundColor: { color: { rgbColor: { blue: 1 } } } })])])).toBe(
+      '<span style="color:#0000ff">**b**</span>',
+    );
+  });
+
+  it('stays silent on runs that inherit their style', () => {
+    expect(md([para([run('plain', 1)])])).toBe('plain');
+    expect(md([para([run('styled but not in these fields', 1, { bold: true })])])).toBe(
+      '**styled but not in these fields**',
+    );
+  });
+
+  // Docs has no inline-code style — the writer maps `code` to a monospace font,
+  // so the reader maps it back. Before this, backticks were silently dropped.
+  it('renders the code font back to a code span, not a font-family span', () => {
+    expect(md([para([run('x', 1, { weightedFontFamily: { fontFamily: 'Courier New' } })])])).toBe('`x`');
+    // and other styles still wrap around it
+    expect(md([para([run('x', 1, { weightedFontFamily: { fontFamily: 'Courier New' }, bold: true })])])).toBe('**`x`**');
+  });
+
+  it('ignores a theme color it cannot express as hex', () => {
+    expect(md([para([run('t', 1, { foregroundColor: { color: {} } })])])).toBe('t');
+  });
+});

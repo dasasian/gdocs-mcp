@@ -1,6 +1,7 @@
 import type { docs_v1 } from 'googleapis';
 import { contentOf, listsOf } from './structure.js';
-import { LEVEL_BY_HEADING, CSS_BY_ALIGN } from './markdown-spec.js';
+import { LEVEL_BY_HEADING, CSS_BY_ALIGN, CODE_FONT } from './markdown-spec.js';
+import { rgbToHex } from './color.js';
 
 const ORDERED_GLYPHS = new Set(['DECIMAL', 'ZERO_DECIMAL', 'UPPER_ALPHA', 'ALPHA', 'UPPER_ROMAN', 'ROMAN']);
 
@@ -204,11 +205,28 @@ function renderRun(run: docs_v1.Schema$TextRun, opts: RenderOpts): string {
   if (text.length === 0) return trailingNl ? '\n' : '';
 
   const s = run.textStyle ?? {};
+  // Innermost first, so every other marker wraps around these. Code has to be
+  // innermost of all: a code span's contents are literal, so `**`x`**` keeps its
+  // bold while ``**x**`` would not.
+  const family = s.weightedFontFamily?.fontFamily ?? undefined;
+  const isCode = family === CODE_FONT;
+  if (isCode) text = `\`${text}\``;
   if (s.link?.url) text = `[${text}](${s.link.url})`;
   if (s.bold) text = `**${text}**`;
   if (s.italic) text = `*${text}*`;
   if (s.strikethrough) text = `~~${text}~~`;
   if (s.underline && !s.link) text = `<u>${text}</u>`;
+
+  // Docs-only formatting markdown cannot express (DESIGN.md §2) goes through the
+  // inline-HTML escape hatch, in the exact spelling inline.ts parses back. Google
+  // only populates these fields on runs that *override* them — an inherited run
+  // has an empty textStyle — so this stays quiet on ordinary text.
+  const css: string[] = [];
+  const color = rgbToHex(s.foregroundColor?.color?.rgbColor ?? undefined);
+  if (color) css.push(`color:${color}`);
+  if (s.fontSize?.magnitude) css.push(`font-size:${s.fontSize.magnitude}pt`);
+  if (family && !isCode) css.push(`font-family:${family}`);
+  if (css.length) text = `<span style="${css.join(';')}">${text}</span>`;
 
   if (opts.tracked) {
     const ins = run.suggestedInsertionIds?.[0];
