@@ -106,9 +106,9 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 | `copy_doc` | Duplicate a doc (Drive’s “Make a copy”) — optional new name and target folder. Preserves what markdown can’t round-trip (headers/footers, image sizing, exact formatting), so prefer it over rebuilding a template |
 | `list_suggestions` | Pending suggestions as `before → after` diffs — `segment` to read a header/footer's |
 | `apply_suggestions` | Accept or reject one or more suggestions atomically — required for overlapping/adjacent "clusters"; `segment` to resolve a header/footer's |
-| `insert_image` | Insert an inline image (URL) — position, size, left/center/right align. `segment: "header"` (+ `createSegment`) puts a letterhead logo where it repeats |
+| `insert_image` | Insert an inline image from a URL **or a local file** — position, size, left/center/right align. `segment: "header"` (+ `createSegment`) puts a letterhead logo where it repeats |
 | `download_images` | Download a doc’s embedded images to a local folder (pairs with `read_doc`’s image markers — the inverse of publishing) |
-| `insert_table` | Insert a rows×columns table — optional data fill, column widths, header shading; `segment`/`createSegment` for a letterhead table |
+| `insert_table` | Insert a rows×columns table — data fill (cells accept inline markdown), per-column `align`, column widths, header shading; `segment`/`createSegment` for a letterhead table |
 | `edit_table` | Table structure ops — insert/delete a row or column (surgical — locate the table by cell text); `segment` for header/footer tables |
 | `set_table_style` | Style an existing table (located by cell text): cell padding, background, cell borders (`width: 0` = borderless), column widths, pinned header rows — scope table/row/column/cell; `segment` for header/footer tables |
 | `list_comments` / `add_comment` / `resolve_comment` | Comment threads (`add_comment` also replies, via `replyTo`) |

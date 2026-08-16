@@ -2,16 +2,13 @@ import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
 import { contentOf, resolveTabId, findTab, flattenTabs, tableInsertedAt, writeControlFor, TAB_METADATA_FIELDS, type SegmentKind, type SegmentPage } from './structure.js';
 import { resolveSegmentTarget } from './segments.js';
-import { ALIGN_BY_CSS } from './markdown-spec.js';
 import { parseSuggestions } from './suggestions.js';
-import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import nodePath from 'node:path';
 import { markdownToRequests } from './write.js';
-import { parseInline, segmentTextStyle } from './inline.js';
 import { findProjectConfig } from '../auth/accounts.js';
-import { uploadImageForInsert } from '../drive/images.js';
-import { resolveIndex } from './objects.js';
+import { uploadImageForInsert, resolveImageSource } from '../drive/images.js';
+import { resolveIndex, fillCellRequests, columnAlignRequests } from './objects.js';
 
 // Insert a markdown image at `index`. Remote URLs embed directly; a local path is
 // resolved against baseDir, uploaded, embedded, and the temp upload deleted.
@@ -43,20 +40,11 @@ async function insertImagePlacement(
     return reply?.insertInlineImage?.objectId ?? undefined;
   };
 
-  if (/^https?:\/\//i.test(src)) {
-    return { objectId: await embed(src) };
-  }
-  // `image:<objectId>` is read_doc's handle for an image ALREADY in a document.
-  // Docs stores the embedded bytes, not a fetchable URL, so it can't be re-embedded
-  // from the marker alone — say so plainly instead of failing as a missing file.
-  if (src.startsWith('image:')) {
-    return { warning: `image "${src}" refers to an image already embedded in a document; its bytes are not re-fetchable. Use download_images and point at the local file, or give a URL. Skipped.` };
-  }
-  const decoded = decodeURIComponent(src);
-  const absPath = nodePath.isAbsolute(decoded) ? decoded : baseDir ? nodePath.resolve(baseDir, decoded) : null;
-  if (!absPath) return { warning: `image "${src}" is a local path but no baseDir was provided; skipped` };
-  if (!existsSync(absPath)) return { warning: `image not found: ${absPath}; skipped` };
-  const { uri, cleanup } = await uploadImageForInsert(clients, absPath);
+  const source = resolveImageSource(src, baseDir);
+  if ('error' in source) return { warning: `${source.error}; skipped` };
+  if (source.kind === 'url') return { objectId: await embed(source.uri) };
+
+  const { uri, cleanup } = await uploadImageForInsert(clients, source.path);
   try {
     return { objectId: await embed(uri) };
   } finally {
@@ -86,58 +74,14 @@ async function insertTableAt(
   const after = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
   const tableEl = tableInsertedAt(after, index, tabId, segmentId);
   if (!tableEl?.table?.tableRows) return;
-  // Collect cell (index, markdown) descending so inserts don't shift later cells.
-  const cells: { index: number; md: string }[] = [];
-  tableEl.table.tableRows.forEach((row, r) =>
-    row.tableCells?.forEach((cell, c) => {
-      const md = rows[r]?.[c];
-      const idx = cell.content?.[0]?.startIndex;
-      if (md && idx != null) cells.push({ index: idx, md });
-    }),
-  );
-  cells.sort((a, b) => b.index - a.index);
 
-  // Render each cell's inline markdown (bold/italic/code/links) into the cell.
-  const requests: docs_v1.Schema$Request[] = [];
-  for (const cell of cells) {
-    const segs = parseInline(cell.md);
-    const plain = segs.map((s) => s.text).join('');
-    if (!plain) continue;
-    requests.push({ insertText: { location: { index: cell.index, tabId, segmentId }, text: plain } });
-    let off = 0;
-    for (const seg of segs) {
-      const { textStyle, fields } = segmentTextStyle(seg);
-      if (fields.length) {
-        requests.push({
-          updateTextStyle: { range: { startIndex: cell.index + off, endIndex: cell.index + off + seg.text.length, tabId, segmentId }, textStyle, fields: fields.join(',') },
-        });
-      }
-      off += seg.text.length;
-    }
-  }
+  const requests = fillCellRequests(tableEl, rows, { tabId, segmentId });
   if (requests.length) await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests } });
 
-  // Apply column alignment (center/right) to every cell's paragraph. Re-fetch so
-  // indices are current; paragraph-style ops don't change length.
-  if (aligns.some((a) => a === 'center' || a === 'right')) {
+  // Column alignment needs the post-fill indices, so re-fetch first.
+  if (aligns.some((a) => a && a !== 'left')) {
     const aligned = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
-    const tableEl2 = tableInsertedAt(aligned, index, tabId, segmentId);
-    const alignReqs: docs_v1.Schema$Request[] = [];
-    tableEl2?.table?.tableRows?.forEach((row) =>
-      row.tableCells?.forEach((cell, c) => {
-        const a = aligns[c];
-        const para = cell.content?.[0];
-        if ((a === 'center' || a === 'right') && para?.startIndex != null) {
-          alignReqs.push({
-            updateParagraphStyle: {
-              range: { startIndex: para.startIndex, endIndex: para.endIndex ?? para.startIndex + 1, tabId, segmentId },
-              paragraphStyle: { alignment: ALIGN_BY_CSS[a] },
-              fields: 'alignment',
-            },
-          });
-        }
-      }),
-    );
+    const alignReqs = columnAlignRequests(tableInsertedAt(aligned, index, tabId, segmentId), aligns, { tabId, segmentId });
     if (alignReqs.length) await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests: alignReqs } });
   }
 }
