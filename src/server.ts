@@ -253,7 +253,7 @@ export function createServer(): McpServer {
     {
       title: 'Download a doc’s images',
       description:
-        'Download every embedded image in a Google Doc to a local folder. Returns the objectId→filename mapping, which correlates with read_doc’s `![](image:<objectId>)` markers so you can rewrite them to local paths (the inverse of publishing).',
+        'Download every embedded image in a Google Doc to a local folder. Returns the objectId→filename mapping, which correlates with read_doc’s `<img src="image:<objectId>">` markers so you can rewrite them to local paths (the inverse of publishing).',
       inputSchema: {
         documentId: z.string(),
         dir: z.string().describe('absolute local folder to save images into (created if missing)'),

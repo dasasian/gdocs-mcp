@@ -138,3 +138,47 @@ describe('renderRun — Docs-only formatting (#30)', () => {
     expect(md([para([run('t', 1, { foregroundColor: { color: {} } })])])).toBe('t');
   });
 });
+
+// ---- #30: embedded images carry their size ---------------------------------
+//
+// Docs keeps the embedded bytes, not the source URL, so `image:<objectId>` stays
+// the durable handle (download_images resolves it). Size is the part markdown
+// can't express, so it goes through the <img> escape hatch (DESIGN.md §2).
+
+function imageDoc(size?: docs_v1.Schema$Size, title?: string): docs_v1.Schema$Document {
+  return {
+    body: { content: [{ paragraph: { elements: [{ inlineObjectElement: { inlineObjectId: 'kix.a' } }] } }] },
+    inlineObjects: { 'kix.a': { inlineObjectProperties: { embeddedObject: { size, title } } } },
+  } as unknown as docs_v1.Schema$Document;
+}
+const pt = (n: number) => ({ magnitude: n, unit: 'PT' });
+
+describe('renderImage (#30)', () => {
+  it('emits the object marker with width and height in points', () => {
+    expect(renderMarkdown(imageDoc({ width: pt(48), height: pt(48) }))).toBe(
+      '<img src="image:kix.a" width="48" height="48">',
+    );
+  });
+
+  it('includes alt when the document has one', () => {
+    expect(renderMarkdown(imageDoc({ width: pt(10), height: pt(20) }, 'a chart'))).toBe(
+      '<img src="image:kix.a" alt="a chart" width="10" height="20">',
+    );
+  });
+
+  it('escapes quotes in alt so the tag stays parseable', () => {
+    expect(renderMarkdown(imageDoc(undefined, 'say "hi" & <b>'))).toBe(
+      '<img src="image:kix.a" alt="say &quot;hi&quot; &amp; &lt;b>">',
+    );
+  });
+
+  it('omits dimensions it does not have', () => {
+    expect(renderMarkdown(imageDoc())).toBe('<img src="image:kix.a">');
+  });
+
+  it('rounds fractional points rather than emitting full float noise', () => {
+    expect(renderMarkdown(imageDoc({ width: pt(95.99999), height: pt(12.3456) }))).toBe(
+      '<img src="image:kix.a" width="96" height="12.35">',
+    );
+  });
+});

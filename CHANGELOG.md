@@ -11,6 +11,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 - **`read_doc` now shows text color, size and font.** A run carrying any of them comes back wrapped in `<span style="color:…;font-size:…pt;font-family:…">` — the exact spelling the writer already parsed, so it round-trips. `DESIGN.md` §2 made inline HTML the escape hatch for formatting markdown can't express and required it be "visible in the read", but the reader never emitted these, so a `set_style` colour change was invisible on the next read and an agent could not verify its own edit or preserve styling it was rewriting around. Emission is quiet by default: Google only populates these fields on runs that *override* them, so inherited text (including headings) is untouched (#30).
+- **Embedded images read back with their size.** `read_doc` now emits `<img src="image:<objectId>" width="…" height="…">` (points) instead of a bare `![](image:<objectId>)`, and the writer accepts an `<img>` line — so image dimensions survive a round-trip. `DESIGN.md` §2 named `<img width="400">` as the mechanism; it existed on neither side. The plain `![alt](src)` form still works unchanged for authoring. Writing an `image:<objectId>` marker back is now refused with an explanation, rather than failing as a missing local file, because Docs stores the embedded bytes and not a re-fetchable URL (#30).
 - **Inline code round-trips.** Docs has no code style, so the writer maps `` `x` `` to a monospace font; the reader now maps it back. Previously the backticks were dropped on read (#30).
 
 ### Fixed

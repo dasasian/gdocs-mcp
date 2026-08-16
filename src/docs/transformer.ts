@@ -1,5 +1,5 @@
 import type { docs_v1 } from 'googleapis';
-import { contentOf, listsOf } from './structure.js';
+import { contentOf, listsOf, inlineObjectsOf } from './structure.js';
 import { LEVEL_BY_HEADING, CSS_BY_ALIGN, CODE_FONT } from './markdown-spec.js';
 import { rgbToHex } from './color.js';
 
@@ -72,6 +72,7 @@ export interface RenderOpts {
 
 export function renderMarkdown(doc: docs_v1.Schema$Document, opts: RenderOpts = {}): string {
   const lists = listsOf(doc, opts.tabId);
+  const objects = inlineObjectsOf(doc, opts.tabId);
   const blocks: string[] = [];
   let listBuf: string[] = [];
   let lastListId: string | null = null;
@@ -92,7 +93,7 @@ export function renderMarkdown(doc: docs_v1.Schema$Document, opts: RenderOpts = 
       if (el.table) blocks.push(renderTable(el.table, opts));
       continue;
     }
-    const line = renderParagraph(para, opts);
+    const line = renderParagraph(para, opts, objects);
     if (para.bullet) {
       const listId = para.bullet.listId ?? null;
       if (listBuf.length && listId !== lastListId) flushList(); // distinct list -> blank line
@@ -117,13 +118,36 @@ export function renderMarkdown(doc: docs_v1.Schema$Document, opts: RenderOpts = 
   return blocks.join('\n\n');
 }
 
-function renderParagraph(para: docs_v1.Schema$Paragraph, opts: RenderOpts): string {
+// Embedded image -> the <img> escape hatch (DESIGN.md §2). `src` stays the
+// `image:<objectId>` marker: Docs keeps the embedded bytes, not the original URL,
+// so the id is the only durable handle — download_images resolves it to a file.
+// Docs always reports a size (it fits the image on insert), so width/height are
+// always present; they are points, matching insert_image's units.
+function renderImage(objectId: string, objects: Record<string, docs_v1.Schema$InlineObject>): string {
+  const eo = objects[objectId]?.inlineObjectProperties?.embeddedObject ?? {};
+  const attrs = [`src="image:${objectId}"`];
+  const alt = eo.title || eo.description;
+  if (alt) attrs.push(`alt="${escapeAttr(alt)}"`);
+  const w = eo.size?.width?.magnitude;
+  const h = eo.size?.height?.magnitude;
+  if (w) attrs.push(`width="${round2(w)}"`);
+  if (h) attrs.push(`height="${round2(h)}"`);
+  return `<img ${attrs.join(' ')}>`;
+}
+
+const round2 = (n: number): number => Math.round(n * 100) / 100;
+const escapeAttr = (s: string): string => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+
+function renderParagraph(
+  para: docs_v1.Schema$Paragraph,
+  opts: RenderOpts,
+  objects: Record<string, docs_v1.Schema$InlineObject> = {},
+): string {
   let inline = '';
   for (const pe of para.elements ?? []) {
     if (pe.textRun) inline += renderRun(pe.textRun, opts);
     else if (pe.inlineObjectElement?.inlineObjectId) {
-      // Embedded image: mark its position + object id (download_images resolves it).
-      inline += `![](image:${pe.inlineObjectElement.inlineObjectId})`;
+      inline += renderImage(pe.inlineObjectElement.inlineObjectId, objects);
     }
   }
   inline = inline.replace(/\n$/, ''); // drop the paragraph-mark newline
