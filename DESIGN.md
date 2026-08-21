@@ -57,8 +57,7 @@ only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 | `insert_content(doc, content\|contentFile, at?, tab?)` | Insert new content at a structural position (`end`/`top`/anchor) — the non-anchored counterpart to `edit_doc` (§4) |
 | `export_doc(doc, dir, format?, filename?)` | Server-side render to pdf/docx/odt/rtf/txt/html/epub/md via Drive `files.export` |
 | `create_doc(content\|contentFile, folder?)` | New doc (`contentFile` reads a long body server-side, no inline retype) |
-| `update_doc(doc, name?, folder?)` | Rename and/or move (metadata) |
-| `copy_doc(doc, name?, folder?)` | Duplicate a doc (Drive `files.copy`) — a create-verb, kept distinct from `update_doc` |
+| `drive(cmd, args, expectName?, acceptOwnershipTransfer?)` | Drive as a shell: `ls` · `find` · `mkdir` · `cp` · `mv`. `mv` covers rename and move; `cp` is Drive `files.copy` (§3c) |
 | `set_style(doc, {from,to?}\|whole_document, style, tab?)` | Style existing text **in place** by selection or whole-doc, no content change |
 | `get_style(doc, target_string, tab?)` | Read the computed style at an anchor (read side of `set_style`) |
 | `set_page_setup / get_page_setup(doc, tab?)` | Document page setup: margins, page size, orientation |
@@ -68,9 +67,46 @@ only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 | `apply_suggestions(doc, resolutions[], segment?)` | Resolve one or more suggestions atomically (§6) |
 | `list_comments / add_comment(replyTo?) / resolve_comment` | Drive comments (`add_comment` also replies) |
 | `list_tabs / add_tab / rename_tab / delete_tab` | Tab structure |
-| `list_folder / search_drive / create_folder` | Drive navigation (results carry parent folder id+name; `folder: "orphaned"` lists files in no folder) and folder creation |
+| `drive` | Drive as a filesystem — `ls` / `find` / `mkdir` / `cp` / `mv` over paths (`~`, `/shared/<drive>`, `/shared-with-me`, `/lost+found`) or ids. Collapsed from five bespoke tools (#44) |
 | `list_permissions / share_doc(email?|link) / unshare_doc(email?|permissionId?, expectRole)` | Sharing (person, group, domain, or anyone-with-link). A grant with no email is addressed by the `permissionId` the read returns; `expectRole` is required because a revocation is recorded nowhere (§4) |
 | `add_account / list_accounts` | Multi-account (§9) |
+
+### 3c. Drive as a filesystem — borrowing a prior, and where it lies
+
+Drive navigation is one tool speaking shell (`ls` · `find` · `mkdir` · `cp` · `mv`)
+rather than five bespoke names. The trick this project already plays with markdown
+(`read_doc`), the file-edit idiom (`edit_doc`) and CSS (`set_style`) needs three
+conditions to hold together: the vocabulary is **pre-trained**, the namespace is
+**stable**, and an **interpreter** is cheap. Miss the first and the surface has not
+shrunk — it has moved from a typed schema into prose the model reads less reliably.
+
+The win is not mainly the four tool slots. `ls` versus `find` needs no explanation
+where `list_folder` versus `search_drive` did, so the selection problem shrinks
+from "one of 36" to "one of 32, then one of five inside a namespace the model knows
+cold". Arguments stay positional and differ per command deliberately: a shell is
+not uniform, and that variability *is* the pattern being borrowed. Guards are the
+exception and stay named fields, per §4 — `expectName` buried in `args[2]` would
+not be legible at the call site.
+
+**Where the prior is wrong, the tool refuses rather than half-works.** A borrowed
+vocabulary is a liability exactly where the borrowed thing behaves differently,
+because the model will not defensively check something no filesystem it learned
+from does:
+
+| the prior says | Drive does | response |
+|---|---|---|
+| one name per folder, case-sensitive | duplicates allowed, matching folds case | refuse with candidates listed; `cp`/`mv` also refuse to *create* the state |
+| `cp -r` copies a tree | `files.copy` refuses folders | refuse, and say `-r` cannot help |
+| `mv` keeps you the owner | into a shared drive it transfers ownership, irreversibly | refuse without `acceptOwnershipTransfer` |
+
+**Paths are a convenience over the part of Drive that happens to be a tree.** A
+file with no parent is reachable by search and by id but by no path (#46), so
+`find` is the complete view and `/lost+found` is where those surface. That is a
+property to state, not a bug to fix.
+
+No destructive command ships. There was none in the surface to collapse, and host
+permissions are granted per tool *name*: a user who allowlists `drive` so `ls`
+stops prompting would be allowlisting `rm` too. See #47.
 
 ### 3a. Segments — the body is not the whole document
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../src/google/clients.js';
-import { deleteTab, moveDoc, overwriteDoc } from '../src/docs/document.js';
+import { deleteTab, overwriteDoc } from '../src/docs/document.js';
 import { resolveComment } from '../src/drive/comments.js';
 
 // Verification guards (#10): each mutating tool checks a caller-echoed human-readable
@@ -52,32 +52,6 @@ describe('overwriteDoc guard', () => {
     });
     expect(r.status).toBe('mismatch');
     expect(batchUpdate).not.toHaveBeenCalled();
-  });
-});
-
-describe('moveDoc guard', () => {
-  function moveClients(name: string): GoogleClients {
-    return {
-      auth: {} as GoogleClients['auth'],
-      docs: {} as GoogleClients['docs'],
-      drive: {
-        files: {
-          get: vi.fn().mockResolvedValue({ data: { parents: ['p0'], name } }),
-          update: vi.fn().mockResolvedValue({ data: { parents: ['f1'] } }),
-        },
-      } as unknown as GoogleClients['drive'],
-    };
-  }
-  it('refuses when expectTitle does not match the file name', async () => {
-    const r = await moveDoc(moveClients('Actual Doc'), 'd', 'https://drive.google.com/drive/folders/f1', {
-      expectTitle: 'Other Doc',
-    });
-    expect(r.status).toBe('mismatch');
-  });
-  it('moves when the name matches', async () => {
-    const r = await moveDoc(moveClients('Actual Doc'), 'd', 'f1', { expectTitle: 'Actual Doc' });
-    expect(r.status).toBe('ok');
-    expect(r.parents).toEqual(['f1']);
   });
 });
 

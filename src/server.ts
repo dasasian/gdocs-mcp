@@ -6,13 +6,13 @@ import { listSuggestions, applySuggestions } from './docs/suggestions.js';
 import { listComments, addComment, replyComment, resolveComment } from './drive/comments.js';
 import { readDoc } from './docs/read.js';
 import { editDoc } from './docs/edit.js';
-import { createDoc, copyDoc, insertContent, overwriteDoc, updateDoc, listTabs, addTab, renameTab, deleteTab, resolveContentSource } from './docs/document.js';
+import { createDoc, insertContent, overwriteDoc, listTabs, addTab, renameTab, deleteTab, resolveContentSource } from './docs/document.js';
 import { setStyle } from './docs/format.js';
 import { setPageSetup, getPageSetup } from './docs/page.js';
 import { getStyle } from './docs/inspect.js';
 import { insertImage, insertTable, insertRow, deleteRow, insertColumn, deleteColumn, setTableStyle, getTableStyle } from './docs/objects.js';
 import { listPermissions, shareDoc, unshareDoc, setLinkAccess } from './drive/sharing.js';
-import { listFolder, searchDrive, createFolder, listOrphans, isOrphanFolder } from './drive/files.js';
+import { driveShell } from './drive/shell.js';
 import { downloadImages } from './drive/images.js';
 import { exportDoc, EXPORT_FORMATS, type ExportFormat } from './drive/export.js';
 
@@ -68,7 +68,7 @@ export function createServer(): McpServer {
     {
       title: 'Set this project’s default account/folder',
       description:
-        'Write this project’s defaults to a .gdocs-mcp.json in the current working directory (or update an existing one up the tree). Set a default account and/or a default folder (URL or id) for new docs. To set a folder by name, search_drive for it first and pass its id.',
+        'Write this project’s defaults to a .gdocs-mcp.json in the current working directory (or update an existing one up the tree). Set a default account and/or a default folder (URL or id) for new docs. To set a folder by name, find it first with drive({ cmd: \'find\' }) and pass its id.',
       inputSchema: {
         account: z.string().optional().describe('default Google account email (must be authorized)'),
         folder: z.string().optional().describe('default Drive folder (URL or id) for new docs'),
@@ -509,44 +509,7 @@ export function createServer(): McpServer {
     },
   );
 
-  server.registerTool(
-    'copy_doc',
-    {
-      title: 'Duplicate an existing Doc',
-      description:
-        'Duplicate a Google Doc (Drive’s "Make a copy"), optionally with a new name and/or into a Drive folder (URL or id). Prefer this over recreating a doc with create_doc when a template is involved — a copy preserves headers/footers, image sizing and exact formatting, none of which survive a markdown round-trip. Defaults: Drive’s "Copy of …" name, and the source doc’s folder.',
-      inputSchema: {
-        documentId: z.string().describe('the doc to copy (URL or id)'),
-        name: z.string().optional().describe('name for the copy (default: Drive’s "Copy of …")'),
-        folder: z.string().optional().describe('Drive folder URL or id to put the copy in (default: same as source)'),
-        ...accountArg,
-      },
-    },
-    async ({ documentId, name, folder, account }) => {
-      const clients = await clientsForAccount(account);
-      return json(await copyDoc(clients, documentId, { name, folder }));
-    },
-  );
 
-  server.registerTool(
-    'update_doc',
-    {
-      title: 'Update a doc’s name and/or folder',
-      description:
-        'Update a Google Doc’s metadata: rename it (name) and/or move it to a Drive folder (folder, by URL or id). Provide name, folder, or both. When moving, pass expectTitle (the doc’s title) — shown for confirmation and verified against the live doc before moving; if it doesn’t match, nothing is changed. (Content edits use edit_doc/overwrite_doc, not this.)',
-      inputSchema: {
-        documentId: z.string(),
-        name: z.string().optional().describe('new name/title for the doc'),
-        folder: z.string().optional().describe('Drive folder URL or id to move the doc into'),
-        expectTitle: z.string().optional().describe('the doc’s current title; verified before moving so a wrong id is refused'),
-        ...accountArg,
-      },
-    },
-    async ({ documentId, name, folder, expectTitle, account }) => {
-      const clients = await clientsForAccount(account);
-      return json(await updateDoc(clients, documentId, { name, folder, expectTitle }));
-    },
-  );
 
   server.registerTool(
     'overwrite_doc',
@@ -687,60 +650,42 @@ export function createServer(): McpServer {
     },
   );
 
-  server.registerTool(
-    'list_folder',
-    {
-      title: 'List a Drive folder',
-      description:
-        'List the files and subfolders directly inside a Drive folder (by URL or id). Defaults to My Drive root. Each entry carries its parent folder(s) (id + name) so a result can be traced upward. Pass folder="orphaned" for the files you own that are in no folder at all — they exist and open, but no amount of browsing will show them; re-home one with update_doc({ folder }).',
-      inputSchema: {
-        folder: z.string().optional().describe('folder URL or id (default My Drive root), or "orphaned" for files in no folder'),
-        ...accountArg,
-      },
-    },
-    async ({ folder, account }) => {
-      const clients = await clientsForAccount(account);
-      // "orphaned" is a place that isn't a folder, the way Drive's own sidebar
-      // has "Shared with me" (#46). Kept as a value of the existing param, not
-      // a second tool: one field, one type, whatever you're listing.
-      if (isOrphanFolder(folder)) return json(await listOrphans(clients));
-      return json(await listFolder(clients, folder));
-    },
-  );
+
+
 
   server.registerTool(
-    'search_drive',
+    'drive',
     {
-      title: 'Search Drive by name',
+      title: 'Drive as a filesystem',
       description:
-        'Find files/folders whose name contains the query. Optionally restrict to folders or documents. Each result carries its parent folder(s) (id + name), so you can tell where a hit lives — and create a sibling next to it.',
+        'Navigate and reorganise Google Drive with shell commands: ls, find, mkdir, cp, mv. Arguments are positional and follow the usual shell forms. ' +
+        'ls [path] — list a folder (default My Drive root). find <text> [-type d|f] — search everything by name, including files no path can reach. ' +
+        'mkdir [-p] <path> — create a folder. cp <src> <dst> — duplicate a file (preserves headers/footers, image sizing and exact formatting, which a markdown round-trip cannot rebuild). ' +
+        'mv <src> <dst> — move and/or rename, as on a filesystem: an existing folder as <dst> means "into it", anything else means "to that name". ' +
+        'Paths start with / or ~ (My Drive); /shared/<drive name> is a shared drive, /shared-with-me the files others shared with you, and /lost+found the files you own that are in no folder at all. ' +
+        'Anything not starting with / or ~ is read as a Drive id or URL, so ids from any other tool can be pasted straight in. ' +
+        'Drive permits two files with the same name in one folder and folds case when matching, unlike any real filesystem — a path that matches more than one thing is refused with the candidates listed, never guessed. ' +
+        'Content is edited with edit_doc/overwrite_doc, not here; there is no rm.',
       inputSchema: {
-        query: z.string(),
-        type: z.enum(['folder', 'document', 'any']).optional().describe('restrict results (default any)'),
+        cmd: z.enum(['ls', 'find', 'mkdir', 'cp', 'mv']),
+        args: z
+          .array(z.string())
+          .optional()
+          .describe('positional arguments for cmd, e.g. ["/Work/Roof", "/Archive"] for mv'),
+        expectName: z
+          .string()
+          .optional()
+          .describe('mv only: the name the source is expected to have; the move is refused if it resolved to something else'),
+        acceptOwnershipTransfer: z
+          .boolean()
+          .optional()
+          .describe('mv only: required to move into /shared/… , which hands ownership to that drive\'s organisation and cannot be undone'),
         ...accountArg,
       },
     },
-    async ({ query, type, account }) => {
+    async ({ cmd, args, expectName, acceptOwnershipTransfer, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await searchDrive(clients, query, type ?? 'any'));
-    },
-  );
-
-  server.registerTool(
-    'create_folder',
-    {
-      title: 'Create a Drive folder',
-      description:
-        'Create a folder in Google Drive, optionally inside a parent folder (URL or id); otherwise it goes to My Drive root. To nest under a folder you only know by name, search_drive for it first and pass its id.',
-      inputSchema: {
-        name: z.string().describe('name for the new folder'),
-        folder: z.string().optional().describe('parent folder URL or id (default My Drive root)'),
-        ...accountArg,
-      },
-    },
-    async ({ name, folder, account }) => {
-      const clients = await clientsForAccount(account);
-      return json(await createFolder(clients, name, folder));
+      return json(await driveShell(clients, cmd, args ?? [], { expectName, acceptOwnershipTransfer }));
     },
   );
 

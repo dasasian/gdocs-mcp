@@ -103,8 +103,7 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 | `overwrite_doc` | Replace a doc/tab body with markdown-rendered content — guarded against orphaning comments/suggestions |
 | `insert_content` | Insert new markdown content at a position — `at: "end"` (default) / `"top"` / a unique anchor. The way to add a paragraph after a table that ends the doc, where `edit_doc` has nothing to anchor on |
 | `export_doc` | Export a doc to a local file — pdf (default), docx, odt, rtf, txt, html, epub, md (rendered server-side by Google) |
-| `create_doc` / `update_doc` | Create (from markdown, optionally in a folder) / rename and/or move a doc |
-| `copy_doc` | Duplicate a doc (Drive’s “Make a copy”) — optional new name and target folder. Preserves what markdown can’t round-trip (headers/footers, image sizing, exact formatting), so prefer it over rebuilding a template |
+| `create_doc` | Create a doc from markdown, optionally in a folder |
 | `list_suggestions` | Pending suggestions as `before → after` diffs — `segment` to read a header/footer's |
 | `apply_suggestions` | Accept or reject one or more suggestions atomically — required for overlapping/adjacent "clusters"; `segment` to resolve a header/footer's |
 | `insert_image` | Insert an inline image from a URL **or a local file** — position, size, left/center/right align. `segment: "header"` (+ `createSegment`) puts a letterhead logo where it repeats |
@@ -115,13 +114,42 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 | `get_table_style` | Read a table's style (located by cell text): column widths, pinned header rows, and the matched cell's padding, background and per-side borders — the read counterpart to `set_table_style` |
 | `list_comments` / `add_comment` / `resolve_comment` | Comment threads (`add_comment` also replies, via `replyTo`) |
 | `list_tabs` / `add_tab` / `rename_tab` / `delete_tab` | Tab structure |
-| `list_folder` / `search_drive` | Browse a Drive folder (or `folder: "orphaned"` for files in no folder) / search files+folders by name — results carry their parent folder(s) (id + name) |
-| `create_folder` | Create a Drive folder, optionally inside a parent folder |
+| `drive` | Drive as a filesystem: `ls` `find` `mkdir` `cp` `mv`. Paths are `/` or `~` (My Drive), `/shared/<drive>`, `/shared-with-me`, `/lost+found`; anything else is an id. `cp` preserves what markdown can’t round-trip (headers/footers, image sizing, exact formatting), so prefer it over rebuilding a template. See [Drive as a filesystem](#drive-as-a-filesystem) |
 | `list_permissions` / `share_doc` / `unshare_doc` | Sharing (`share_doc` handles both people and anyone-with-link). `list_permissions` names every audience, including domain-wide grants a Workspace adds on creation; `unshare_doc` revokes those by `permissionId`, and requires `expectRole` since a revocation appears in no version history |
 | `list_accounts` | Authorized Google accounts |
 | `set_project_default` / `get_project_config` | Set/show this project’s default account + folder (writes `.gdocs-mcp.json`) |
 
 Every doc tool accepts an optional `account` (override the default) and, where relevant, a `tab` (target a tab by id or title).
+
+## Drive as a filesystem
+
+Drive navigation is one tool speaking shell, because the model already knows shell. Arguments are positional and differ per command, exactly as they do in a terminal.
+
+```jsonc
+{ "cmd": "ls",    "args": ["/Work/2026"] }
+{ "cmd": "find",  "args": ["quarterly report", "-type", "d"] }
+{ "cmd": "mkdir", "args": ["-p", "/Work/2027/Q1"] }
+{ "cmd": "cp",    "args": ["/Work/Template", "/Work/2027/Q1/Report"] }
+{ "cmd": "mv",    "args": ["/Work/Roof", "/Archive"], "expectName": "Roof" }
+```
+
+| path | is |
+|---|---|
+| `/…` or `~/…` | My Drive |
+| `/shared/<drive name>/…` | a shared drive |
+| `/shared-with-me` | files others shared with you, which you never filed |
+| `/lost+found` | files you own that are in **no** folder — see below |
+| anything else | a Drive id or URL, so ids from any other tool paste straight in |
+
+**Three places Drive is not a filesystem.** The vocabulary is borrowed only where it is honest, and refuses where it is not:
+
+- **Two files may share a name in one folder**, and **matching folds case**. No filesystem the model learned from does either, so it would not think to check. A path matching more than one thing is refused with the candidates listed, never guessed — and `cp`/`mv` refuse to *create* that state too, rather than manufacturing an ambiguity the resolver would then decline to resolve.
+- **`cp -r` does not exist.** Drive's `files.copy` refuses folders (its own web UI cannot copy one either), so `cp` on a folder explains that rather than half-working.
+- **`mv` into `/shared/…` gives the file away.** Shell `mv` across filesystems leaves you owning the file; moving into a shared drive transfers ownership to that organization and cannot be undone from your side. It requires `acceptOwnershipTransfer: true`.
+
+**Paths see less than `find` does.** A file with no parent still opens and still turns up in a search, but no path can name it — nothing that browses the tree will ever show it. `find` is the complete view; `/lost+found` is where those files surface.
+
+There is no `rm`. See [#47](https://github.com/dasasian/gdocs-mcp/issues/47).
 
 ## Known limitations
 

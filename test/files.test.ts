@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { GoogleClients } from '../src/google/clients.js';
-import { listFolder, searchDrive, createFolder, listOrphans, isOrphanFolder } from '../src/drive/files.js';
+import { listFolder, searchDrive, createFolder, listOrphans } from '../src/drive/files.js';
 
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 const DOC_MIME = 'application/vnd.google-apps.document';
@@ -125,15 +125,6 @@ describe('orphaned files (#46)', () => {
     const r = await listOrphans(clients);
     expect(r.orphaned).toEqual([]);
     expect(r.message).toContain('none');
-  });
-
-  it('recognises the pseudo-folder without mistaking a real folder id for it', async () => {
-    expect(isOrphanFolder('orphaned')).toBe(true);
-    expect(isOrphanFolder(' Orphans ')).toBe(true);
-    expect(isOrphanFolder('lost+found')).toBe(true);
-    expect(isOrphanFolder(undefined)).toBe(false);
-    expect(isOrphanFolder('1a2b3c')).toBe(false);
-    expect(isOrphanFolder('https://drive.google.com/drive/folders/p1')).toBe(false);
   });
 });
 

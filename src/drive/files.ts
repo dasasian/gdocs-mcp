@@ -90,16 +90,10 @@ export async function listFolder(clients: GoogleClients, folder?: string): Promi
 //     parentless and cannot be re-homed anyway, and it shrinks the scan.
 //   - the scan is bounded and says so; a partial answer reports itself rather
 //     than passing a silent cap off as "that's all of them".
+// Surfaced as `ls /lost+found` (#44) — Unix's name for exactly this.
 // Shared-drive items always carry a parent, so My Drive is the whole territory.
 const ORPHAN_PAGE_SIZE = 1000;
 const ORPHAN_MAX_PAGES = 10;
-
-/** Aliases accepted for the pseudo-folder; `orphaned` is the documented one. */
-const ORPHAN_NAMES = new Set(['orphaned', 'orphans', 'lost+found']);
-
-export function isOrphanFolder(folder: string | undefined): boolean {
-  return folder !== undefined && ORPHAN_NAMES.has(folder.trim().toLowerCase());
-}
 
 export interface OrphanListing {
   orphaned: DriveEntry[];
@@ -140,7 +134,7 @@ export async function listOrphans(clients: GoogleClients): Promise<OrphanListing
   const found = orphans.length;
   const scope = complete ? `all ${scanned} files you own` : `the first ${scanned} files you own (more remain unchecked)`;
   const message = found
-    ? `Checked ${scope}: ${found} in no folder. Re-home one with update_doc({ documentId, folder, expectTitle }).`
+    ? `Checked ${scope}: ${found} in no folder. Re-home one with drive({ cmd: 'mv', args: [id, '/SomeFolder'] }).`
     : `Checked ${scope}: none is in no folder.`;
 
   return { orphaned: orphans.map(toEntry), scanned, complete, message };
@@ -167,9 +161,7 @@ export async function searchDrive(
   return withParents(clients, res.data.files ?? []);
 }
 
-// Create a Drive folder (#25). A distinct create-verb rather than an op on
-// list_folder: it makes a new file, and its params (name + parent) don't
-// overlap the listing tools' vocabulary.
+// Create a Drive folder (#25). Reached as `mkdir` since #44.
 export async function createFolder(
   clients: GoogleClients,
   name: string,
@@ -182,4 +174,31 @@ export async function createFolder(
     supportsAllDrives: true,
   });
   return { id: res.data.id ?? '', name: res.data.name ?? name, parents: res.data.parents ?? [] };
+}
+
+// The virtual "Shared with me" collection: files someone shared with you that
+// you never filed. They are parentless like an orphan (#46) but not lost — they
+// have simply never been in your tree — so they are their own place, the way
+// Drive's own sidebar has them.
+export async function listSharedWithMe(clients: GoogleClients): Promise<DriveEntry[]> {
+  const res = await clients.drive.files.list({
+    q: 'sharedWithMe = true and trashed = false',
+    fields: LIST_FIELDS,
+    pageSize: 200,
+    orderBy: 'modifiedTime desc',
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+  });
+  return withParents(clients, res.data.files ?? []);
+}
+
+// The shared drives themselves, listed as if they were folders under /shared.
+export async function listSharedDrives(clients: GoogleClients): Promise<DriveEntry[]> {
+  const res = await clients.drive.drives.list({ pageSize: 100, fields: 'drives(id,name)' });
+  return (res.data.drives ?? []).map((d) => ({
+    id: d.id ?? '',
+    name: d.name ?? '',
+    type: 'folder' as const,
+    modifiedTime: null,
+  }));
 }

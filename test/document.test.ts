@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseDriveId, resolveContentSource, copyDoc } from '../src/docs/document.js';
+import { parseDriveId, resolveContentSource } from '../src/docs/document.js';
 import type { GoogleClients } from '../src/google/clients.js';
 
 describe('resolveContentSource', () => {
@@ -51,33 +51,3 @@ describe('parseDriveId', () => {
   });
 });
 
-describe('copyDoc (#24)', () => {
-  const clientsFor = (copy: ReturnType<typeof vi.fn>) =>
-    ({
-      auth: {} as GoogleClients['auth'],
-      docs: {} as GoogleClients['docs'],
-      drive: { files: { copy } } as unknown as GoogleClients['drive'],
-    }) as GoogleClients;
-
-  it('sends an empty body when neither name nor folder is given (Drive picks "Copy of …")', async () => {
-    const copy = vi.fn().mockResolvedValue({ data: { id: 'c1', name: 'Copy of Lease', parents: ['p1'] } });
-    const r = await copyDoc(clientsFor(copy), 'src1');
-    expect(copy.mock.calls[0][0]).toMatchObject({ fileId: 'src1', requestBody: {} });
-    expect(r).toEqual({
-      documentId: 'c1',
-      name: 'Copy of Lease',
-      parents: ['p1'],
-      url: 'https://docs.google.com/document/d/c1/edit',
-    });
-  });
-
-  it('passes a new name and a folder parsed from a URL', async () => {
-    const copy = vi.fn().mockResolvedValue({ data: { id: 'c2', name: 'Lease 2027', parents: ['pA'] } });
-    const r = await copyDoc(clientsFor(copy), 'src2', {
-      name: 'Lease 2027',
-      folder: 'https://drive.google.com/drive/folders/pA',
-    });
-    expect(copy.mock.calls[0][0].requestBody).toEqual({ name: 'Lease 2027', parents: ['pA'] });
-    expect(r.folderId).toBe('pA');
-  });
-});

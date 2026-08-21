@@ -5,8 +5,8 @@ tools directly — you ask Claude in plain language, and it drives the right too
 These are real, task-shaped examples. Each shows the kind of prompt that works, the
 tools it fires, and what you get back.
 
-> Tip: give Claude the doc's URL or id (or a distinctive title it can `search_drive`
-> for). For layout/style tasks, point it at a reference doc to match.
+> Tip: give Claude the doc's URL or id (or a distinctive title it can
+> search for with `drive({ cmd: "find" })`). For layout/style tasks, point it at a reference doc to match.
 
 ---
 
