@@ -10,7 +10,91 @@ tools it fires, and what you get back.
 
 ---
 
-## 1. Publish a markdown file as a formatted Google Doc
+## Whole jobs — several tools, one ask
+
+These are the ones that change how a day goes. Each is a single instruction that
+fans out into several tools; doing any of them by hand is an afternoon.
+
+### A. Fill a template without rebuilding it
+
+**Ask Claude:** *"Copy the Proposal Template into /Clients/Acme, name it 'Acme Q3
+Proposal', then fill in the client name, the dates, and the pricing table."*
+
+**What happens:** `drive({ cmd: "cp" })` duplicates the template, so the letterhead,
+the logo at its exact size, the fonts and the page setup come along intact. Then
+`edit_doc` swaps each placeholder by content, and `edit_table` fills the pricing
+rows.
+
+**Why it's nice:** a template is precisely the thing a markdown round-trip *cannot*
+rebuild — headers, footers, image sizing, the fiddly formatting somebody spent an
+hour on. Copying keeps all of it and edits only the words that change. The
+alternative is retyping a document you already have.
+
+---
+
+### B. A whole review pass in one instruction
+
+**Ask Claude:** *"Go through this doc: show me the pending suggestions as a diff,
+accept the typo fixes, reject anything that changes meaning, then reply to the open
+comments and resolve the ones that are settled."*
+
+**What happens:** `list_suggestions` renders each pending tracked change as
+`before → after` so Claude can judge it, `apply_suggestions` accepts and rejects in
+atomic batches, `list_comments` pulls the open threads with their quoted text, and
+`add_comment`/`resolve_comment` reply and close them.
+
+**Why it's nice:** four tools, one sentence, and the judgement in the middle is the
+part you actually wanted help with. Most Docs integrations cannot see tracked
+changes at all, let alone act on them safely.
+
+---
+
+### C. Publish a folder of markdown as a Drive tree
+
+**Ask Claude:** *"Mirror the folder structure of ./handbook under /Handbook in
+Drive, and publish every .md file there as a Doc."*
+
+**What happens:** `drive({ cmd: "mkdir", args: ["-p", …] })` builds each folder path
+in one call per branch, and `create_doc` with `contentFile` renders each file
+server-side — headings, tables, images and all — straight into the right folder.
+
+**Why it's nice:** the structure and the content arrive together. Nothing is
+retyped, so nothing is silently dropped from the long files.
+
+---
+
+### D. Audit many documents at once
+
+**Ask Claude:** *"Find every doc with 'Lease' in the title, then check each one's
+margins and body font against the 2026 template and tell me which are off."*
+
+**What happens:** `drive({ cmd: "find" })` locates them — including files that sit in
+no folder and that browsing would never show — then `get_page_setup` and `get_style`
+read each one's real, inherited-resolved values, which markdown cannot express.
+
+**Why it's nice:** consistency drift across a folder of documents is invisible until
+someone opens all of them. This reads them instead.
+
+---
+
+### E. Bring a doc back into the repo
+
+**Ask Claude:** *"Pull the latest Spec doc into ./spec.md with its images, and commit
+it."*
+
+**What happens:** `read_doc` renders the doc as markdown (styling included, as
+`<span style>`, so it survives a round trip), `download_images` fetches the embedded
+images next to it, and Claude commits the result.
+
+**Why it's nice:** the doc stops being a place work goes to die. It round-trips.
+
+---
+
+## Single moves
+
+One tool, one job — the building blocks the whole jobs above are made of.
+
+### 1. Publish a markdown file as a formatted Google Doc
 
 **Ask Claude:** *"Create a Google Doc titled 'Q3 Report' from `./report.md` and put it in my Reports folder."*
 
@@ -24,7 +108,7 @@ inline — that's the difference between a clean publish and silently fused sent
 
 ---
 
-## 2. Restyle a whole document's font — without losing the bold
+### 2. Restyle a whole document's font — without losing the bold
 
 **Ask Claude:** *"Set the entire doc to Georgia 11pt to match our house style."*
 
@@ -39,7 +123,7 @@ no need to quote everything in between.
 
 ---
 
-## 3. Review and resolve tracked-change suggestions
+### 3. Review and resolve tracked-change suggestions
 
 **Ask Claude:** *"Show me the pending suggestions as a diff, then accept the wording
 fixes and reject the deletions."*
@@ -54,7 +138,7 @@ This one reads them as diffs and acts on them safely.
 
 ---
 
-## 4. Mirror another document's page layout
+### 4. Mirror another document's page layout
 
 **Ask Claude:** *"Match this new lease's margins, page size, and orientation to the
 existing lease at <url>."*
@@ -65,7 +149,7 @@ the new doc. The read/write pair makes "make this look like that" a two-step ask
 
 ---
 
-## 5. Edit by content, never by position
+### 5. Edit by content, never by position
 
 **Ask Claude:** *"In the lease, change 'net 30' to 'net 15' wherever it appears."*
 
@@ -77,7 +161,7 @@ context so you can disambiguate.
 
 ---
 
-## 6. Build and reshape real tables
+### 6. Build and reshape real tables
 
 **Ask Claude:** *"Turn my markdown table into a real table with a shaded header, then
 add a row under 'Deposit' and widen the first column."*
@@ -89,7 +173,7 @@ existing table.
 
 ---
 
-## 7. Center a block, add a signature line
+### 7. Center a block, add a signature line
 
 **Ask Claude:** *"Center the address block, and set the whole intro paragraph to
 justified."*
@@ -100,7 +184,7 @@ alignment and in-paragraph line breaks (`<br>`) round-trip between read and writ
 
 ---
 
-## 8. Work the comment thread
+### 8. Work the comment thread
 
 **Ask Claude:** *"Reply to Dana's comment saying it's fixed, then resolve it."*
 
@@ -110,7 +194,7 @@ text so it won't resolve the wrong one).
 
 ---
 
-## 9. Pull a Doc back to markdown + images
+### 9. Pull a Doc back to markdown + images
 
 **Ask Claude:** *"Download <doc> as markdown with its images into `./exported/`."*
 
@@ -120,7 +204,7 @@ the inverse of publishing, so a Doc can round-trip back to files.
 
 ---
 
-## 10. Across accounts and folders
+### 10. Across accounts and folders
 
 **Ask Claude:** *"Using my work account, share this doc with dana@acme.com as a
 commenter, and turn on anyone-with-link viewing."*

@@ -27,6 +27,24 @@ Most Google Docs MCP servers treat a doc as flat text. This one fills the gap no
 - **Tabs as sub-files.** Full create/rename/delete, and every read/edit tool can target a specific tab.
 - **Multiple accounts.** Authorize several Google accounts; pick a default per project.
 
+## What you can ask for
+
+You don't call tools. You ask in plain language and the agent drives them.
+
+**Fill a template without rebuilding it**
+
+> *"Copy the Proposal Template into /Clients/Acme, name it 'Acme Q3 Proposal', then fill in the client name, the dates, and the pricing table."*
+
+The copy keeps the letterhead, the logo at its exact size, the fonts and the page setup — everything a markdown round-trip **cannot** rebuild. Then only the words that change are edited. The alternative is retyping a document you already have.
+
+**A whole review pass in one instruction**
+
+> *"Show me the pending suggestions as a diff, accept the typo fixes, reject anything that changes meaning, then reply to the open comments and resolve the ones that are settled."*
+
+Four tools, one sentence, and the judgement in the middle is the part you wanted help with. Most Docs integrations cannot see tracked changes at all, let alone act on them safely.
+
+**More:** publishing a folder of markdown as a Drive tree, auditing many docs for style drift, pulling a doc back into your repo with its images → **[docs/recipes.md](docs/recipes.md)**.
+
 ## Install
 
 ```sh
@@ -91,7 +109,7 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 
 ## Tools
 
-> New here? See **[docs/recipes.md](docs/recipes.md)** for task-shaped examples of what to ask Claude — publishing a markdown file, restyling a whole doc, reviewing tracked changes, mirroring a layout, and more.
+> The table below is the reference. For what to actually *ask for*, see [What you can ask for](#what-you-can-ask-for) above, or the full set in **[docs/recipes.md](docs/recipes.md)**.
 
 | Tool | Description |
 |---|---|
