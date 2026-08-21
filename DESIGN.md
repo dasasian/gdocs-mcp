@@ -68,7 +68,7 @@ only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 | `apply_suggestions(doc, resolutions[], segment?)` | Resolve one or more suggestions atomically (§6) |
 | `list_comments / add_comment(replyTo?) / resolve_comment` | Drive comments (`add_comment` also replies) |
 | `list_tabs / add_tab / rename_tab / delete_tab` | Tab structure |
-| `list_folder / search_drive / create_folder` | Drive navigation (results carry parent folder id+name) and folder creation |
+| `list_folder / search_drive / create_folder` | Drive navigation (results carry parent folder id+name; `folder: "orphaned"` lists files in no folder) and folder creation |
 | `list_permissions / share_doc(email?|link) / unshare_doc(email?|permissionId?, expectRole)` | Sharing (person, group, domain, or anyone-with-link). A grant with no email is addressed by the `permissionId` the read returns; `expectRole` is required because a revocation is recorded nowhere (§4) |
 | `add_account / list_accounts` | Multi-account (§9) |
 

@@ -6,7 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+- **`list_folder({ folder: "orphaned" })`** — lists the files you own that sit in no folder at all. They open, they turn up in a search, and nothing that browses the tree will ever show them, so they are found only by someone who already remembers they exist. You cannot create this state yourself (removing a file's only parent reparents it to My Drive root) — it is the residue of someone else deleting or unsharing a folder your files were in, which is why nobody thinks to look. Drive has no query operator for "has no parent", so the scan pages files and filters here: it asks only for files you own (shared-with-me files are legitimately parentless and not yours to re-home), it is bounded, and a scan that hit the bound says so rather than passing a cap off as the whole answer. Re-home one with `update_doc({ folder })`, which already moves any Drive file. Kept as a value of the existing `folder` parameter rather than a new tool — one field, one type, whatever you are listing, the way Drive's own sidebar makes "Shared with me" a place (#46).
 
 ## [0.5.0] — 2026-08-16
 

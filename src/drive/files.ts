@@ -77,6 +77,75 @@ export async function listFolder(clients: GoogleClients, folder?: string): Promi
   return withParents(clients, res.data.files ?? []);
 }
 
+// A file with no parent is in no folder: it still opens and still turns up in a
+// search, but nothing that browses the tree will ever show it (#46). You cannot
+// reach this state yourself — removing a file's only parent reparents it to My
+// Drive root — so an orphan is always the residue of someone else's action (a
+// shared folder deleted or unshared out from under you), which is why nobody
+// remembers to go looking.
+//
+// Drive has no query operator for "has no parent", so detection means paging
+// files and filtering here. Two things keep that honest and cheap:
+//   - `'me' in owners` drops shared-with-me files, which are legitimately
+//     parentless and cannot be re-homed anyway, and it shrinks the scan.
+//   - the scan is bounded and says so; a partial answer reports itself rather
+//     than passing a silent cap off as "that's all of them".
+// Shared-drive items always carry a parent, so My Drive is the whole territory.
+const ORPHAN_PAGE_SIZE = 1000;
+const ORPHAN_MAX_PAGES = 10;
+
+/** Aliases accepted for the pseudo-folder; `orphaned` is the documented one. */
+const ORPHAN_NAMES = new Set(['orphaned', 'orphans', 'lost+found']);
+
+export function isOrphanFolder(folder: string | undefined): boolean {
+  return folder !== undefined && ORPHAN_NAMES.has(folder.trim().toLowerCase());
+}
+
+export interface OrphanListing {
+  orphaned: DriveEntry[];
+  /** how many files were actually looked at — not how many exist. */
+  scanned: number;
+  /** false when the page cap stopped the scan early, so the list may be short. */
+  complete: boolean;
+  message: string;
+}
+
+export async function listOrphans(clients: GoogleClients): Promise<OrphanListing> {
+  const orphans: RawFile[] = [];
+  let pageToken: string | undefined;
+  let scanned = 0;
+  let pages = 0;
+  let complete = true;
+
+  for (;;) {
+    const res = await clients.drive.files.list({
+      q: "'me' in owners and trashed = false",
+      fields: `nextPageToken, ${LIST_FIELDS}`,
+      pageSize: ORPHAN_PAGE_SIZE,
+      orderBy: 'modifiedTime desc',
+      ...(pageToken ? { pageToken } : {}),
+    });
+    const files = res.data.files ?? [];
+    scanned += files.length;
+    for (const f of files) if (!(f.parents ?? []).length) orphans.push(f);
+    pages += 1;
+    pageToken = res.data.nextPageToken ?? undefined;
+    if (!pageToken) break;
+    if (pages >= ORPHAN_MAX_PAGES) {
+      complete = false;
+      break;
+    }
+  }
+
+  const found = orphans.length;
+  const scope = complete ? `all ${scanned} files you own` : `the first ${scanned} files you own (more remain unchecked)`;
+  const message = found
+    ? `Checked ${scope}: ${found} in no folder. Re-home one with update_doc({ documentId, folder, expectTitle }).`
+    : `Checked ${scope}: none is in no folder.`;
+
+  return { orphaned: orphans.map(toEntry), scanned, complete, message };
+}
+
 // Search Drive by name, optionally restricting to folders or docs.
 export async function searchDrive(
   clients: GoogleClients,

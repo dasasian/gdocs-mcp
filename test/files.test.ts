@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { GoogleClients } from '../src/google/clients.js';
-import { listFolder, searchDrive, createFolder } from '../src/drive/files.js';
+import { listFolder, searchDrive, createFolder, listOrphans, isOrphanFolder } from '../src/drive/files.js';
 
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 const DOC_MIME = 'application/vnd.google-apps.document';
@@ -58,6 +58,82 @@ describe('parents on drive listings (#26)', () => {
     const [entry] = await searchDrive(clients, 'Loose');
     expect(entry.parents).toBeUndefined();
     expect(get).not.toHaveBeenCalled();
+  });
+});
+
+describe('orphaned files (#46)', () => {
+  // files.list paged: each call returns the next page of the fixture.
+  function pager(pages: { files: unknown[]; nextPageToken?: string }[]) {
+    const list = vi.fn();
+    pages.forEach((p) => list.mockResolvedValueOnce({ data: p }));
+    return { list, clients: clientsFor({ list }) };
+  }
+
+  it('keeps only the files that have no parent', async () => {
+    const { clients, list } = pager([
+      {
+        files: [
+          { id: 'd1', name: 'Lease', mimeType: DOC_MIME, parents: ['p1'] },
+          { id: 'd2', name: 'Roof', mimeType: DOC_MIME, modifiedTime: '2026-02-02T00:00:00Z' },
+          { id: 'd3', name: 'Appliances', mimeType: DOC_MIME, parents: [] },
+        ],
+      },
+    ]);
+    const r = await listOrphans(clients);
+    expect(r.orphaned.map((e) => e.name)).toEqual(['Roof', 'Appliances']);
+    expect(r.orphaned[0]).toEqual({ id: 'd2', name: 'Roof', type: 'document', modifiedTime: '2026-02-02T00:00:00Z' });
+    expect(r.scanned).toBe(3);
+    expect(r.complete).toBe(true);
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  // Shared-with-me files are parentless too, and re-homing them is not the
+  // user's to do — the query must exclude them rather than report them as lost.
+  it('asks only for files the user owns', async () => {
+    const { clients, list } = pager([{ files: [] }]);
+    await listOrphans(clients);
+    expect(list.mock.calls[0][0].q).toBe("'me' in owners and trashed = false");
+  });
+
+  it('follows the page token and counts every file it looked at', async () => {
+    const { clients, list } = pager([
+      { files: [{ id: 'a', name: 'A', mimeType: DOC_MIME, parents: ['p'] }], nextPageToken: 't1' },
+      { files: [{ id: 'b', name: 'B', mimeType: DOC_MIME }] },
+    ]);
+    const r = await listOrphans(clients);
+    expect(list.mock.calls[1][0].pageToken).toBe('t1');
+    expect(r.orphaned.map((e) => e.name)).toEqual(['B']);
+    expect(r.scanned).toBe(2);
+    expect(r.complete).toBe(true);
+  });
+
+  // A bound that lies is worse than no bound: a truncated scan must not read as
+  // "that is all of them".
+  it('reports an incomplete scan when the page cap stops it early', async () => {
+    const list = vi.fn().mockResolvedValue({
+      data: { files: [{ id: 'x', name: 'X', mimeType: DOC_MIME }], nextPageToken: 'more' },
+    });
+    const r = await listOrphans(clientsFor({ list }));
+    expect(r.complete).toBe(false);
+    expect(list).toHaveBeenCalledTimes(10);
+    expect(r.scanned).toBe(10);
+    expect(r.message).toContain('more remain unchecked');
+  });
+
+  it('says so plainly when nothing is orphaned', async () => {
+    const { clients } = pager([{ files: [{ id: 'a', name: 'A', mimeType: DOC_MIME, parents: ['p'] }] }]);
+    const r = await listOrphans(clients);
+    expect(r.orphaned).toEqual([]);
+    expect(r.message).toContain('none');
+  });
+
+  it('recognises the pseudo-folder without mistaking a real folder id for it', async () => {
+    expect(isOrphanFolder('orphaned')).toBe(true);
+    expect(isOrphanFolder(' Orphans ')).toBe(true);
+    expect(isOrphanFolder('lost+found')).toBe(true);
+    expect(isOrphanFolder(undefined)).toBe(false);
+    expect(isOrphanFolder('1a2b3c')).toBe(false);
+    expect(isOrphanFolder('https://drive.google.com/drive/folders/p1')).toBe(false);
   });
 });
 

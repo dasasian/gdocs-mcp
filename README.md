@@ -115,7 +115,7 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 | `get_table_style` | Read a table's style (located by cell text): column widths, pinned header rows, and the matched cell's padding, background and per-side borders — the read counterpart to `set_table_style` |
 | `list_comments` / `add_comment` / `resolve_comment` | Comment threads (`add_comment` also replies, via `replyTo`) |
 | `list_tabs` / `add_tab` / `rename_tab` / `delete_tab` | Tab structure |
-| `list_folder` / `search_drive` | Browse a Drive folder / search files+folders by name — results carry their parent folder(s) (id + name) |
+| `list_folder` / `search_drive` | Browse a Drive folder (or `folder: "orphaned"` for files in no folder) / search files+folders by name — results carry their parent folder(s) (id + name) |
 | `create_folder` | Create a Drive folder, optionally inside a parent folder |
 | `list_permissions` / `share_doc` / `unshare_doc` | Sharing (`share_doc` handles both people and anyone-with-link). `list_permissions` names every audience, including domain-wide grants a Workspace adds on creation; `unshare_doc` revokes those by `permissionId`, and requires `expectRole` since a revocation appears in no version history |
 | `list_accounts` | Authorized Google accounts |

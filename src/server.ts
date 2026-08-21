@@ -12,7 +12,7 @@ import { setPageSetup, getPageSetup } from './docs/page.js';
 import { getStyle } from './docs/inspect.js';
 import { insertImage, insertTable, insertRow, deleteRow, insertColumn, deleteColumn, setTableStyle, getTableStyle } from './docs/objects.js';
 import { listPermissions, shareDoc, unshareDoc, setLinkAccess } from './drive/sharing.js';
-import { listFolder, searchDrive, createFolder } from './drive/files.js';
+import { listFolder, searchDrive, createFolder, listOrphans, isOrphanFolder } from './drive/files.js';
 import { downloadImages } from './drive/images.js';
 import { exportDoc, EXPORT_FORMATS, type ExportFormat } from './drive/export.js';
 
@@ -692,14 +692,18 @@ export function createServer(): McpServer {
     {
       title: 'List a Drive folder',
       description:
-        'List the files and subfolders directly inside a Drive folder (by URL or id). Defaults to My Drive root. Each entry carries its parent folder(s) (id + name) so a result can be traced upward.',
+        'List the files and subfolders directly inside a Drive folder (by URL or id). Defaults to My Drive root. Each entry carries its parent folder(s) (id + name) so a result can be traced upward. Pass folder="orphaned" for the files you own that are in no folder at all — they exist and open, but no amount of browsing will show them; re-home one with update_doc({ folder }).',
       inputSchema: {
-        folder: z.string().optional().describe('folder URL or id (default My Drive root)'),
+        folder: z.string().optional().describe('folder URL or id (default My Drive root), or "orphaned" for files in no folder'),
         ...accountArg,
       },
     },
     async ({ folder, account }) => {
       const clients = await clientsForAccount(account);
+      // "orphaned" is a place that isn't a folder, the way Drive's own sidebar
+      // has "Shared with me" (#46). Kept as a value of the existing param, not
+      // a second tool: one field, one type, whatever you're listing.
+      if (isOrphanFolder(folder)) return json(await listOrphans(clients));
       return json(await listFolder(clients, folder));
     },
   );

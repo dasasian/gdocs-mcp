@@ -282,7 +282,9 @@ export async function moveDoc(
     return { status: 'mismatch', documentId, name, message: `expectTitle "${opts.expectTitle}" != live doc title "${name}". Refusing to move a different doc than intended.` };
   }
   // A rename requested alongside the move rides on this same call — Drive's
-  // files.update sets the name and reparents in one request.
+  // files.update sets the name and reparents in one request. An orphan has no
+  // parents to remove (#46); verified live that Drive ignores the empty string
+  // rather than rejecting it, so this needs no special case.
   const res = await clients.drive.files.update({
     fileId: documentId,
     ...(opts.name !== undefined ? { requestBody: { name: opts.name } } : {}),

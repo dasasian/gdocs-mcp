@@ -80,6 +80,15 @@ Legend for "What gdocs-mcp does": **mitigated** = a tool works around it; **surf
 
 ---
 
+## Drive navigation
+
+| Limitation | Why | What gdocs-mcp does |
+|---|---|---|
+| **Drive has no query operator for "has no parent".** Orphaned files — the ones in no folder, which browsing can never reach — cannot be asked for. Finding them means paging files and filtering client-side, which is cheap over 30 files and expensive over 50,000. | `files.list` filters on parentage only as `'<id>' in parents`; there is no negation and no "parents is empty". | **mitigated** — `list_folder({ folder: "orphaned" })` narrows the scan to `'me' in owners` (shared-with-me files are legitimately parentless and not yours to re-home), bounds it at 10 pages of 1000, and returns `scanned`/`complete` so a scan that hit the bound reports itself instead of passing a cap off as the whole answer (#46). |
+| **An orphan cannot be reproduced on purpose, or undone.** Removing a file's only parent does not orphan it — Drive reparents it to My Drive root. Once a file *is* orphaned, re-homing it is one-way; there is no "put it back where it wasn't". | Orphaning is a side effect of someone else deleting or unsharing a folder your files were in, not an operation you can perform. | **surfaced** — the state is listable and fixable with `update_doc({ folder })`, but the fix is not reversible, so the usual `expectTitle` guard applies. |
+
+---
+
 ## Markdown rendering coverage
 
 | Limitation | Why | What gdocs-mcp does |
