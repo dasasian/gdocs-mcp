@@ -44,6 +44,52 @@ import {
 
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 
+// Shell argument parsing (#44). Flags and operands may appear in any order, as
+// they may in a terminal — `cp -r a b`, `cp a b -r` and `cp a -r b` are one
+// command. `--` ends the options, which is the shell's own escape hatch and
+// pre-trained like the rest of the vocabulary.
+//
+// What an unrecognised `-token` means differs by command, so it is a parameter
+// rather than a rule: `ls -la /Work` wants the flag ignored and /Work used,
+// while `find -2026` wants "-2026" searched for. Guessing one policy for both
+// would break whichever command it guessed against.
+interface ParsedArgs {
+  flags: Set<string>;
+  values: Map<string, string>;
+  positional: string[];
+}
+
+function parseArgs(
+  args: string[],
+  opts: { valueFlags?: string[]; unknownDashIsOperand?: boolean } = {},
+): ParsedArgs {
+  const valueFlags = new Set(opts.valueFlags ?? []);
+  const flags = new Set<string>();
+  const values = new Map<string, string>();
+  const positional: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--') {
+      positional.push(...args.slice(i + 1));
+      break;
+    }
+    if (valueFlags.has(a)) {
+      values.set(a, args[i + 1] ?? '');
+      i += 1;
+      continue;
+    }
+    if (a.startsWith('-') && a.length > 1) {
+      if (opts.unknownDashIsOperand) positional.push(a);
+      else flags.add(a);
+      continue;
+    }
+    positional.push(a);
+  }
+  return { flags, values, positional };
+}
+
+
+
 export type ShellCommand = 'ls' | 'find' | 'mkdir' | 'cp' | 'mv';
 
 export interface ShellOptions {
@@ -89,7 +135,7 @@ function basename(path: string): string {
 // --- ls ---------------------------------------------------------------------
 
 async function ls(clients: GoogleClients, args: string[]): Promise<ShellResult> {
-  const path = args.find((a) => !a.startsWith('-')) ?? '/';
+  const path = parseArgs(args).positional[0] ?? '/';
   const segs = splitPath(path.startsWith('~') ? path.slice(1) : path);
   const head = segs.length ? `/${segs[0]}` : '/';
 
@@ -116,20 +162,18 @@ async function ls(clients: GoogleClients, args: string[]): Promise<ShellResult> 
 // that no path can name (#46). Paths are a convenience over the part of Drive
 // that happens to be a tree; this is the part that isn't.
 async function find(clients: GoogleClients, args: string[]): Promise<ShellResult> {
+  // `-name` is accepted and ignored: `find -name x` and `find x` mean the same
+  // thing here, since there is nothing else to match on.
+  const { values, positional } = parseArgs(args, { valueFlags: ['-type', '-name'], unknownDashIsOperand: true });
   let type: 'folder' | 'document' | 'any' = 'any';
-  const terms: string[] = [];
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '-type') {
-      const t = args[++i];
-      if (t === 'd') type = 'folder';
-      else if (t === 'f') type = 'document';
-      else return fail(`find -type takes d (folders) or f (documents), not "${t ?? ''}".`);
-      continue;
-    }
-    if (args[i] === '-name') continue; // `find -name x` and `find x` mean the same here
-    terms.push(args[i]);
+  const t = values.get('-type');
+  if (t !== undefined) {
+    if (t === 'd') type = 'folder';
+    else if (t === 'f') type = 'document';
+    else return fail(`find -type takes d (folders) or f (documents), not "${t}".`);
   }
-  const query = terms.join(' ').trim();
+  const named = values.get('-name');
+  const query = [...(named ? [named] : []), ...positional].join(' ').trim();
   if (!query) return fail('find needs something to look for: find "quarterly report" [-type d|f]');
   return { query, type, entries: await searchDrive(clients, query, type) };
 }
@@ -137,8 +181,9 @@ async function find(clients: GoogleClients, args: string[]): Promise<ShellResult
 // --- mkdir ------------------------------------------------------------------
 
 async function mkdir(clients: GoogleClients, args: string[]): Promise<ShellResult> {
-  const parents = args.includes('-p');
-  const path = args.find((a) => !a.startsWith('-'));
+  const parsed = parseArgs(args);
+  const parents = parsed.flags.has('-p');
+  const path = parsed.positional[0];
   if (!path) return fail('mkdir needs a path: mkdir [-p] /Work/2026/Reports');
   if (!looksLikePath(path)) return fail(`mkdir takes a path, not an id ("${path}"). A path starts with / or ~.`);
 
@@ -240,8 +285,8 @@ async function collidingEntry(
 // --- cp ---------------------------------------------------------------------
 
 async function cp(clients: GoogleClients, args: string[]): Promise<ShellResult> {
-  const positional = args.filter((a) => !a.startsWith('-'));
-  const recursive = args.includes('-r') || args.includes('-R');
+  const { flags, positional } = parseArgs(args);
+  const recursive = flags.has('-r') || flags.has('-R');
   const [src, dst] = positional;
   if (!src || !dst) return fail('cp needs a source and a destination: cp /Work/Contract /Archive');
 
@@ -293,7 +338,7 @@ async function cp(clients: GoogleClients, args: string[]): Promise<ShellResult> 
 // --- mv ---------------------------------------------------------------------
 
 async function mv(clients: GoogleClients, args: string[], opts: ShellOptions): Promise<ShellResult> {
-  const positional = args.filter((a) => !a.startsWith('-'));
+  const { positional } = parseArgs(args);
   const [src, dst] = positional;
   if (!src || !dst) return fail('mv needs a source and a destination: mv /Work/Roof /Archive');
 

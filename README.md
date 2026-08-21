@@ -141,6 +141,8 @@ Drive navigation is one tool speaking shell, because the model already knows she
 | `/lost+found` | files you own that are in **no** folder — see below |
 | anything else | a Drive id or URL, so ids from any other tool paste straight in |
 
+Flags and operands parse in any order (`cp -r a b`, `cp a b -r`, `cp a -r b`), and `--` ends the options.
+
 **Three places Drive is not a filesystem.** The vocabulary is borrowed only where it is honest, and refuses where it is not:
 
 - **Two files may share a name in one folder**, and **matching folds case**. No filesystem the model learned from does either, so it would not think to check. A path matching more than one thing is refused with the candidates listed, never guessed — and `cp`/`mv` refuse to *create* that state too, rather than manufacturing an ambiguity the resolver would then decline to resolve.

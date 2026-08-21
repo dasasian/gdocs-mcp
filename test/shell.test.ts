@@ -322,6 +322,54 @@ describe('mv (#44)', () => {
   });
 });
 
+// Flags and operands in any order, because a terminal accepts them that way and
+// that is the whole point of borrowing the vocabulary.
+describe('argument order (#44)', () => {
+  const tree = () => driveWith([...TREE]);
+
+  it('accepts a flag before or after the path', async () => {
+    expect((await driveShell(tree().clients, 'ls', ['-la', '/Work'])).id).toBe('work');
+    expect((await driveShell(tree().clients, 'ls', ['/Work', '-la'])).id).toBe('work');
+  });
+
+  it('accepts -type before or after the search term', async () => {
+    expect((await driveShell(tree().clients, 'find', ['-type', 'd', 'Reports'])).query).toBe('Reports');
+    expect((await driveShell(tree().clients, 'find', ['Reports', '-type', 'd'])).query).toBe('Reports');
+  });
+
+  it('accepts -p before or after the path', async () => {
+    const a = tree();
+    expect((await driveShell(a.clients, 'mkdir', ['-p', '/Work/x/y'])).status).toBe('ok');
+    const b = tree();
+    expect((await driveShell(b.clients, 'mkdir', ['/Work/x/y', '-p'])).status).toBe('ok');
+  });
+
+  it('accepts -r anywhere among the operands', async () => {
+    expect((await driveShell(tree().clients, 'cp', ['/Work', '/Archive', '-r'])).status).toBe('unsupported');
+    expect((await driveShell(tree().clients, 'cp', ['/Work', '-r', '/Archive'])).status).toBe('unsupported');
+  });
+
+  // `--` is the shell's own end-of-options marker, and pre-trained like the rest.
+  it('treats -- as the end of the options', async () => {
+    expect((await driveShell(tree().clients, 'ls', ['--', '/Work'])).id).toBe('work');
+  });
+
+  it('does not leak -- into a search query', async () => {
+    expect((await driveShell(tree().clients, 'find', ['--', 'Reports'])).query).toBe('Reports');
+  });
+
+  // An unrecognised -token means different things per command: `ls -la` wants it
+  // ignored, `find -2026` wants it searched for.
+  it('ignores an unknown flag for ls but searches for one in find', async () => {
+    expect((await driveShell(tree().clients, 'ls', ['--color', '/Work'])).id).toBe('work');
+    expect((await driveShell(tree().clients, 'find', ['-2026'])).query).toBe('-2026');
+  });
+
+  it('still requires both operands for cp and mv', async () => {
+    expect((await driveShell(tree().clients, 'mv', ['-r', '/Work'])).status).toBe('error');
+  });
+});
+
 describe('dispatch (#44)', () => {
   it('lists the available commands when given one it does not have', async () => {
     const { clients } = driveWith([...TREE]);
