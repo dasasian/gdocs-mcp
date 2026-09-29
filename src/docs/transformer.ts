@@ -96,7 +96,8 @@ export function renderMarkdown(doc: docs_v1.Schema$Document, opts: RenderOpts = 
     const line = renderParagraph(para, opts, objects);
     if (para.bullet) {
       const listId = para.bullet.listId ?? null;
-      if (listBuf.length && listId !== lastListId) flushList(); // distinct list -> blank line
+      const startsDistinctList = listBuf.length > 0 && listId !== lastListId;
+      if (startsDistinctList) flushList();
       lastListId = listId;
       const level = para.bullet.nestingLevel ?? 0;
       const indent = '  '.repeat(level);
@@ -109,9 +110,8 @@ export function renderMarkdown(doc: docs_v1.Schema$Document, opts: RenderOpts = 
       listBuf.push(`${indent}${marker} ${line}`);
     } else {
       flushList();
-      // Skip empty paragraphs — in markdown blank lines are just block separators,
-      // and Docs adds empty paragraphs around tables (placeholders, trailing para).
-      if (line !== '') blocks.push(line);
+      const isSeparatorOnly = line === '';
+      if (!isSeparatorOnly) blocks.push(line);
     }
   }
   flushList();
@@ -141,6 +141,9 @@ const LINK_BLUE = '#1155cc';
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 const escapeAttr = (s: string): string => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 
+const withoutParagraphMark = (s: string): string => s.replace(/\n$/, '');
+const lineBreaksAsBr = (s: string): string => s.replace(/\x0b/g, '<br>');
+
 function renderParagraph(
   para: docs_v1.Schema$Paragraph,
   opts: RenderOpts,
@@ -153,10 +156,7 @@ function renderParagraph(
       inline += renderImage(pe.inlineObjectElement.inlineObjectId, objects);
     }
   }
-  inline = inline.replace(/\n$/, ''); // drop the paragraph-mark newline
-  // In-paragraph line breaks (Shift+Enter) come through as U+000B; surface them as
-  // <br> so they're visible and round-trip on write (inline.ts parses <br> back).
-  inline = inline.replace(/\x0b/g, '<br>');
+  inline = lineBreaksAsBr(withoutParagraphMark(inline));
 
   const named = para.paragraphStyle?.namedStyleType ?? 'NORMAL_TEXT';
   const level = LEVEL_BY_HEADING[named];
@@ -164,9 +164,9 @@ function renderParagraph(
     return `${'#'.repeat(level)} ${inline}`;
   }
 
-  // Non-default alignment on a normal paragraph -> HTML wrapper (markdown can't).
   const align = para.paragraphStyle?.alignment;
-  if (!para.bullet && align && align !== 'START' && align !== 'ALIGNMENT_UNSPECIFIED') {
+  const hasNonDefaultAlignment = !!align && align !== 'START' && align !== 'ALIGNMENT_UNSPECIFIED';
+  if (!para.bullet && hasNonDefaultAlignment) {
     const css = CSS_BY_ALIGN[align] ?? 'justify';
     return `<p style="text-align:${css}">${inline}</p>`;
   }
@@ -224,39 +224,38 @@ function renderTable(table: docs_v1.Schema$Table, opts: RenderOpts): string {
   return out.join('\n');
 }
 
+function spanCssFor(s: docs_v1.Schema$TextStyle, isCode: boolean): string[] {
+  const css: string[] = [];
+  const color = rgbToHex(s.foregroundColor?.color?.rgbColor ?? undefined);
+  const isDefaultLinkBlue = !!s.link?.url && color === LINK_BLUE;
+  if (color && !isDefaultLinkBlue) css.push(`color:${color}`);
+  if (s.fontSize?.magnitude) css.push(`font-size:${s.fontSize.magnitude}pt`);
+  const family = s.weightedFontFamily?.fontFamily ?? undefined;
+  if (family && !isCode) css.push(`font-family:${family}`);
+  return css;
+}
+
+function wrapEmphasis(text: string, s: docs_v1.Schema$TextStyle, isCode: boolean): string {
+  let out = text;
+  if (isCode) out = `\`${out}\``;
+  if (s.link?.url) out = `[${out}](${s.link.url})`;
+  if (s.bold) out = `**${out}**`;
+  if (s.italic) out = `*${out}*`;
+  if (s.strikethrough) out = `~~${out}~~`;
+  if (s.underline && !s.link) out = `<u>${out}</u>`;
+  return out;
+}
+
 function renderRun(run: docs_v1.Schema$TextRun, opts: RenderOpts): string {
   let text = run.content ?? '';
-  // Preserve a trailing newline through styling by stripping then re-adding.
   const trailingNl = text.endsWith('\n');
   if (trailingNl) text = text.slice(0, -1);
   if (text.length === 0) return trailingNl ? '\n' : '';
 
   const s = run.textStyle ?? {};
-  // Innermost first, so every other marker wraps around these. Code has to be
-  // innermost of all: a code span's contents are literal, so `**`x`**` keeps its
-  // bold while ``**x**`` would not.
-  const family = s.weightedFontFamily?.fontFamily ?? undefined;
-  const isCode = family === CODE_FONT;
-  if (isCode) text = `\`${text}\``;
-  if (s.link?.url) text = `[${text}](${s.link.url})`;
-  if (s.bold) text = `**${text}**`;
-  if (s.italic) text = `*${text}*`;
-  if (s.strikethrough) text = `~~${text}~~`;
-  if (s.underline && !s.link) text = `<u>${text}</u>`;
-
-  // Docs-only formatting markdown cannot express (DESIGN.md §2) goes through the
-  // inline-HTML escape hatch, in the exact spelling inline.ts parses back. Google
-  // only populates these fields on runs that *override* them — an inherited run
-  // has an empty textStyle — so this stays quiet on ordinary text.
-  const css: string[] = [];
-  const color = rgbToHex(s.foregroundColor?.color?.rgbColor ?? undefined);
-  // Docs styles links itself, writing its link blue in as a DIRECT run colour.
-  // Emitting that would wrap every link in a span saying nothing the `[](…)`
-  // doesn't. Suppress only the exact default, so a deliberately coloured link
-  // still shows — the same reason underline is skipped on links just above.
-  if (color && !(s.link?.url && color === LINK_BLUE)) css.push(`color:${color}`);
-  if (s.fontSize?.magnitude) css.push(`font-size:${s.fontSize.magnitude}pt`);
-  if (family && !isCode) css.push(`font-family:${family}`);
+  const isCode = s.weightedFontFamily?.fontFamily === CODE_FONT;
+  text = wrapEmphasis(text, s, isCode);
+  const css = spanCssFor(s, isCode);
   if (css.length) text = `<span style="${css.join(';')}">${text}</span>`;
 
   if (opts.tracked) {

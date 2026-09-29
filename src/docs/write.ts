@@ -74,6 +74,66 @@ function parseAligns(sepLine: string): (CellAlign | null)[] {
   });
 }
 
+function skipHtmlComment(lines: string[], from: number): number {
+  let i = from;
+  while (i < lines.length && !lines[i].includes('-->')) i++;
+  return i + 1;
+}
+
+function parseTableAt(lines: string[], from: number): { block: Block; next: number } {
+  const header = splitRow(lines[from]);
+  const aligns = parseAligns(lines[from + 1]);
+  let i = from + 2;
+  const body: string[][] = [];
+  while (i < lines.length && isTableRow(lines[i]) && !isTableSep(lines[i])) {
+    body.push(splitRow(lines[i]));
+    i++;
+  }
+  return { block: { type: 'table', rows: [header, ...body], aligns }, next: i };
+}
+
+function positiveNumber(v: string | undefined): number | undefined {
+  const n = Number.parseFloat(v ?? '');
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+function parseImgTag(line: string): Block | undefined {
+  const attrs: Record<string, string> = {};
+  for (const a of line.matchAll(ATTR_RE)) attrs[a[1].toLowerCase()] = a[2];
+  if (!attrs.src) return undefined;
+  return {
+    type: 'image',
+    alt: unescapeAttr(attrs.alt ?? ''),
+    src: attrs.src,
+    width: positiveNumber(attrs.width),
+    height: positiveNumber(attrs.height),
+  };
+}
+
+function parseListAt(lines: string[], from: number): { block: Block; next: number } {
+  const ordered = /\d/.test(LIST_RE.exec(lines[from])![2]);
+  const items: { level: number; text: string }[] = [];
+  let i = from;
+  while (i < lines.length) {
+    const m = LIST_RE.exec(lines[i]);
+    if (!m) break;
+    const indent = m[1].replace(/\t/g, '  ').length;
+    items.push({ level: Math.floor(indent / 2), text: m[3].trim() });
+    i++;
+  }
+  return { block: { type: 'list', ordered, items }, next: i };
+}
+
+function parseSoftJoinedParagraphAt(lines: string[], from: number): { block: Block; next: number } {
+  const para: string[] = [];
+  let i = from;
+  while (i < lines.length && lines[i].trim() !== '' && !HEADING_RE.test(lines[i]) && !LIST_RE.test(lines[i])) {
+    para.push(lines[i].trim());
+    i++;
+  }
+  return { block: { type: 'paragraph', text: para.join(' ') }, next: i };
+}
+
 export function parseBlocks(md: string): Block[] {
   const lines = md.replace(/\r\n/g, '\n').split('\n');
   const blocks: Block[] = [];
@@ -84,11 +144,8 @@ export function parseBlocks(md: string): Block[] {
       i++;
       continue;
     }
-    // Skip HTML comments (standalone line or block) — used for tracking metadata,
-    // not document content, so they must not render into the Doc.
     if (line.trim().startsWith('<!--')) {
-      while (i < lines.length && !lines[i].includes('-->')) i++;
-      i++; // consume the closing line
+      i = skipHtmlComment(lines, i);
       continue;
     }
     const h = HEADING_RE.exec(line);
@@ -97,17 +154,11 @@ export function parseBlocks(md: string): Block[] {
       i++;
       continue;
     }
-    // Table: a row line immediately followed by a separator line.
-    if (isTableRow(line) && i + 1 < lines.length && isTableSep(lines[i + 1])) {
-      const header = splitRow(line);
-      const aligns = parseAligns(lines[i + 1]);
-      i += 2; // consume header + separator
-      const body: string[][] = [];
-      while (i < lines.length && isTableRow(lines[i]) && !isTableSep(lines[i])) {
-        body.push(splitRow(lines[i]));
-        i++;
-      }
-      blocks.push({ type: 'table', rows: [header, ...body], aligns });
+    const startsTable = isTableRow(line) && i + 1 < lines.length && isTableSep(lines[i + 1]);
+    if (startsTable) {
+      const t = parseTableAt(lines, i);
+      blocks.push(t.block);
+      i = t.next;
       continue;
     }
     const img = IMAGE_RE.exec(line.trim());
@@ -116,54 +167,21 @@ export function parseBlocks(md: string): Block[] {
       i++;
       continue;
     }
-    if (IMG_TAG_RE.test(line.trim())) {
-      const attrs: Record<string, string> = {};
-      for (const a of line.trim().matchAll(ATTR_RE)) attrs[a[1].toLowerCase()] = a[2];
-      if (attrs.src) {
-        const num = (v: string | undefined): number | undefined => {
-          const n = Number.parseFloat(v ?? '');
-          return Number.isFinite(n) && n > 0 ? n : undefined;
-        };
-        blocks.push({
-          type: 'image',
-          alt: unescapeAttr(attrs.alt ?? ''),
-          src: attrs.src,
-          width: num(attrs.width),
-          height: num(attrs.height),
-        });
-        i++;
-        continue;
-      }
+    const imgTag = IMG_TAG_RE.test(line.trim()) ? parseImgTag(line.trim()) : undefined;
+    if (imgTag) {
+      blocks.push(imgTag);
+      i++;
+      continue;
     }
-    // Aligned paragraph (read_doc's <p style="text-align:…"> output) — matched
-    // before the plain-paragraph fallback so it isn't treated as literal text.
     const ap = ALIGNED_P_RE.exec(line.trim());
     if (ap) {
       blocks.push({ type: 'paragraph', text: ap[2].trim(), align: ap[1] as ParaAlign });
       i++;
       continue;
     }
-    if (LIST_RE.test(line)) {
-      const first = LIST_RE.exec(line)!;
-      const ordered = /\d/.test(first[2]);
-      const items: { level: number; text: string }[] = [];
-      while (i < lines.length) {
-        const m = LIST_RE.exec(lines[i]);
-        if (!m) break;
-        const indent = m[1].replace(/\t/g, '  ').length;
-        items.push({ level: Math.floor(indent / 2), text: m[3].trim() });
-        i++;
-      }
-      blocks.push({ type: 'list', ordered, items });
-      continue;
-    }
-    // paragraph: consecutive plain lines, soft-joined.
-    const para: string[] = [];
-    while (i < lines.length && lines[i].trim() !== '' && !HEADING_RE.test(lines[i]) && !LIST_RE.test(lines[i])) {
-      para.push(lines[i].trim());
-      i++;
-    }
-    blocks.push({ type: 'paragraph', text: para.join(' ') });
+    const parsed = LIST_RE.test(line) ? parseListAt(lines, i) : parseSoftJoinedParagraphAt(lines, i);
+    blocks.push(parsed.block);
+    i = parsed.next;
   }
   return blocks;
 }
@@ -203,7 +221,14 @@ export interface BuiltContent {
   images: ImagePlacement[];
 }
 
-// Build the requests to render `blocks` starting at `startIndex` (within `tabId`).
+const clearDirectRunStyling = (startIndex: number, length: number, tabId?: string, segmentId?: string): docs_v1.Schema$Request => ({
+  updateTextStyle: {
+    range: { startIndex, endIndex: startIndex + length, tabId, segmentId },
+    textStyle: {},
+    fields: RESET_TEXT_FIELDS,
+  },
+});
+
 export function buildContentRequests(blocks: Block[], startIndex: number, tabId?: string, segmentId?: string): BuiltContent {
   let text = '';
   const headingOps: { start: number; end: number; level: number }[] = [];
@@ -228,6 +253,12 @@ export function buildContentRequests(blocks: Block[], startIndex: number, tabId?
     return plain;
   };
 
+  const addPlaceholderParagraph = (): number => {
+    const at = abs(text.length);
+    text += '\n';
+    return at;
+  };
+
   for (const block of blocks) {
     if (block.type === 'heading' || block.type === 'paragraph') {
       const lineStart = text.length;
@@ -239,13 +270,9 @@ export function buildContentRequests(blocks: Block[], startIndex: number, tabId?
         alignOps.push({ start: abs(lineStart), end: abs(lineStart + plain.length + 1), align: block.align });
       }
     } else if (block.type === 'table') {
-      // Placeholder paragraph where the table will be inserted; also serves as the
-      // trailing paragraph a table needs.
-      tables.push({ index: abs(text.length), rows: block.rows, aligns: block.aligns });
-      text += '\n';
+      tables.push({ index: addPlaceholderParagraph(), rows: block.rows, aligns: block.aligns });
     } else if (block.type === 'image') {
-      images.push({ index: abs(text.length), alt: block.alt, src: block.src, width: block.width, height: block.height });
-      text += '\n';
+      images.push({ index: addPlaceholderParagraph(), alt: block.alt, src: block.src, width: block.width, height: block.height });
     } else {
       const listStart = text.length;
       for (const item of block.items) {
@@ -261,20 +288,7 @@ export function buildContentRequests(blocks: Block[], startIndex: number, tabId?
   const requests: docs_v1.Schema$Request[] = [];
   if (!text) return { requests, text, tables, images };
   requests.push({ insertText: { location: { index: startIndex, tabId, segmentId }, text } });
-  // Inserted text inherits the character formatting at the insertion point — and
-  // when a delete and an insert share one batchUpdate (overwrite_doc), it inherits
-  // the formatting of the text that was just deleted. So plain markdown could come
-  // back bold, coloured or linked, with nothing in the markdown asking for it
-  // (#32). The markdown is the whole story, so clear direct run styling over the
-  // inserted range first; the ops below then apply exactly what it does ask for.
-  // Named styles still inherit — this only clears DIRECT formatting.
-  requests.push({
-    updateTextStyle: {
-      range: { startIndex, endIndex: startIndex + text.length, tabId, segmentId },
-      textStyle: {},
-      fields: RESET_TEXT_FIELDS,
-    },
-  });
+  requests.push(clearDirectRunStyling(startIndex, text.length, tabId, segmentId));
   for (const h of headingOps) {
     requests.push({
       updateParagraphStyle: {
@@ -296,8 +310,8 @@ export function buildContentRequests(blocks: Block[], startIndex: number, tabId?
   for (const o of inlineOps) {
     requests.push({ updateTextStyle: { range: { startIndex: o.start, endIndex: o.end, tabId, segmentId }, textStyle: o.textStyle, fields: o.fields.join(',') } });
   }
-  // Bullets last, descending — they consume leading \t and shift later indices.
-  for (const l of [...listOps].sort((a, b) => b.start - a.start)) {
+  const bulletsLastAndDescending = [...listOps].sort((a, b) => b.start - a.start);
+  for (const l of bulletsLastAndDescending) {
     requests.push({
       createParagraphBullets: {
         range: { startIndex: l.start, endIndex: l.end, tabId, segmentId },

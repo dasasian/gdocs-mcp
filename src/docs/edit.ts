@@ -3,7 +3,7 @@ import type { GoogleClients } from '../google/clients.js';
 import { project, type Projection } from './transformer.js';
 import { resolveTabId, writeControlFor, type SegmentKind, type SegmentPage } from './structure.js';
 import { resolveSegmentTarget } from './segments.js';
-import { parseInline, segmentTextStyle } from './inline.js';
+import { parseInline, segmentTextStyle, type Segment } from './inline.js';
 
 // String-anchored editing (bet #3). The agent quotes a unique slice of text;
 // we locate it in the plain-text projection, map to Docs indices, and emit a
@@ -77,6 +77,39 @@ export function rangeFor(proj: Projection, a: number, b: number): { startIndex: 
   return { startIndex: proj.map[a], endIndex: proj.map[b - 1] + 1 };
 }
 
+const RESET_EMPHASIS_FIELDS = 'bold,italic,underline,strikethrough';
+
+function insertedTextRequests(
+  segments: Segment[],
+  plain: string,
+  startIndex: number,
+  tabId?: string,
+  segmentId?: string,
+): docs_v1.Schema$Request[] {
+  const requests: docs_v1.Schema$Request[] = [
+    { insertText: { location: { index: startIndex, tabId, segmentId }, text: plain } },
+    {
+      updateTextStyle: {
+        range: { startIndex, endIndex: startIndex + plain.length, tabId, segmentId },
+        textStyle: { bold: false, italic: false, underline: false, strikethrough: false },
+        fields: RESET_EMPHASIS_FIELDS,
+      },
+    },
+  ];
+  let offset = 0;
+  for (const seg of segments) {
+    const segStart = startIndex + offset;
+    offset += seg.text.length;
+    const { textStyle, fields } = segmentTextStyle(seg);
+    if (fields.length) {
+      requests.push({
+        updateTextStyle: { range: { startIndex: segStart, endIndex: segStart + seg.text.length, tabId, segmentId }, textStyle, fields: fields.join(',') },
+      });
+    }
+  }
+  return requests;
+}
+
 export async function editDoc(
   clients: GoogleClients,
   documentId: string,
@@ -87,8 +120,6 @@ export async function editDoc(
   const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
   const revisionId = res.data.revisionId ?? undefined;
   const tabId = resolveTabId(res.data, opts.tab);
-  // Editing a header/footer is the same string-anchored flow against a different
-  // content tree; every location/range below just carries its segmentId (#23).
   const target = await resolveSegmentTarget(clients, documentId, res.data, { segment: opts.segment, page: opts.page, tabId });
   if (target.error) return { status: 'no_segment', message: target.error };
   const segmentId = target.segmentId;
@@ -106,41 +137,15 @@ export async function editDoc(
     };
   }
 
-  // new_string is interpreted as inline markdown (bold/italic/code/link). Insert
-  // the plain text, then style each parsed segment over its inserted range.
   const segments = parseInline(newString);
   const plain = segments.map((s) => s.text).join('');
 
-  // Apply highest-index first so earlier ranges stay valid (see suggestion spike).
-  const targets = (opts.replaceAll ? positions : [positions[0]]).sort((x, y) => y - x);
+  const highestIndexFirst = (opts.replaceAll ? positions : [positions[0]]).sort((x, y) => y - x);
   const requests: docs_v1.Schema$Request[] = [];
-  for (const a of targets) {
+  for (const a of highestIndexFirst) {
     const { startIndex, endIndex } = rangeFor(proj, a, a + needle.length);
     requests.push({ deleteContentRange: { range: { startIndex, endIndex, tabId, segmentId } } });
-    if (!plain) continue;
-    requests.push({ insertText: { location: { index: startIndex, tabId, segmentId }, text: plain } });
-    // insertText inherits the style at the insertion point, so reset the whole
-    // inserted range to plain first; segment styles below then re-apply intent.
-    requests.push({
-      updateTextStyle: {
-        range: { startIndex, endIndex: startIndex + plain.length, tabId, segmentId },
-        textStyle: { bold: false, italic: false, underline: false, strikethrough: false },
-        fields: 'bold,italic,underline,strikethrough',
-      },
-    });
-    // Style segments. Indices are absolute and valid right after this insert
-    // (descending target order means lower-index targets aren't shifted yet).
-    let offset = 0;
-    for (const seg of segments) {
-      const segStart = startIndex + offset;
-      offset += seg.text.length;
-      const { textStyle, fields } = segmentTextStyle(seg);
-      if (fields.length) {
-        requests.push({
-          updateTextStyle: { range: { startIndex: segStart, endIndex: segStart + seg.text.length, tabId, segmentId }, textStyle, fields: fields.join(',') },
-        });
-      }
-    }
+    if (plain) requests.push(...insertedTextRequests(segments, plain, startIndex, tabId, segmentId));
   }
 
   await clients.docs.documents.batchUpdate({
@@ -148,5 +153,5 @@ export async function editDoc(
     requestBody: { requests, writeControl: writeControlFor(revisionId) },
   });
 
-  return { status: 'ok', replaced: targets.length };
+  return { status: 'ok', replaced: highestIndexFirst.length };
 }
