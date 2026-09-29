@@ -168,3 +168,18 @@ describe('rules that carry more than the basics', () => {
     expect(md).toContain('<p style="margin-left:36pt; text-indent:18pt">x</p>');
   });
 });
+
+describe('a run’s font-family', () => {
+  const run = (family: string, bold = false): docs_v1.Schema$Paragraph => ({
+    elements: [{ textRun: { content: 'force\n', textStyle: { bold, weightedFontFamily: { fontFamily: family, weight: bold ? 700 : 400 } } } }],
+    paragraphStyle: { namedStyleType: 'NORMAL_TEXT' },
+  });
+
+  it('is not an override when it is the paragraph’s own family, which Docs writes onto a bold run', () => {
+    expect(read(run('Arial', true))).toBe('**force**');
+  });
+
+  it('is an override when it differs from the paragraph’s family', () => {
+    expect(read(run('Georgia', true))).toBe('<span style="font-family:Georgia">**force**</span>');
+  });
+});

@@ -152,9 +152,12 @@ function renderParagraph(
   objects: Record<string, docs_v1.Schema$InlineObject>,
   doc: docs_v1.Schema$Document,
 ): string {
+  const named = para.paragraphStyle?.namedStyleType ?? 'NORMAL_TEXT';
+  const eff = effectiveStylesFor(doc, named, opts.tabId);
+  const paragraphFamily = eff.named?.textStyle?.weightedFontFamily?.fontFamily ?? eff.normal?.textStyle?.weightedFontFamily?.fontFamily ?? undefined;
   let inline = '';
   for (const pe of para.elements ?? []) {
-    if (pe.textRun) inline += renderRun(pe.textRun, opts);
+    if (pe.textRun) inline += renderRun(pe.textRun, opts, paragraphFamily);
     else if (pe.inlineObjectElement?.inlineObjectId) {
       inline += renderImage(pe.inlineObjectElement.inlineObjectId, objects);
     }
@@ -162,8 +165,7 @@ function renderParagraph(
   inline = lineBreaksAsBr(withoutParagraphMark(inline));
   if (para.bullet) return inline;
 
-  const named = para.paragraphStyle?.namedStyleType ?? 'NORMAL_TEXT';
-  const overrides = paragraphCssOf(para.paragraphStyle, effectiveStylesFor(doc, named, opts.tabId));
+  const overrides = paragraphCssOf(para.paragraphStyle, eff);
   const style = styleAttribute(declarationsFor(overrides));
   const styleAttr = style ? ` style="${style}"` : '';
   const level = LEVEL_BY_HEADING[named];
@@ -224,14 +226,14 @@ function renderTable(table: docs_v1.Schema$Table, opts: RenderOpts): string {
   return out.join('\n');
 }
 
-function spanCssFor(s: docs_v1.Schema$TextStyle, isCode: boolean): string[] {
+function spanCssFor(s: docs_v1.Schema$TextStyle, isCode: boolean, paragraphFamily?: string): string[] {
   const css: string[] = [];
   const color = rgbToHex(s.foregroundColor?.color?.rgbColor ?? undefined);
   const isDefaultLinkBlue = !!s.link?.url && color === LINK_BLUE;
   if (color && !isDefaultLinkBlue) css.push(`color:${color}`);
   if (s.fontSize?.magnitude) css.push(`font-size:${s.fontSize.magnitude}pt`);
   const family = s.weightedFontFamily?.fontFamily ?? undefined;
-  if (family && !isCode) css.push(`font-family:${family}`);
+  if (family && !isCode && family !== paragraphFamily) css.push(`font-family:${family}`);
   return css;
 }
 
@@ -246,7 +248,7 @@ function wrapEmphasis(text: string, s: docs_v1.Schema$TextStyle, isCode: boolean
   return out;
 }
 
-function renderRun(run: docs_v1.Schema$TextRun, opts: RenderOpts): string {
+function renderRun(run: docs_v1.Schema$TextRun, opts: RenderOpts, paragraphFamily?: string): string {
   let text = run.content ?? '';
   const trailingNl = text.endsWith('\n');
   if (trailingNl) text = text.slice(0, -1);
@@ -255,7 +257,7 @@ function renderRun(run: docs_v1.Schema$TextRun, opts: RenderOpts): string {
   const s = run.textStyle ?? {};
   const isCode = s.weightedFontFamily?.fontFamily === CODE_FONT;
   text = wrapEmphasis(text, s, isCode);
-  const css = spanCssFor(s, isCode);
+  const css = spanCssFor(s, isCode, paragraphFamily);
   if (css.length) text = `<span style="${css.join(';')}">${text}</span>`;
 
   if (opts.tracked) {
