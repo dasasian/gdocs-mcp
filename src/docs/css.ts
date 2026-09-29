@@ -315,7 +315,7 @@ export function paragraphCssChange(before: ParagraphCss, after: ParagraphCss): {
   const pairStillSet = INDENT_PAIR.some((k) => after[k] !== undefined);
   if (!pairChanged || !pairStillSet) return { set, cleared };
   Object.assign(set, Object.fromEntries(INDENT_PAIR.filter((k) => after[k] !== undefined).map((k) => [k, after[k]])));
-  return { set, cleared: cleared.filter((k) => !INDENT_PAIR.includes(k)) };
+  return { set, cleared };
 }
 
 export function withoutUndefined<T extends object>(o: T): T {

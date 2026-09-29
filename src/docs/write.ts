@@ -285,7 +285,7 @@ const clearDirectParagraphStyling = (startIndex: number, length: number, tabId?:
   },
 });
 
-const clearDirectRunStyling = (startIndex: number, length: number, tabId?: string, segmentId?: string): docs_v1.Schema$Request => ({
+export const clearDirectRunStyling = (startIndex: number, length: number, tabId?: string, segmentId?: string): docs_v1.Schema$Request => ({
   updateTextStyle: {
     range: { startIndex, endIndex: startIndex + length, tabId, segmentId },
     textStyle: {},

@@ -114,7 +114,7 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 | Tool | Description |
 |---|---|
 | `read_doc` | Read as markdown + inline HTML. Opens with a `<style>` block (the named styles as CSS: `p`, `h1`–`h6`, `.title`, `.subtitle`); a paragraph shows `style="…"` only where it differs from its rule — alignment, spacing, line height, indent — and text color/size/font come back as `<span style="…">`, so styling is visible and round-trips. Modes: `clean` · `tracked` (`<ins>/<del>`) · `accepted` · `rejected`. `segment`: `body` (default) / `header` / `footer` / `all` — a body read always reports what the headers/footers hold, so a letterhead never reads as empty |
-| `edit_doc` | Replace a unique text snippet (string-anchored, markup-tolerant; new text supports inline markdown) |
+| `edit_doc` | Replace a unique text snippet (string-anchored, markup-tolerant; new text supports inline markdown and the CSS `read_doc` shows). Same words with different markup is a style-only edit — no delete, no insert. Editing a rule in the `<style>` block restyles the whole doc through one `updateNamedStyle` |
 | `set_style` | Style existing text in place — like selecting in Docs and applying formatting: a `from`/`to` selection, a single `from` snippet, or the `whole_document`. bold/italic/underline/strikethrough, color, font size/family, link, alignment, paragraph spacing (before/after/line) |
 | `get_page_setup` / `set_page_setup` | Read / set document-level page setup: margins, page size (preset or explicit), orientation (File > Page setup) |
 | `get_style` | Read the computed (inherited-resolved) style at a text anchor — paragraph spacing, alignment, fonts, colors that markdown can't show (read counterpart to `set_style`) |

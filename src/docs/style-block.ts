@@ -99,7 +99,7 @@ export function parseStyleBlock(markup: string, firstLine = 1): { rules: StyleRu
       continue;
     }
     const parsed = parseRuleCss(m[2]);
-    for (const issue of parsed.issues) issues.push(`line ${line}: <style> ${selector} { ${issue} }`);
+    for (const issue of parsed.issues) issues.push(`line ${line}: <style> ${selector} — ${issue}`);
     rules.push({ selector: selector as RuleSelector, paragraph: parsed.css.paragraph, text: parsed.css.text });
   }
   const stray = body.slice(consumedTo).trim();
