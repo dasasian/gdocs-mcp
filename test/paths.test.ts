@@ -101,7 +101,7 @@ const toolBlocks = SRC.split('  server.registerTool(\n').slice(1).map((block) =>
 
 describe('every doc tool takes one path (#55)', () => {
   const docTools = [
-    'read_doc', 'edit_doc', 'overwrite_doc', 'insert_content', 'export_doc', 'get_page_setup', 'set_page_setup', 'insert_image', 'download_images',
+    'read_doc', 'edit_doc', 'write_doc', 'insert_content', 'export_doc', 'get_page_setup', 'set_page_setup', 'insert_image', 'download_images',
     'insert_table', 'edit_table', 'set_table_style', 'get_table_style', 'list_suggestions', 'apply_suggestions', 'list_comments', 'add_comment',
     'resolve_comment', 'list_permissions', 'share_doc', 'unshare_doc',
   ];
@@ -110,7 +110,7 @@ describe('every doc tool takes one path (#55)', () => {
     const registered = toolBlocks.map((t) => t.name);
     for (const name of docTools) expect(registered, name).toContain(name);
     for (const { name, block } of toolBlocks.filter((t) => docTools.includes(t.name))) {
-      expect(block, name).toMatch(/\bpath: (tab|doc)PathArg/);
+      expect(block, name).toMatch(/\bpath: (tab|doc|write)PathArg/);
       expect(block, name).not.toMatch(/documentId: z\./);
       expect(block, name).not.toMatch(/\btab: z\./);
     }

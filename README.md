@@ -97,13 +97,13 @@ In a project's `.mcp.json` (Claude Code) or equivalent:
 
 `GDOCS_DEFAULT_ACCOUNT` sets which authorized account this project uses by default — so a work project and a personal project can point at different accounts without re-authorizing. Any tool call can override it with an `account` argument.
 
-Prefer it available in **every** project? Register once at user scope: `claude mcp add gdocs -s user -e GDOCS_DEFAULT_ACCOUNT=you@example.com -- gdocs-mcp`. Then a project can pin its own defaults with a `.gdocs-mcp.json` — both the account and a default folder for new docs:
+Prefer it available in **every** project? Register once at user scope: `claude mcp add gdocs -s user -e GDOCS_DEFAULT_ACCOUNT=you@example.com -- gdocs-mcp`. Then a project can pin its own defaults with a `.gdocs-mcp.json` — the account, and a `folder` that is stored but read by no tool since `write_doc` took a path (#55):
 
 ```json
 { "account": "work@company.com", "folder": "https://drive.google.com/drive/folders/…" }
 ```
 
-With a `folder` set, `create_doc` files new docs there automatically (an explicit `folder` argument still overrides). See [docs/setup.md](docs/setup.md) for the full resolution order.
+Name the folder in the path you give `write_doc` (`/Reports/Q3 Report`). See [docs/setup.md](docs/setup.md) for the full resolution order.
 
 You don't have to edit that file by hand — just tell the agent *"make damithsc@gmail.com my default account for this project"* or *"make my Manuscripts folder the default here,"* and it writes the `.gdocs-mcp.json` for you via `set_project_default` (searching for the folder by name if needed).
 
@@ -116,10 +116,9 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 | `read_doc` | Read as markdown + inline HTML. Opens with a `<style>` block (the named styles as CSS: `p`, `h1`–`h6`, `.title`, `.subtitle`); a paragraph shows `style="…"` only where it differs from its rule — alignment, spacing, line height, indent — and text color/size/font come back as `<span style="…">`, so styling is visible and round-trips. Modes: `clean` · `tracked` (`<ins>/<del>`) · `accepted` · `rejected`. `segment`: `body` (default) / `header` / `footer` / `all` — a body read always reports what the headers/footers hold, so a letterhead never reads as empty. Document text that would parse as markup is marked literal — `<p>4. Term</p>`, `5 \* 3`, `\\` for a real backslash; a line that starts or ends with a space or tab reads as `<p>⇥Indented clause</p>` and the writer keeps every space and tab inside `<p>`, so a read written back gives the same document |
 | `edit_doc` | Replace a unique text snippet (string-anchored, markup-tolerant; new text supports inline markdown and the CSS `read_doc` shows). Same words with different markup is a style-only edit — no delete, no insert. Editing a rule in the `<style>` block restyles the whole doc through one `updateNamedStyle` |
 | `get_page_setup` / `set_page_setup` | Read / set document-level page setup: margins, page size (preset or explicit), orientation (File > Page setup) |
-| `overwrite_doc` | Replace a doc/tab body with markdown-rendered content (the same CSS `read_doc` shows: `<style>` block, `<p style>`, `<span style>`; an unsupported property fails the write before anything is sent) — guarded against orphaning comments/suggestions |
+| `write_doc` | Write like the local `Write`: a path that names nothing is **created** — a doc in a folder (`/Work/Contract`), a tab in a doc (`/Work/Contract/Notes`), a child tab (`/Work/Contract/Part 2/Ch.4`) — and never asks. A path that names something is **replaced**, and the first call is refused with a loss summary: paragraphs, comments, suggestions, tab stops, person/date/link chips, links to bookmarks, plus a `confirmLoss` string. Tell the user; call again with that string to replace. If the doc changed in between (the string carries its revision and the counts), it is refused again. Markdown in (the same CSS `read_doc` shows: `<style>` block, `<p style>`, `<span style>`; an unsupported property fails the write before anything is sent); `contentFile` for long text; returns `images` `{ src, objectId }` |
 | `insert_content` | Insert new markdown content at a position — `at: "end"` (default) / `"top"` / a unique anchor. The way to add a paragraph after a table that ends the doc, where `edit_doc` has nothing to anchor on |
 | `export_doc` | Export a doc to a local file — pdf (default), docx, odt, rtf, txt, html, epub, md (rendered server-side by Google) |
-| `create_doc` | Create a doc from markdown, optionally in a folder |
 | `list_suggestions` | Pending suggestions as `before → after` diffs — `segment` to read a header/footer's |
 | `apply_suggestions` | Accept or reject one or more suggestions atomically — required for overlapping/adjacent "clusters"; `segment` to resolve a header/footer's |
 | `insert_image` | Insert an inline image from a URL **or a local file** — position, size, left/center/right align. `segment: "header"` (+ `createSegment`) puts a letterhead logo where it repeats |

@@ -29,7 +29,7 @@ const NOT_TOOLS = new Set(['old_string', 'new_string', 'wrong_doc']);
 
 describe('tool descriptions (#45)', () => {
   it('finds every registered tool and its description', () => {
-    expect(toolNames.size).toBeGreaterThanOrEqual(26);
+    expect(toolNames.size).toBeGreaterThanOrEqual(25);
     expect(descriptions.length).toBe(toolNames.size);
   });
 

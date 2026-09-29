@@ -7,7 +7,7 @@ import { listSuggestions, applySuggestions } from './docs/suggestions.js';
 import { listComments, addComment, replyComment, resolveComment } from './drive/comments.js';
 import { readDoc } from './docs/read.js';
 import { editDoc } from './docs/edit.js';
-import { createDoc, insertContent, overwriteDoc, resolveContentSource } from './docs/document.js';
+import { insertContent, writeDoc, resolveContentSource } from './docs/document.js';
 import { setPageSetup, getPageSetup } from './docs/page.js';
 import { insertImage, insertTable, insertRow, deleteRow, insertColumn, deleteColumn, setTableStyle, getTableStyle } from './docs/objects.js';
 import { listPermissions, shareDoc, unshareDoc, setLinkAccess } from './drive/sharing.js';
@@ -32,6 +32,10 @@ const accountArg = {
 const tabPathArg = z
   .string()
   .describe('The doc or tab: a Drive id or URL, /folder/doc, or /folder/doc/tab (nested: /folder/doc/tab/child). A doc with one tab needs no tab step; a doc with several is refused until one is named, and the refusal lists every tab path.');
+
+const writePathArg = z
+  .string()
+  .describe('The doc or tab to write: /folder/doc, /folder/doc/tab, /folder/doc/tab/child, or a doc id or URL followed by tab steps. A path that does not exist yet is created (only its last step may be new).');
 
 const docPathArg = z.string().describe('The doc: a Drive id or URL, or /folder/doc. A tab path names its doc.');
 
@@ -363,38 +367,11 @@ export function createServer(): McpServer {
   );
 
   server.registerTool(
-    'create_doc',
-    {
-      title: 'Create a new Google Doc',
-      description:
-        'Create a new Google Doc with a title and optional initial content (rendered as markdown). Optionally place it in a Drive folder (by folder URL or id); otherwise it goes to My Drive root. Style is CSS, in the spelling read_doc emits: a leading <style> block sets the named styles (p, h1–h6, .title, .subtitle), <p style="…"> / <hN style="…"> / <p class="title"> style a paragraph, <span style="…"> a run. Supported: text-align, line-height, margin-top/bottom/left/right, text-indent (pt; text-indent is relative to margin-left), and on spans/rules font-family, font-size, font-weight, font-style, text-decoration, color. Any other property fails the whole write before anything is sent, listing every offending line. For long documents, pass contentFile (a local path) instead of content so the server reads the body directly — retyping a long doc inline can silently drop or fuse text.',
-      inputSchema: {
-        title: z.string(),
-        content: z.string().optional(),
-        contentFile: z
-          .string()
-          .optional()
-          .describe(
-            'path to a local markdown/text file to use as the body, read directly by the server — preferred for long documents so the body is passed through mechanically rather than retyped inline (which can silently drop text). Absolute, or relative to baseDir. Mutually exclusive with content.',
-          ),
-        folder: z.string().optional().describe('Drive folder URL or id to create the doc in'),
-        baseDir: z.string().optional().describe('absolute dir to resolve relative local image paths against (e.g. the markdown file’s folder)'),
-        ...accountArg,
-      },
-    },
-    async ({ title, content, contentFile, folder, baseDir, account }) => {
-      const clients = await clientsForAccount(account);
-      const src = await resolveContentSource({ content, contentFile, baseDir });
-      return json(await createDoc(clients, title, src.content, { folder, baseDir: src.baseDir }));
-    },
-  );
-
-  server.registerTool(
     'insert_content',
     {
       title: 'Insert content at a position',
       description:
-        'Insert NEW markdown-rendered content at a structural position — no anchor text required. `at`: "end" (default, the end of the doc/tab) · "top" · a unique text snippet to insert immediately after. Use this where edit_doc can\u2019t reach: adding a paragraph after a table that ends the doc (a table\u2019s cells can\u2019t anchor an insert outside the table, and the trailing empty paragraph has no text to match), or appending to an empty doc. Use edit_doc instead when you are replacing or extending existing text. Content is full markdown (headings, lists, tables, images), same renderer as create_doc. Style is CSS, in the spelling read_doc emits: a leading <style> block sets the named styles (p, h1–h6, .title, .subtitle), <p style="…"> / <hN style="…"> / <p class="title"> style a paragraph, <span style="…"> a run. Supported: text-align, line-height, margin-top/bottom/left/right, text-indent (pt; text-indent is relative to margin-left), and on spans/rules font-family, font-size, font-weight, font-style, text-decoration, color. Any other property fails the whole write before anything is sent, listing every offending line. A direct edit, not a tracked suggestion.',
+        'Insert NEW markdown-rendered content at a structural position — no anchor text required. `at`: "end" (default, the end of the doc/tab) · "top" · a unique text snippet to insert immediately after. Use this where edit_doc can\u2019t reach: adding a paragraph after a table that ends the doc (a table\u2019s cells can\u2019t anchor an insert outside the table, and the trailing empty paragraph has no text to match), or appending to an empty doc. Use edit_doc instead when you are replacing or extending existing text. Content is full markdown (headings, lists, tables, images), same renderer as write_doc. Style is CSS, in the spelling read_doc emits: a leading <style> block sets the named styles (p, h1–h6, .title, .subtitle), <p style="…"> / <hN style="…"> / <p class="title"> style a paragraph, <span style="…"> a run. Supported: text-align, line-height, margin-top/bottom/left/right, text-indent (pt; text-indent is relative to margin-left), and on spans/rules font-family, font-size, font-weight, font-style, text-decoration, color. Any other property fails the whole write before anything is sent, listing every offending line. A direct edit, not a tracked suggestion.',
       inputSchema: {
         path: tabPathArg,
         content: z.string().optional().describe('markdown content to insert (or use contentFile)'),
@@ -449,32 +426,33 @@ export function createServer(): McpServer {
 
 
   server.registerTool(
-    'overwrite_doc',
+    'write_doc',
     {
-      title: 'Overwrite a doc (guarded)',
+      title: 'Write a doc or a tab',
       description:
-        'Replace the entire body of a doc (or one tab) with markdown-rendered content; the new paragraphs start unstyled, so anything not in the markdown (including indents) is gone. Style is CSS, in the spelling read_doc emits: a leading <style> block sets the named styles (p, h1–h6, .title, .subtitle), <p style="…"> / <hN style="…"> / <p class="title"> style a paragraph, <span style="…"> a run. Supported: text-align, line-height, margin-top/bottom/left/right, text-indent (pt; text-indent is relative to margin-left), and on spans/rules font-family, font-size, font-weight, font-style, text-decoration, color. Any other property fails the whole write before anything is sent, listing every offending line. Refuses if comments/suggestions are present (would orphan them) unless force=true. Pass expectTitle (the doc’s title) — shown for confirmation and verified against the live doc before replacing. For long documents, pass contentFile instead of content so the server reads the body directly (retyping a long doc inline can silently drop text). A direct edit, not a tracked suggestion.',
+        'Write markdown-rendered content to a path, like the local Write tool. A path that names nothing is CREATED and never asks: /Work/Contract creates a doc in the folder /Work, /Work/Contract/Notes a tab in that doc, /Work/Contract/Part 2/Ch.4 a child tab under Part 2 (only the last step may be new; make the folder with drive mkdir first). A path that names something is REPLACED, and the first call is refused with a loss summary — the paragraphs of text and everything a read cannot carry that the replace would take with it: comments, suggestions, tab stops, person/date/link chips, links to bookmarks — plus a confirmLoss string. Tell the user what would be lost; only if they agree, call again with the same content and confirmLoss set to that string exactly. If the doc changed in between, the string no longer matches and the call is refused again with a fresh summary. A doc with several tabs needs a tab step (the refusal lists them); a doc with one tab means that tab. Replacing keeps the doc’s title, sharing and other tabs but the new paragraphs start unstyled, so anything not in the markdown (including indents) is gone; prefer edit_doc to change a document, which keeps everything its anchor does not cover. Style is CSS, in the spelling read_doc emits: a leading <style> block sets the named styles (p, h1–h6, .title, .subtitle), <p style="…"> / <hN style="…"> / <p class="title"> style a paragraph, <span style="…"> a run. Supported: text-align, line-height, margin-top/bottom/left/right, text-indent (pt; text-indent is relative to margin-left), and on spans/rules font-family, font-size, font-weight, font-style, text-decoration, color. Any other property fails the whole write before anything is sent, listing every offending line. For long documents, pass contentFile instead of content so the server reads the body directly (retyping a long doc inline can silently drop text). Returns images ({src, objectId}) for pushed images. A direct edit, not a tracked suggestion.',
       inputSchema: {
-        path: tabPathArg,
+        path: writePathArg,
         content: z.string().optional().describe('markdown content (or use contentFile)'),
         contentFile: z
           .string()
           .optional()
           .describe(
-            'path to a local markdown/text file to use as the new body, read directly by the server — preferred for long documents so the body is passed through mechanically rather than retyped inline (which can silently drop text). Absolute, or relative to baseDir. Mutually exclusive with content.',
+            'path to a local markdown/text file to use as the body, read directly by the server — preferred for long documents so the body is passed through mechanically rather than retyped inline (which can silently drop text). Absolute, or relative to baseDir. Mutually exclusive with content.',
           ),
-        force: z.boolean().optional().describe('proceed even if comments/suggestions would be lost'),
-        expectTitle: z.string().optional().describe('the doc’s title; verified before overwriting so a wrong id is refused'),
+        confirmLoss: z
+          .string()
+          .optional()
+          .describe('the confirmLoss string from the refusal, passed back exactly, after the user has agreed to what it lists. Never needed when creating.'),
         baseDir: z.string().optional().describe('absolute dir to resolve relative local image paths against (e.g. the markdown file’s folder)'),
         ...accountArg,
       },
     },
-    async ({ path, content, contentFile, force, expectTitle, baseDir, account }) => {
+    async ({ path, content, contentFile, confirmLoss, baseDir, account }) => {
       const clients = await clientsForAccount(account);
-      const target = await resolveTab(clients, path);
       const src = await resolveContentSource({ content, contentFile, baseDir });
       if (src.content === undefined) throw new Error('Provide content or contentFile.');
-      return json(await overwriteDoc(clients, target.documentId, src.content, { force, tabId: target.tabId, baseDir: src.baseDir, expectTitle }));
+      return json(await writeDoc(clients, path, src.content, { confirmLoss, baseDir: src.baseDir }));
     },
   );
 
@@ -604,7 +582,7 @@ export function createServer(): McpServer {
         'Drive permits two files with the same name in one folder and folds case when matching, unlike any real filesystem — a path that matches more than one thing is refused with the candidates listed, never guessed. ' +
         'A doc is a folder of tabs: ls <doc> lists its tabs, ls <folder> shows each doc with its tab count, and a path continues into tabs (/Work/Contract/Part 2/Ch.4; a tab step may also be a tabId). ' +
         'mv on a tab renames it, nests it (dst is another tab, or a new name under one) or un-nests it (dst is the doc), and `index` reorders it; a tab cannot leave its doc, and cp of a tab is refused. ' +
-        'Content is edited with edit_doc/overwrite_doc, not here; there is no rm, and nothing here deletes a tab.',
+        'Content is edited with edit_doc and written with write_doc, not here; there is no rm, and nothing here deletes a tab. A tab is made by write_doc to a new path.',
       inputSchema: {
         cmd: z.enum(['ls', 'find', 'mkdir', 'cp', 'mv']),
         args: z

@@ -305,26 +305,30 @@ export async function resolveEntry(clients: GoogleClients, input: string): Promi
   return descendIntoDoc(clients, entry, steps);
 }
 
-function refusal(resolution: Exclude<Resolution, { ok: true }>): Error {
+export function refusal(resolution: Exclude<Resolution, { ok: true }>): Error {
   if (resolution.status !== 'ambiguous') return new Error(resolution.message);
   const listed = resolution.candidates.map((c) => `  ${c.id}  ${c.path ?? c.name}`).join('\n');
   return new Error(`${resolution.message}\n${listed}`);
 }
 
 /**
- * The tab a doc tool acts on. A doc with one tab means that tab; a doc with
- * several and no tab step is refused, listing every tab's full path.
+ * The tab a doc tool acts on, from an entry already resolved. A doc with one tab
+ * means that tab; a doc with several and no tab step is refused, listing every
+ * tab's full path.
  */
-export async function resolveTab(clients: GoogleClients, input: string): Promise<TabRef> {
-  const resolution = await resolveEntry(clients, input);
-  if (!resolution.ok) throw refusal(resolution);
-  const { entry } = resolution;
+export async function tabOfEntry(clients: GoogleClients, entry: Resolved, input: string): Promise<TabRef> {
   if (entry.tab) return entry.tab;
   if (!entry.isDoc) throw new Error(`"${input}" is ${entry.isFolder ? 'a folder' : 'not a Google Doc'}. Name a doc or one of its tabs.`);
   const tabs = await listTabs(clients, entry.id, entry.path);
   if (tabs.length === 1) return tabs[0];
   if (!tabs.length) throw new Error(`"${entry.name}" has no tabs.`);
   throw new Error(`"${entry.name}" has ${tabs.length} tabs; name one:\n${tabs.map((t) => `  ${t.path}`).join('\n')}`);
+}
+
+export async function resolveTab(clients: GoogleClients, input: string): Promise<TabRef> {
+  const resolution = await resolveEntry(clients, input);
+  if (!resolution.ok) throw refusal(resolution);
+  return tabOfEntry(clients, resolution.entry, input);
 }
 
 /** The doc a file-level tool (comments, sharing, export) acts on; a tab path names its doc. */

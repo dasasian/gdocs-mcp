@@ -1,31 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { GoogleClients } from '../src/google/clients.js';
-import { overwriteDoc } from '../src/docs/document.js';
 import { resolveComment } from '../src/drive/comments.js';
 
 // Verification guards (#10): each mutating tool checks a caller-echoed human-readable
 // label against live state and refuses (status 'mismatch') rather than mutate the wrong target.
-
-function docClients(data: unknown, batchUpdate = vi.fn().mockResolvedValue({})): GoogleClients {
-  return {
-    auth: {} as GoogleClients['auth'],
-    docs: {
-      documents: { get: vi.fn().mockResolvedValue({ data }), batchUpdate },
-    } as unknown as GoogleClients['docs'],
-    drive: {} as GoogleClients['drive'],
-  };
-}
-
-describe('overwriteDoc guard', () => {
-  it('refuses when expectTitle does not match', async () => {
-    const batchUpdate = vi.fn().mockResolvedValue({});
-    const r = await overwriteDoc(docClients({ title: 'Real', body: { content: [] } }, batchUpdate), 'd', 'hi', {
-      expectTitle: 'Wrong',
-    });
-    expect(r.status).toBe('mismatch');
-    expect(batchUpdate).not.toHaveBeenCalled();
-  });
-});
 
 describe('resolveComment guard', () => {
   function commentClients(quoted: string, replies = vi.fn().mockResolvedValue({ data: { id: 'r1' } })): GoogleClients {

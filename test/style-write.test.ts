@@ -4,7 +4,7 @@ import type { GoogleClients } from '../src/google/clients.js';
 import { renderMarkdown } from '../src/docs/transformer.js';
 import { styleRulesOf, renderStyleBlock } from '../src/docs/style-block.js';
 import { parseBlocks, markdownToRequests } from '../src/docs/write.js';
-import { createDoc, overwriteDoc, insertContent } from '../src/docs/document.js';
+import { writeDoc, insertContent } from '../src/docs/document.js';
 import { StyleSyntaxError } from '../src/docs/css.js';
 
 const pt = (magnitude: number): docs_v1.Schema$Dimension => ({ magnitude, unit: 'PT' });
@@ -237,16 +237,16 @@ describe('the whole write is refused before any request is sent', () => {
     return { clients, calls };
   };
 
-  it('create_doc does not even create the doc', async () => {
+  it('write_doc does not even create the doc', async () => {
     const { clients, calls } = clientsWith();
-    await expect(createDoc(clients, 't', bad)).rejects.toThrow(StyleSyntaxError);
+    await expect(writeDoc(clients, '/Work/T', bad)).rejects.toThrow(StyleSyntaxError);
     expect(calls[0]).not.toHaveBeenCalled();
     expect(calls[1]).not.toHaveBeenCalled();
   });
 
-  it('overwrite_doc sends no batchUpdate', async () => {
+  it('write_doc to an existing doc sends no batchUpdate', async () => {
     const { clients, calls } = clientsWith();
-    await expect(overwriteDoc(clients, 'd', bad, {})).rejects.toThrow(StyleSyntaxError);
+    await expect(writeDoc(clients, 'existing', bad)).rejects.toThrow(StyleSyntaxError);
     expect(calls[1]).not.toHaveBeenCalled();
   });
 

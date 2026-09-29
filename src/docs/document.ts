@@ -1,13 +1,13 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
-import { contentOf, resolveTabId, tableInsertedAt, writeControlFor, TAB_TREE_FIELDS, type SegmentKind, type SegmentPage } from './structure.js';
+import { contentOf, resolveTabId, flattenTabs, tableInsertedAt, writeControlFor, TAB_TREE_FIELDS, type SegmentKind, type SegmentPage } from './structure.js';
 import { resolveSegmentTarget } from './segments.js';
-import { parseSuggestions } from './suggestions.js';
+import { getDocInline } from './suggestions.js';
 import { readFile } from 'node:fs/promises';
 import nodePath from 'node:path';
 import { markdownToRequests, parseBlocks } from './write.js';
-import { findProjectConfig } from '../auth/accounts.js';
-import { parseDriveId } from '../drive/paths.js';
+import { resolveEntry, tabOfEntry, refusal, type Resolved, type TabRef } from '../drive/paths.js';
+import { measureLoss, confirmLossToken, lossSummary, lossDetails, countComments, type Loss } from './loss.js';
 import { uploadImageForInsert, resolveImageSource } from '../drive/images.js';
 import { resolveIndex, fillCellRequests, columnAlignRequests } from './objects.js';
 
@@ -179,86 +179,6 @@ export async function resolveContentSource(args: {
   return { content, baseDir: args.baseDir ?? nodePath.dirname(abs) };
 }
 
-export async function createDoc(
-  clients: GoogleClients,
-  title: string,
-  content?: string,
-  opts: { folder?: string; baseDir?: string } = {},
-): Promise<{ documentId: string; title: string; folderId?: string; warnings?: string[]; images?: { src: string; objectId: string }[] }> {
-  if (content) parseBlocks(content);
-  let documentId: string;
-  let folderId: string | undefined;
-
-  const folder = opts.folder ?? findProjectConfig().folder;
-
-  if (folder) {
-    folderId = parseDriveId(folder);
-    const created = await clients.drive.files.create({
-      requestBody: { name: title, mimeType: 'application/vnd.google-apps.document', parents: [folderId] },
-      fields: 'id',
-      supportsAllDrives: true,
-    });
-    documentId = created.data.id!;
-  } else {
-    const created = await clients.docs.documents.create({ requestBody: { title } });
-    documentId = created.data.documentId!;
-  }
-
-  let warnings: string[] = [];
-  let images: { src: string; objectId: string }[] = [];
-  if (content) ({ warnings, images } = await renderMarkdownInto(clients, documentId, content, { baseDir: opts.baseDir }));
-  return {
-    documentId,
-    title,
-    ...(folderId ? { folderId } : {}),
-    ...(warnings.length ? { warnings } : {}),
-    ...(images.length ? { images } : {}),
-  };
-}
-
-export async function overwriteDoc(
-  clients: GoogleClients,
-  documentId: string,
-  content: string,
-  opts: { force?: boolean; tabId?: string; baseDir?: string; expectTitle?: string } = {},
-): Promise<{ status: 'ok' | 'blocked' | 'mismatch'; message?: string; warnings?: string[]; images?: { src: string; objectId: string }[] }> {
-  const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
-  const tabId = resolveTabId(doc, opts.tabId);
-
-  if (opts.expectTitle !== undefined && opts.expectTitle !== (doc.title ?? '')) {
-    return { status: 'mismatch', message: `expectTitle "${opts.expectTitle}" != live doc title "${doc.title ?? ''}". Refusing to overwrite a different doc than intended.` };
-  }
-
-  if (!opts.force) {
-    const suggestions = parseSuggestions(doc, tabId).length;
-    const comments = (
-      await clients.drive.comments.list({ fileId: documentId, fields: 'comments(id)', pageSize: 1 })
-    ).data.comments?.length
-      ? 'present'
-      : 'none';
-    if (suggestions > 0 || comments === 'present') {
-      return {
-        status: 'blocked',
-        message: `Doc has ${suggestions} suggestion(s) and comments=${comments}; a full overwrite would orphan/wipe them. Re-run with force=true to proceed.`,
-      };
-    }
-  }
-
-  const tabContent = contentOf(doc, tabId);
-  const end = tabContent[tabContent.length - 1]?.endIndex ?? 2;
-  const preRequests: docs_v1.Schema$Request[] =
-    end > 2 ? [{ deleteContentRange: { range: { startIndex: 1, endIndex: end - 1, tabId } } }] : [];
-
-  const { warnings, images } = await renderMarkdownInto(clients, documentId, content, {
-    tabId,
-    preRequests,
-    requiredRevisionId: doc.revisionId ?? undefined,
-    baseDir: opts.baseDir,
-    resetParagraphStyles: true,
-  });
-  return { status: 'ok', ...(warnings.length ? { warnings } : {}), ...(images.length ? { images } : {}) };
-}
-
 type RawRequest = docs_v1.Schema$Request;
 
 export async function addTab(
@@ -286,4 +206,97 @@ export async function updateTab(
   const fields = (['title', 'index', 'parentTabId'] as const).filter((f) => change[f] !== undefined).join(',');
   const req = { updateDocumentTabProperties: { tabProperties: { tabId, ...change }, fields } } as unknown as RawRequest;
   await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests: [req] } });
+}
+
+
+export type WriteDocResult =
+  | { status: 'created'; kind: 'doc' | 'tab'; path: string; documentId: string; tabId?: string; url: string; warnings?: string[]; images?: { src: string; objectId: string }[] }
+  | { status: 'replaced'; path: string; documentId: string; tabId: string; warnings?: string[]; images?: { src: string; objectId: string }[] }
+  | { status: 'confirm_required'; message: string; lost: Loss; details: string[]; confirmLoss: string };
+
+function childPath(parent: Resolved, name: string): string {
+  return `${parent.path === '/' ? '' : parent.path}/${name}`;
+}
+
+function docUrl(documentId: string): string {
+  return `https://docs.google.com/document/d/${documentId}/edit`;
+}
+
+async function createAt(
+  clients: GoogleClients,
+  parent: Resolved,
+  name: string,
+  content: string,
+  baseDir: string | undefined,
+): Promise<WriteDocResult> {
+  if (parent.isFolder) {
+    const created = await clients.drive.files.create({
+      requestBody: { name, mimeType: 'application/vnd.google-apps.document', parents: [parent.id] },
+      fields: 'id',
+      supportsAllDrives: true,
+    });
+    const documentId = created.data.id ?? '';
+    const { warnings, images } = await renderMarkdownInto(clients, documentId, content, { baseDir });
+    return { status: 'created', kind: 'doc', path: childPath(parent, name), documentId, url: docUrl(documentId), ...(warnings.length ? { warnings } : {}), ...(images.length ? { images } : {}) };
+  }
+  const { tabId } = await addTab(clients, parent.id, name, { parentTabId: parent.tab?.tabId });
+  const { warnings, images } = await renderMarkdownInto(clients, parent.id, content, { tabId, baseDir });
+  return { status: 'created', kind: 'tab', path: childPath(parent, name), documentId: parent.id, tabId, url: docUrl(parent.id), ...(warnings.length ? { warnings } : {}), ...(images.length ? { images } : {}) };
+}
+
+async function replaceTab(
+  clients: GoogleClients,
+  tab: TabRef,
+  content: string,
+  opts: { confirmLoss?: string; baseDir?: string },
+  asNamed: string,
+): Promise<WriteDocResult> {
+  const doc = await getDocInline(clients, tab.documentId);
+  const tabId = resolveTabId(doc, tab.tabId);
+  const loss = measureLoss(doc, tabId, await countComments(clients, tab.documentId));
+  const confirmLoss = confirmLossToken(loss, doc.revisionId);
+  if (opts.confirmLoss !== confirmLoss) {
+    const changed = opts.confirmLoss !== undefined;
+    return {
+      status: 'confirm_required',
+      message: `${changed ? 'The doc changed since that summary, or the summary was not passed back as given. ' : ''}Replacing "${asNamed}" removes ${lossSummary(loss)}. Tell the user; if they agree, call write_doc again with the same content and confirmLoss set to the string below.`,
+      lost: loss,
+      details: lossDetails(loss, flattenTabs(doc).length > 1),
+      confirmLoss,
+    };
+  }
+  const tabContent = contentOf(doc, tabId);
+  const end = tabContent[tabContent.length - 1]?.endIndex ?? 2;
+  const preRequests: docs_v1.Schema$Request[] =
+    end > 2 ? [{ deleteContentRange: { range: { startIndex: 1, endIndex: end - 1, tabId } } }] : [];
+  const { warnings, images } = await renderMarkdownInto(clients, tab.documentId, content, {
+    tabId,
+    preRequests,
+    requiredRevisionId: doc.revisionId ?? undefined,
+    baseDir: opts.baseDir,
+    resetParagraphStyles: true,
+  });
+  return { status: 'replaced', path: tab.path, documentId: tab.documentId, tabId: tab.tabId, ...(warnings.length ? { warnings } : {}), ...(images.length ? { images } : {}) };
+}
+
+/**
+ * Write like the local Write tool: a path that names nothing is created (a doc in
+ * a folder, a tab in a doc, a child tab under a tab) and never asks; a path that
+ * names something is refused with a loss summary until the caller passes it back
+ * as `confirmLoss`. Throws for a path that is ambiguous, a folder, or a multi-tab
+ * doc with no tab step.
+ */
+export async function writeDoc(
+  clients: GoogleClients,
+  path: string,
+  content: string,
+  opts: { confirmLoss?: string; baseDir?: string } = {},
+): Promise<WriteDocResult> {
+  parseBlocks(content);
+  const resolution = await resolveEntry(clients, path);
+  if (resolution.ok) return replaceTab(clients, await tabOfEntry(clients, resolution.entry, path), content, opts, path);
+  if (resolution.status === 'not_found' && resolution.missing) {
+    return createAt(clients, resolution.missing.parent, resolution.missing.name, content, opts.baseDir);
+  }
+  throw refusal(resolution);
 }

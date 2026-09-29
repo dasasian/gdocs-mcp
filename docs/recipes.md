@@ -55,8 +55,8 @@ changes at all, let alone act on them safely.
 Drive, and publish every .md file there as a Doc."*
 
 **What happens:** `drive({ cmd: "mkdir", args: ["-p", …] })` builds each folder path
-in one call per branch, and `create_doc` with `contentFile` renders each file
-server-side — headings, tables, images and all — straight into the right folder.
+in one call per branch, and `write_doc` with `contentFile` renders each file
+server-side — headings, tables, images and all — into a new path in the right folder.
 
 **Why it's nice:** the structure and the content arrive together. Nothing is
 retyped, so nothing is silently dropped from the long files.
@@ -99,7 +99,7 @@ One tool, one job — the building blocks the whole jobs above are made of.
 
 **Ask Claude:** *"Create a Google Doc titled 'Q3 Report' from `./report.md` and put it in my Reports folder."*
 
-**What happens:** `create_doc` with `contentFile: ./report.md` — the server reads
+**What happens:** `write_doc` to `/Reports/Q3 Report` with `contentFile: ./report.md` — the server reads
 the file directly (no retyping, so nothing gets dropped from long docs), renders
 headings, **bold**/*italic*, links, nested lists, tables, and images, and drops it
 in the folder.

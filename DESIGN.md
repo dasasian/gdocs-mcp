@@ -156,7 +156,7 @@ only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 | `list_suggestions(path, segment?)` | Suggestions as before→after diffs |
 | `apply_suggestions(path, resolutions[], segment?)` | Resolve one or more suggestions atomically (§6) |
 | `list_comments / add_comment(replyTo?) / resolve_comment` | Drive comments (`add_comment` also replies) |
-| `drive(cmd, args, expectName?, acceptOwnershipTransfer?)` | Drive as a shell: `ls` · `find` · `mkdir` · `cp` · `mv` over paths (`~`, `/shared/<drive>`, `/shared-with-me`, `/lost+found`) or ids, down into a doc's tabs (§3c, §3d). `mv` covers rename and move; `cp` is Drive `files.copy`. Collapsed from five bespoke tools (#44) |
+| `drive(cmd, args, expectName?, index?, acceptOwnershipTransfer?)` | Drive as a shell: `ls` · `find` · `mkdir` · `cp` · `mv` over paths (`~`, `/shared/<drive>`, `/shared-with-me`, `/lost+found`) or ids, down into a doc's tabs (§3c, §3d). `mv` covers rename and move, and on a tab rename, nest and un-nest; `index` (tab `mv` only) is the position among its new siblings, because a shell `mv` has no way to say it; `cp` is Drive `files.copy`. Collapsed from five bespoke tools (#44) |
 | `list_permissions / share_doc(email?|link) / unshare_doc(email?|permissionId?, expectRole)` | Sharing (person, group, domain, or anyone-with-link). A grant with no email is addressed by the `permissionId` the read returns; `expectRole` is required because a revocation is recorded nowhere (§4) |
 | `add_account / list_accounts` | Multi-account (§9) |
 
@@ -311,15 +311,29 @@ smart chips, bookmarks.
 
 ```
 write_doc("/Work/Contract", …)
-→ refused: replacing "Contract" removes 42 paragraphs, 2 comments,
-  tab stops on 3 paragraphs ("Signature:", "Date:", "Witness:").
-  confirmLoss: "42 paragraphs, 2 comments, 3 tab stops"
+→ refused: replacing "/Work/Contract" removes 42 paragraphs, 2 comments,
+  3 tab stops. tab stops on 3 line(s): "Signature:", "Date:", "Witness:" …
+  confirmLoss: "42 paragraphs, 2 comments, 3 tab stops [revision ANLC…]"
 ```
 
 The agent tells the user, the user decides, and a second call carrying
 `confirmLoss` proceeds. It is the local `Write`'s "read the file before you
-overwrite it", enforced: the summary is a fact the caller had to fetch, and a
-doc that changed since no longer matches it. The text is always on the list, so a
+overwrite it", enforced: the summary is a fact the caller had to fetch. The
+string is the counts **and the doc's revision id**. The counts alone are not
+enough: an edit that changes words but no count would still match, so the
+revision is in the string, and the counts stay in it because a comment added
+in Drive changes no revision. Either changing makes the second call refuse
+again with a fresh summary. Only the last step of the path may be new; a path
+two levels short is refused, since there is no `mkdir -p` for tabs. A path with
+one tab means that tab, so replacing a one-tab doc asks like any other.
+
+Two items are counted less exactly than the summary reads, and it says so.
+**Comments** live in Drive and their anchor (`kix.…`) is opaque — it appears
+nowhere in the Docs API, so which tab a comment belongs to cannot be told;
+a tab replace counts the whole doc's comments and says so when the doc has
+several tabs. **Bookmarks** are not exposed by the Docs API at all, only links
+that point at one (`textStyle.link.bookmark`, `.heading`); the summary counts
+those, and a bookmark nothing links to is invisible (checked live, #55). The text is always on the list, so a
 path that matched an existing doc by accident (Drive folds case) is never
 replaced silently. `edit_doc` stays the default for changing a document; it
 touches only what its anchor covers and keeps everything else.
@@ -440,7 +454,9 @@ Tab structure goes through the same tools as files: `drive ls` lists tabs,
 `write_doc` to a new path adds one (`addDocumentTab`). Deleting a tab is the
 user's, like deleting a file.
 
-> **Gotcha — stale generated types.** `googleapis@144`'s TypeScript types lag the live API: `addDocumentTab`/`deleteTab`/`updateDocumentTabProperties` are absent from `Schema$Request` even though the API accepts them. We construct + cast these requests (`src/docs/document.ts`). A type-only grep wrongly concluded the feature was missing — always confirm against the live API, not the bundled types. A future `googleapis` bump should remove the casts.
+> **Gotcha — stale generated types.** `googleapis@144`'s TypeScript types lag the live API: `addDocumentTab`/`deleteTab`/`updateDocumentTabProperties` are absent from `Schema$Request` even though the API accepts them. We construct + cast these requests (`src/docs/document.ts`). A type-only grep wrongly concluded the feature was missing — always confirm against the live API, not the bundled types. `dateElement` is missing from `Schema$ParagraphElement` the same way (`src/docs/loss.ts` widens the type). A future `googleapis` bump should remove the casts.
+
+> **`updateDocumentTabProperties`, verified live (#55).** `title`, `index` and `parentTabId` combine in one request. `parentTabId` nests the tab (it lands at child index 0 unless `index` is also given); un-nesting to the top level takes an explicit empty `parentTabId` with `parentTabId` in the field mask, and `index` alone reorders within the tab's current parent. Nesting a tab under its own child is refused by the API.
 
 Internal gotcha: three batchUpdate ops (`ReplaceAllText`, `DeleteNamedRange`, `ReplaceNamedRangeContent`) ignore `tabId` and hit **all** tabs — the edit layer must avoid or scope them so a per-chapter edit can't bleed across tabs. Reads require `includeTabsContent=true` (default silently returns first-tab-only).
 

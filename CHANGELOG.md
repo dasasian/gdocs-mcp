@@ -8,18 +8,23 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Breaking
 
-> **`list_tabs`, `add_tab`, `rename_tab` and `delete_tab` are removed (#55).** Tabs are reached through `drive` and, as writes land, `write_doc`.
+> **Six tools are removed and one added (#55): `create_doc` and `overwrite_doc` become `write_doc`; `list_tabs`, `add_tab`, `rename_tab` and `delete_tab` go.** Every doc tool takes `path` instead of `documentId` and `tab`. 30 tools become 25.
 
 | Removed | Use instead |
 |---|---|
 | `list_tabs(documentId)` | `drive({cmd:'ls', args:['<doc>']})` — one level of tabs, each with the `path` to pass back |
 | `rename_tab(documentId, tabId, title)` | `drive({cmd:'mv', args:['<doc>/<tab>', '<doc>/<new title>']})` |
+| `create_doc(title, content, folder)` | `write_doc(path: '/<folder>/<title>', content)` — a path that names nothing is created; never asks |
+| `overwrite_doc(documentId, content, force, expectTitle, tab)` | `write_doc(path, content)`, then again with the `confirmLoss` string from the refusal. `force` and `expectTitle` are gone: the loss summary is the guard, and it is a fact the caller had to fetch |
+| `add_tab(documentId, title, index, parentTabId)` | `write_doc(path: '/<folder>/<doc>/<title>', content)` creates the tab (child tab: name the parent in the path); `index` and `parentTabId` afterwards with `drive mv` |
+| the `folder` argument of `create_doc`, and the project-default folder | the folder in the path; the `.gdocs-mcp.json` `folder` is still stored but no tool reads it |
 | the `tab` param on every doc tool | a tab step in `path`: `/Work/Contract/Ch.4`, `<id>/Ch.4`, or a URL with `?tab=` |
 | the `documentId` param on every doc tool | `path` — an id or URL still works, so `documentId: X` becomes `path: X` |
 | `delete_tab(documentId, tabId, expectTitle)` | none — nothing deletes a tab; delete it in Docs (DESIGN.md §3c) |
 
 ### Added
 
+- **`write_doc` (#55).** Creates a doc in a folder, a tab in a doc or a child tab when the path names nothing, and never asks. Replacing what a path names is refused once with a loss summary — paragraphs, comments, suggestions, tab stops, person/date/link chips, links to bookmarks — and proceeds when the same summary comes back as `confirmLoss`. The summary carries the doc's revision, so an edit between the two calls, or a new comment, refuses it again. Counted from the Docs API (`paragraphStyle.tabStops`, `person` / `dateElement` / `richLink` elements, `suggestedInsertionIds`, links to a bookmark or heading) and from Drive (comments). Approximate in two places, and the summary says so: comments are counted for the whole doc (the API does not say which tab an anchor is in) and a bookmark nothing links to is invisible. A doc with several tabs needs a tab step.
 - **Every doc tool takes one `path` (#55).** An id, a URL, `/Work/Contract` or `/Work/Contract/Ch.4`, walked by the same resolver `drive` uses. A doc with one tab means that tab (so most calls name none); a doc with several and no tab step is refused, listing every tab's full path, in `read_doc`, `edit_doc` and every other tab-level tool — it used to go silently to the first tab. Comments, sharing and export act on the file, so a tab path there names its doc. Doc URLs are now accepted by every tool.
 - **`drive` reaches into a doc's tabs (#55).** A path walks folders, and the first step that is a Google Doc switches to that doc's tabs; a nested tab is one more step, a step may be a title or a tabId, and an id or a URL (`?tab=` is honoured) can start the path. `ls <doc>` lists tabs, `ls <folder>` shows each doc's tab count (the first 50 docs). `mv` renames, nests and un-nests a tab; the new `index` parameter reorders it. `mv` of a tab to another doc or a folder and `cp` of a tab are refused with the reason; two tabs with one name are refused with every candidate listed.
 
