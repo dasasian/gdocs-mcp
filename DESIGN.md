@@ -149,7 +149,7 @@ only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 | `edit_doc(path, old_string, new_string, replace_all?, strict?, segment?)` | String-anchored edit (the workhorse). Also the only style writer: a `style`, a class, or a `<style>` rule (§2a, §4) |
 | `write_doc(path, content\|contentFile, confirmLoss?)` | The local `Write`: creates the doc or tab when the path names nothing, replaces it when it names something — **guarded** (§4) |
 | `insert_content(path, content\|contentFile, at?)` | Insert new content at a structural position (`end`/`top`/anchor) — the non-anchored counterpart to `edit_doc` (§4) |
-| `export_doc(path, dir, format?, filename?)` | Server-side render to pdf/docx/odt/rtf/txt/html/epub/md via Drive `files.export` |
+| `export_doc(path, dir, format?, filename?)` | Server-side render to pdf/docx/odt/rtf/txt/html/epub/md. A doc path (or a one-tab doc) goes through Drive `files.export`, which renders every tab; a tab path of a multi-tab doc goes through the Docs UI's `export?tab=` endpoint — undocumented and throttled, so a failure is refused, never widened to the whole doc (`docs/limitations.md`) |
 | `set_page_setup / get_page_setup(path)` | Document page setup: margins, page size, orientation |
 | `insert_image(path, at, uri, width?, height?, align?, baseDir?, segment?)` | Images from a URL or a local file (markdown can't size/place them) |
 | `insert_table(path, rows, cols, data?, align?, segment?)` · `edit_table(path, cell, op, side?, segment?)` · `set_table_style / get_table_style(path, cell, segment?)` | Tables: create (cells take inline markdown), insert/delete row-or-column, style and read style back. `segment` reaches a letterhead table (§3a) |
