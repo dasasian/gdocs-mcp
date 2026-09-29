@@ -407,7 +407,7 @@ export function createServer(): McpServer {
     {
       title: 'Export a doc to a file',
       description:
-        'Export a Google Doc to a real file on disk \u2014 pdf (default), docx, odt, rtf, txt, html, epub, or md. Google renders it server-side (File > Download in the UI), so page setup, pagination and layout match the editor. Returns the local path and byte size. Note: Drive refuses to export files larger than 10 MB.',
+        'Export a Google Doc to a real file on disk \u2014 pdf (default), docx, odt, rtf, txt, html, epub, or md. Google renders it server-side (File > Download in the UI), so page setup, pagination and layout match the editor. A doc path exports every tab; a tab path (/folder/doc/tab) exports only that tab, through an endpoint Google does not document and rate-limits — if it fails the call is refused and says so, it never falls back to the whole doc. Returns the local path and byte size. Note: Drive refuses to export files larger than 10 MB.',
       inputSchema: {
         path: docPathArg,
         dir: z.string().describe('absolute local folder to save the export into (created if missing)'),
@@ -418,8 +418,8 @@ export function createServer(): McpServer {
     },
     async ({ path, dir, format, filename, account }) => {
       const clients = await clientsForAccount(account);
-      const { documentId } = await resolveDocument(clients, path);
-      return json(await exportDoc(clients, documentId, dir, { format, filename }));
+      const { documentId, tab } = await resolveDocument(clients, path);
+      return json(await exportDoc(clients, documentId, dir, { format, filename, tab }));
     },
   );
 

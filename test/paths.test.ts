@@ -97,8 +97,14 @@ describe('resolveDocument (#55)', () => {
   it('names the doc for a file-level tool, even for a tab path or a multi-tab doc', async () => {
     const clients = clientsWith(CONTRACT);
     for (const input of ['/Work/Contract', '/Work/Contract/Part 2/Ch.4', 'contract']) {
-      expect(await resolveDocument(clients, input)).toEqual({ documentId: 'contract', title: 'Contract' });
+      expect(await resolveDocument(clients, input)).toMatchObject({ documentId: 'contract', title: 'Contract' });
     }
+  });
+
+  it('says which tab was named, and none when the path names only the doc', async () => {
+    const clients = clientsWith(CONTRACT);
+    expect((await resolveDocument(clients, '/Work/Contract/Part 2/Ch.4')).tab?.tabId).toBe('t.c');
+    expect((await resolveDocument(clients, '/Work/Contract')).tab).toBeUndefined();
   });
 });
 

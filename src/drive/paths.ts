@@ -337,12 +337,12 @@ export async function resolveTab(clients: GoogleClients, input: string): Promise
   return tabOfEntry(clients, resolution.entry, input);
 }
 
-/** The doc a file-level tool (comments, sharing, export) acts on; a tab path names its doc. */
-export async function resolveDocument(clients: GoogleClients, input: string): Promise<{ documentId: string; title: string }> {
+/** The doc a file-level tool (comments, sharing, export) acts on; a tab path names its doc, and `tab` says which tab was named. */
+export async function resolveDocument(clients: GoogleClients, input: string): Promise<{ documentId: string; title: string; tab?: TabRef }> {
   const resolution = await resolveEntry(clients, input);
   if (!resolution.ok) throw refusal(resolution);
   const { entry } = resolution;
-  if (entry.tab) return { documentId: entry.tab.documentId, title: entry.tab.documentTitle };
+  if (entry.tab) return { documentId: entry.tab.documentId, title: entry.tab.documentTitle, tab: entry.tab };
   if (!entry.isDoc) throw new Error(`"${input}" is ${entry.isFolder ? 'a folder' : 'not a Google Doc'}. Name a doc.`);
   return { documentId: entry.id, title: entry.name };
 }
