@@ -10,6 +10,7 @@ import {
   diffCss,
   paragraphStyleUpdate,
   textStyleUpdate,
+  withoutUndefined,
   type ParagraphCss,
   type TextCss,
 } from './css.js';
@@ -57,10 +58,6 @@ function ruleOf(named: docs_v1.Schema$NamedStyle, selector: RuleSelector): Style
     strikethrough: ts.strikethrough ? true : undefined,
   };
   return { selector, paragraph: withoutUndefined(paragraph), text: withoutUndefined(text) };
-}
-
-function withoutUndefined<T extends object>(o: T): T {
-  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
 }
 
 export function styleRulesOf(doc: docs_v1.Schema$Document, tabId?: string): StyleRule[] {

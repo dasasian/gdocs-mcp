@@ -170,7 +170,7 @@ function parseInto(
       ? forParagraph(value, paragraph)
       : forText
         ? forText(value, text)
-        : `${property} is not supported here`;
+        : 'not supported here';
     if (problem) issues.push(`${property}: ${problem}`);
   }
   return issues;
@@ -316,4 +316,8 @@ export function paragraphCssChange(before: ParagraphCss, after: ParagraphCss): {
   if (!pairChanged || !pairStillSet) return { set, cleared };
   Object.assign(set, Object.fromEntries(INDENT_PAIR.filter((k) => after[k] !== undefined).map((k) => [k, after[k]])));
   return { set, cleared: cleared.filter((k) => !INDENT_PAIR.includes(k)) };
+}
+
+export function withoutUndefined<T extends object>(o: T): T {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
 }

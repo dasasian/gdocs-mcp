@@ -1,6 +1,6 @@
 import type { docs_v1 } from 'googleapis';
-import { hexToRgb } from './color.js';
 import { CODE_FONT } from './markdown-spec.js';
+import { parseTextCss, textStyleUpdate, withoutUndefined, type TextCss } from './css.js';
 
 // Parse inline markdown AND inline HTML into styled segments, so edit_doc's
 // new_string can carry **bold** / *italic* / ~~strike~~ / `code` / [text](url)
@@ -10,17 +10,10 @@ import { CODE_FONT } from './markdown-spec.js';
 // are the exception — their contents are literal by definition. Block
 // constructs still go through other tools.
 
-export interface Segment {
+export interface Segment extends TextCss {
   text: string;
-  bold?: boolean;
-  italic?: boolean;
-  underline?: boolean;
-  strikethrough?: boolean;
   code?: boolean;
   link?: string;
-  color?: string;
-  fontSize?: number;
-  fontFamily?: string;
 }
 
 interface Pattern {
@@ -35,16 +28,10 @@ interface Pattern {
   inner?: number;
 }
 
-// Parse a CSS style attribute into the styles we support.
-function parseStyleAttr(css: string): Partial<Segment> {
-  const out: Partial<Segment> = {};
-  const color = /color\s*:\s*([^;]+)/i.exec(css);
-  if (color) out.color = color[1].trim();
-  const size = /font-size\s*:\s*([\d.]+)\s*(pt|px)?/i.exec(css);
-  if (size) out.fontSize = size[2] === 'px' ? Math.round(+size[1] * 0.75) : +size[1];
-  const family = /font-family\s*:\s*([^;]+)/i.exec(css);
-  if (family) out.fontFamily = family[1].trim().replace(/['"]/g, '');
-  return out;
+const SPAN_STYLE_RE = /<span\s+[^>]*style="([^"]*)"/gi;
+
+export function inlineStyleIssues(markup: string): string[] {
+  return [...markup.matchAll(SPAN_STYLE_RE)].flatMap((m) => parseTextCss(m[1]).issues.map((i) => `<span style> ${i}`));
 }
 
 // Backslash escapes (CommonMark): a backslash before ASCII punctuation makes that
@@ -82,7 +69,7 @@ const PATTERNS: Pattern[] = [
   // counterpart to read emitting <br> for the same char (transformer.ts).
   { re: /<br\s*\/?>/i, make: () => ({ text: '\v' }) },
   { re: /<a\s+[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/i, make: (m) => ({ text: m[2], link: m[1] }), inner: 2 },
-  { re: /<span\s+[^>]*style="([^"]*)"[^>]*>(.*?)<\/span>/i, make: (m) => ({ text: m[2], ...parseStyleAttr(m[1]) }), inner: 2 },
+  { re: /<span\s+[^>]*style="([^"]*)"[^>]*>(.*?)<\/span>/i, make: (m) => ({ text: m[2], ...parseTextCss(m[1]).css }), inner: 2 },
 ];
 
 // The walk itself, over already-escape-encoded text. Kept separate from
@@ -129,27 +116,17 @@ export function parseInline(input: string): Segment[] {
   return segments.filter((s) => s.text.length > 0);
 }
 
-// A segment's textStyle + fields mask. `code` maps to a monospace font (Docs has
-// no dedicated inline-code style).
 export function segmentTextStyle(seg: Segment): { textStyle: docs_v1.Schema$TextStyle; fields: string[] } {
-  const textStyle: docs_v1.Schema$TextStyle = {};
-  const fields: string[] = [];
-  if (seg.bold) (textStyle.bold = true), fields.push('bold');
-  if (seg.italic) (textStyle.italic = true), fields.push('italic');
-  if (seg.underline) (textStyle.underline = true), fields.push('underline');
-  if (seg.strikethrough) (textStyle.strikethrough = true), fields.push('strikethrough');
-  if (seg.code || seg.fontFamily) {
-    textStyle.weightedFontFamily = { fontFamily: seg.fontFamily ?? CODE_FONT };
-    fields.push('weightedFontFamily');
-  }
-  if (seg.color) {
-    textStyle.foregroundColor = { color: { rgbColor: hexToRgb(seg.color) } };
-    fields.push('foregroundColor');
-  }
-  if (seg.fontSize) {
-    textStyle.fontSize = { magnitude: seg.fontSize, unit: 'PT' };
-    fields.push('fontSize');
-  }
-  if (seg.link) (textStyle.link = { url: seg.link }), fields.push('link');
-  return { textStyle, fields };
+  const styled: TextCss = {
+    bold: seg.bold || undefined,
+    italic: seg.italic || undefined,
+    underline: seg.underline || undefined,
+    strikethrough: seg.strikethrough || undefined,
+    fontFamily: seg.code || seg.fontFamily ? (seg.fontFamily ?? CODE_FONT) : undefined,
+    color: seg.color || undefined,
+    fontSize: seg.fontSize || undefined,
+  };
+  const { style, fields } = textStyleUpdate(withoutUndefined(styled));
+  if (seg.link) (style.link = { url: seg.link }), fields.push('link');
+  return { textStyle: style, fields };
 }

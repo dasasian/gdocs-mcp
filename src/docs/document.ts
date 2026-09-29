@@ -5,7 +5,7 @@ import { resolveSegmentTarget } from './segments.js';
 import { parseSuggestions } from './suggestions.js';
 import { readFile } from 'node:fs/promises';
 import nodePath from 'node:path';
-import { markdownToRequests } from './write.js';
+import { markdownToRequests, parseBlocks } from './write.js';
 import { findProjectConfig } from '../auth/accounts.js';
 import { uploadImageForInsert, resolveImageSource } from '../drive/images.js';
 import { resolveIndex, fillCellRequests, columnAlignRequests } from './objects.js';
@@ -92,9 +92,9 @@ async function renderMarkdownInto(
   clients: GoogleClients,
   documentId: string,
   markdown: string,
-  opts: { tabId?: string; segmentId?: string; preRequests?: docs_v1.Schema$Request[]; requiredRevisionId?: string; baseDir?: string; startIndex?: number } = {},
+  opts: { tabId?: string; segmentId?: string; preRequests?: docs_v1.Schema$Request[]; requiredRevisionId?: string; baseDir?: string; startIndex?: number; resetParagraphStyles?: boolean } = {},
 ): Promise<{ warnings: string[]; images: { src: string; objectId: string }[] }> {
-  const { requests, tables, images } = markdownToRequests(markdown, opts.startIndex ?? 1, opts.tabId, opts.segmentId);
+  const { requests, tables, images } = markdownToRequests(markdown, opts.startIndex ?? 1, opts.tabId, opts.segmentId, { resetParagraphStyles: opts.resetParagraphStyles });
   const all = [...(opts.preRequests ?? []), ...requests];
   if (all.length) {
     await clients.docs.documents.batchUpdate({
@@ -206,6 +206,7 @@ export async function createDoc(
   content?: string,
   opts: { folder?: string; baseDir?: string } = {},
 ): Promise<{ documentId: string; title: string; folderId?: string; warnings?: string[]; images?: { src: string; objectId: string }[] }> {
+  if (content) parseBlocks(content);
   let documentId: string;
   let folderId: string | undefined;
 
@@ -280,6 +281,7 @@ export async function overwriteDoc(
     preRequests,
     requiredRevisionId: doc.revisionId ?? undefined,
     baseDir: opts.baseDir,
+    resetParagraphStyles: true,
   });
   return { status: 'ok', ...(warnings.length ? { warnings } : {}), ...(images.length ? { images } : {}) };
 }

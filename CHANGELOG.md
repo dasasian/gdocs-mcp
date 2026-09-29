@@ -10,8 +10,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **`read_doc` shows style as CSS (#49).** The read opens with a `<style>` block, one rule per named style (`p`, `h1`–`h6`, `.title`, `.subtitle`), in pt. A paragraph shows `style="…"` only where it differs from its rule: `text-align`, `line-height`, `margin-top`/`margin-bottom`/`margin-left`/`margin-right`, `text-indent`. A hanging indent reads as `margin-left:36pt; text-indent:-18pt` (CSS measures `text-indent` from `margin-left`; Docs measures its first-line indent from the page margin). List items show no indent — their nesting owns it.
 
+- **`create_doc` / `overwrite_doc` / `insert_content` accept the same CSS (#49).** A leading `<style>` block sets the named styles; `<p style>`, `<hN style>`, `<p class="title">` and `<span style>` style paragraphs and runs. `text-indent` is added back to `margin-left` on the way in, so a hanging indent read from a doc writes back as it was. The supported set is one list, shared with the reader.
+- **An unsupported property is an error, not text (#49).** `<p style="border:1px">` used to be inserted into the doc as visible characters. Now the whole write is refused before any request is sent — `create_doc` does not even create the doc — with one error naming every offending line and the supported set.
+
 ### Changed
 
+- `overwrite_doc` clears the paragraph style the new text would inherit from the paragraph it lands in; an indent on the old last paragraph no longer leaks into the first new one (#49).
 - Title and Subtitle paragraphs read as `<p class="title">` / `<p class="subtitle">` instead of `# …` (#49).
 
 ## [0.6.0] — 2026-08-21

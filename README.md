@@ -118,7 +118,7 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 | `set_style` | Style existing text in place — like selecting in Docs and applying formatting: a `from`/`to` selection, a single `from` snippet, or the `whole_document`. bold/italic/underline/strikethrough, color, font size/family, link, alignment, paragraph spacing (before/after/line) |
 | `get_page_setup` / `set_page_setup` | Read / set document-level page setup: margins, page size (preset or explicit), orientation (File > Page setup) |
 | `get_style` | Read the computed (inherited-resolved) style at a text anchor — paragraph spacing, alignment, fonts, colors that markdown can't show (read counterpart to `set_style`) |
-| `overwrite_doc` | Replace a doc/tab body with markdown-rendered content — guarded against orphaning comments/suggestions |
+| `overwrite_doc` | Replace a doc/tab body with markdown-rendered content (the same CSS `read_doc` shows: `<style>` block, `<p style>`, `<span style>`; an unsupported property fails the write before anything is sent) — guarded against orphaning comments/suggestions |
 | `insert_content` | Insert new markdown content at a position — `at: "end"` (default) / `"top"` / a unique anchor. The way to add a paragraph after a table that ends the doc, where `edit_doc` has nothing to anchor on |
 | `export_doc` | Export a doc to a local file — pdf (default), docx, odt, rtf, txt, html, epub, md (rendered server-side by Google) |
 | `create_doc` | Create a doc from markdown, optionally in a folder |

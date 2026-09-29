@@ -1,6 +1,9 @@
 import type { docs_v1 } from 'googleapis';
-import { parseInline, segmentTextStyle } from './inline.js';
-import { HEADING_BY_LEVEL, ALIGN_BY_CSS } from './markdown-spec.js';
+import { parseInline, segmentTextStyle, inlineStyleIssues } from './inline.js';
+import { HEADING_BY_LEVEL, NAMED_STYLE_BY_CLASS, type ParagraphClass } from './markdown-spec.js';
+import { paragraphStyleUpdate, StyleSyntaxError, type ParagraphCss } from './css.js';
+import { splitWrappedLine } from './paragraph-markup.js';
+import { parseStyleBlock, namedStyleRequests, type StyleRule } from './style-block.js';
 
 // markdown -> Docs block requests (the inverse of transformer.ts's reader, sharing
 // markdown-spec constants). The hard part is sequencing: the Docs API is
@@ -10,11 +13,11 @@ import { HEADING_BY_LEVEL, ALIGN_BY_CSS } from './markdown-spec.js';
 // indices after it). Tier 1: headings, paragraphs, inline, bullet/ordered lists.
 
 export type CellAlign = 'left' | 'center' | 'right';
-export type ParaAlign = 'left' | 'center' | 'right' | 'justify';
 
 type Block =
-  | { type: 'heading'; level: number; text: string }
-  | { type: 'paragraph'; text: string; align?: ParaAlign }
+  | { type: 'heading'; level: number; text: string; css?: ParagraphCss }
+  | { type: 'paragraph'; text: string; css?: ParagraphCss; className?: ParagraphClass }
+  | { type: 'style'; rules: StyleRule[] }
   | { type: 'list'; ordered: boolean; items: { level: number; text: string }[] }
   | { type: 'table'; rows: string[][]; aligns: (CellAlign | null)[] }
   | { type: 'image'; alt: string; src: string; width?: number; height?: number };
@@ -45,10 +48,8 @@ const IMAGE_RE = /^!\[([^\]]*)\]\(([^)]+)\)\s*(?:<!--.*?-->)?\s*$/;
 // for the sizing markdown can't express (DESIGN.md §2). Attributes in any order.
 const IMG_TAG_RE = /^<img\s+[^>]*>$/i;
 const ATTR_RE = /([a-z-]+)\s*=\s*"([^"]*)"/gi;
-// A whole line that is a single aligned paragraph, the exact shape read_doc emits
-// for non-default alignment: <p style="text-align:center|right|justify">…</p>.
-// Parsed back so read->write round-trips (write's counterpart to transformer.ts).
-const ALIGNED_P_RE = /^<p style="text-align:(left|center|right|justify)">(.*)<\/p>$/;
+const STYLE_OPEN_RE = /^<style>/i;
+const STYLE_CLOSE_RE = /<\/style>/i;
 
 const isTableRow = (l: string): boolean => l.trim().startsWith('|');
 // A separator line is only dashes/colons/pipes/spaces, with at least one dash.
@@ -134,9 +135,23 @@ function parseSoftJoinedParagraphAt(lines: string[], from: number): { block: Blo
   return { block: { type: 'paragraph', text: para.join(' ') }, next: i };
 }
 
+function parseStyleBlockAt(lines: string[], from: number, issues: string[]): number {
+  let end = from;
+  while (end < lines.length && !STYLE_CLOSE_RE.test(lines[end])) end++;
+  if (end === lines.length) {
+    issues.push(`line ${from + 1}: <style> is never closed`);
+    return lines.length;
+  }
+  return end + 1;
+}
+
 export function parseBlocks(md: string): Block[] {
   const lines = md.replace(/\r\n/g, '\n').split('\n');
   const blocks: Block[] = [];
+  const issues: string[] = [];
+  const report = (lineIndex: number, found: string[]): void => {
+    for (const issue of found) issues.push(`line ${lineIndex + 1}: ${issue}`);
+  };
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
@@ -148,8 +163,17 @@ export function parseBlocks(md: string): Block[] {
       i = skipHtmlComment(lines, i);
       continue;
     }
+    if (STYLE_OPEN_RE.test(line.trim())) {
+      const next = parseStyleBlockAt(lines, i, issues);
+      const parsed = parseStyleBlock(lines.slice(i, next).join('\n'), i + 1);
+      issues.push(...parsed.issues);
+      blocks.push({ type: 'style', rules: parsed.rules });
+      i = next;
+      continue;
+    }
     const h = HEADING_RE.exec(line);
     if (h) {
+      report(i, inlineStyleIssues(h[2]));
       blocks.push({ type: 'heading', level: h[1].length, text: h[2].trim() });
       i++;
       continue;
@@ -173,16 +197,25 @@ export function parseBlocks(md: string): Block[] {
       i++;
       continue;
     }
-    const ap = ALIGNED_P_RE.exec(line.trim());
-    if (ap) {
-      blocks.push({ type: 'paragraph', text: ap[2].trim(), align: ap[1] as ParaAlign });
+    const wrapped = splitWrappedLine(line);
+    if (wrapped) {
+      report(i, [...wrapped.issues, ...inlineStyleIssues(wrapped.inner)]);
+      const { markup } = wrapped;
+      const css = Object.keys(markup.css).length ? markup.css : undefined;
+      blocks.push(
+        markup.heading
+          ? { type: 'heading', level: markup.heading, text: wrapped.inner, css }
+          : { type: 'paragraph', text: wrapped.inner, css, className: markup.className },
+      );
       i++;
       continue;
     }
     const parsed = LIST_RE.test(line) ? parseListAt(lines, i) : parseSoftJoinedParagraphAt(lines, i);
+    for (let n = i; n < parsed.next; n++) report(n, inlineStyleIssues(lines[n]));
     blocks.push(parsed.block);
     i = parsed.next;
   }
+  if (issues.length) throw new StyleSyntaxError(issues);
   return blocks;
 }
 
@@ -221,6 +254,37 @@ export interface BuiltContent {
   images: ImagePlacement[];
 }
 
+interface ParagraphOp {
+  start: number;
+  end: number;
+  namedStyleType?: string;
+  css: ParagraphCss;
+}
+
+export interface BuildOptions {
+  /** clear the paragraph style the inserted text inherits from where it lands; for a wholesale replace. */
+  resetParagraphStyles?: boolean;
+}
+
+const RESET_PARAGRAPH_FIELDS = [
+  'namedStyleType',
+  'alignment',
+  'lineSpacing',
+  'spaceAbove',
+  'spaceBelow',
+  'indentStart',
+  'indentEnd',
+  'indentFirstLine',
+].join(',');
+
+const clearDirectParagraphStyling = (startIndex: number, length: number, tabId?: string, segmentId?: string): docs_v1.Schema$Request => ({
+  updateParagraphStyle: {
+    range: { startIndex, endIndex: startIndex + length, tabId, segmentId },
+    paragraphStyle: { namedStyleType: 'NORMAL_TEXT' },
+    fields: RESET_PARAGRAPH_FIELDS,
+  },
+});
+
 const clearDirectRunStyling = (startIndex: number, length: number, tabId?: string, segmentId?: string): docs_v1.Schema$Request => ({
   updateTextStyle: {
     range: { startIndex, endIndex: startIndex + length, tabId, segmentId },
@@ -229,10 +293,16 @@ const clearDirectRunStyling = (startIndex: number, length: number, tabId?: strin
   },
 });
 
-export function buildContentRequests(blocks: Block[], startIndex: number, tabId?: string, segmentId?: string): BuiltContent {
+export function buildContentRequests(
+  blocks: Block[],
+  startIndex: number,
+  tabId?: string,
+  segmentId?: string,
+  opts: BuildOptions = {},
+): BuiltContent {
   let text = '';
-  const headingOps: { start: number; end: number; level: number }[] = [];
-  const alignOps: { start: number; end: number; align: ParaAlign }[] = [];
+  const paragraphOps: ParagraphOp[] = [];
+  const styleRules: StyleRule[] = [];
   const inlineOps: InlineOp[] = [];
   const listOps: { start: number; end: number; ordered: boolean }[] = [];
   const tables: TablePlacement[] = [];
@@ -264,11 +334,12 @@ export function buildContentRequests(blocks: Block[], startIndex: number, tabId?
       const lineStart = text.length;
       const plain = addInline(lineStart, block.text);
       text += plain + '\n';
-      if (block.type === 'heading') {
-        headingOps.push({ start: abs(lineStart), end: abs(lineStart + plain.length + 1), level: block.level });
-      } else if (block.align) {
-        alignOps.push({ start: abs(lineStart), end: abs(lineStart + plain.length + 1), align: block.align });
+      const namedStyleType = block.type === 'heading' ? HEADING_BY_LEVEL[block.level] : block.className && NAMED_STYLE_BY_CLASS[block.className];
+      if (namedStyleType || block.css) {
+        paragraphOps.push({ start: abs(lineStart), end: abs(lineStart + plain.length + 1), namedStyleType: namedStyleType || undefined, css: block.css ?? {} });
       }
+    } else if (block.type === 'style') {
+      styleRules.push(...block.rules);
     } else if (block.type === 'table') {
       tables.push({ index: addPlaceholderParagraph(), rows: block.rows, aligns: block.aligns });
     } else if (block.type === 'image') {
@@ -285,25 +356,20 @@ export function buildContentRequests(blocks: Block[], startIndex: number, tabId?
     }
   }
 
-  const requests: docs_v1.Schema$Request[] = [];
+  const requests: docs_v1.Schema$Request[] = namedStyleRequests(styleRules, [], tabId);
   if (!text) return { requests, text, tables, images };
   requests.push({ insertText: { location: { index: startIndex, tabId, segmentId }, text } });
   requests.push(clearDirectRunStyling(startIndex, text.length, tabId, segmentId));
-  for (const h of headingOps) {
+  if (opts.resetParagraphStyles) requests.push(clearDirectParagraphStyling(startIndex, text.length, tabId, segmentId));
+  for (const op of paragraphOps) {
+    const update = paragraphStyleUpdate(op.css);
+    const fields = [...(op.namedStyleType ? ['namedStyleType'] : []), ...update.fields];
+    if (!fields.length) continue;
     requests.push({
       updateParagraphStyle: {
-        range: { startIndex: h.start, endIndex: h.end, tabId, segmentId },
-        paragraphStyle: { namedStyleType: HEADING_BY_LEVEL[h.level] },
-        fields: 'namedStyleType',
-      },
-    });
-  }
-  for (const a of alignOps) {
-    requests.push({
-      updateParagraphStyle: {
-        range: { startIndex: a.start, endIndex: a.end, tabId, segmentId },
-        paragraphStyle: { alignment: ALIGN_BY_CSS[a.align] },
-        fields: 'alignment',
+        range: { startIndex: op.start, endIndex: op.end, tabId, segmentId },
+        paragraphStyle: { ...update.style, ...(op.namedStyleType ? { namedStyleType: op.namedStyleType } : {}) },
+        fields: fields.join(','),
       },
     });
   }
@@ -322,6 +388,6 @@ export function buildContentRequests(blocks: Block[], startIndex: number, tabId?
   return { requests, text, tables, images };
 }
 
-export function markdownToRequests(markdown: string, startIndex: number, tabId?: string, segmentId?: string): BuiltContent {
-  return buildContentRequests(parseBlocks(markdown), startIndex, tabId, segmentId);
+export function markdownToRequests(markdown: string, startIndex: number, tabId?: string, segmentId?: string, opts: BuildOptions = {}): BuiltContent {
+  return buildContentRequests(parseBlocks(markdown), startIndex, tabId, segmentId, opts);
 }

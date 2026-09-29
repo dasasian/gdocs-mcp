@@ -16,12 +16,12 @@ describe('parseBlocks', () => {
     ]);
   });
 
-  it('parses read_doc aligned paragraphs (<p style="text-align:…">) back to align', () => {
+  it('parses read_doc aligned paragraphs (<p style="text-align:…">) back to a paragraph style', () => {
     expect(parseBlocks('<p style="text-align:center">Landlord</p>')).toEqual([
-      { type: 'paragraph', text: 'Landlord', align: 'center' },
+      { type: 'paragraph', text: 'Landlord', css: { align: 'center' } },
     ]);
     expect(parseBlocks('<p style="text-align:right">x</p>')).toEqual([
-      { type: 'paragraph', text: 'x', align: 'right' },
+      { type: 'paragraph', text: 'x', css: { align: 'right' } },
     ]);
   });
 
