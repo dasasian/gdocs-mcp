@@ -3,6 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createServer } from './server.js';
 import { addAccount } from './auth/oauth.js';
 import { listAccounts } from './auth/accounts.js';
+import { describeDefaultFolder } from './drive/default-folder.js';
 
 async function main(): Promise<void> {
   const cmd = process.argv[2];
@@ -20,7 +21,7 @@ async function main(): Promise<void> {
   }
 
   // Default: run the MCP server over stdio.
-  const server = createServer();
+  const server = createServer({ defaultFolderPath: await describeDefaultFolder() });
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

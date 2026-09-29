@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import type { GoogleClients } from '../src/google/clients.js';
-import { resolveTab, resolveDocument } from '../src/drive/paths.js';
+import { resolveTab, resolveDocument, folderPathOf } from '../src/drive/paths.js';
 
 const FOLDER = 'application/vnd.google-apps.folder';
 const DOC = 'application/vnd.google-apps.document';
@@ -43,6 +43,21 @@ function clientsWith(tabsByDoc: Record<string, FakeTab[]>): GoogleClients {
     drive: { files: { list, get }, drives: { list: vi.fn() } } as unknown as GoogleClients['drive'],
   };
 }
+
+describe('folderPathOf (#55)', () => {
+  it('names the path that reaches a folder, from an id or a URL', async () => {
+    const clients = clientsWith({});
+    expect(await folderPathOf(clients, 'work')).toBe('/Work');
+    expect(await folderPathOf(clients, 'https://drive.google.com/drive/folders/work?usp=sharing')).toBe('/Work');
+    expect(await folderPathOf(clients, 'ROOT')).toBe('/');
+  });
+
+  it('is undefined for a doc, and for an id Drive does not know', async () => {
+    const clients = clientsWith({});
+    expect(await folderPathOf(clients, 'memo')).toBeUndefined();
+    expect(await folderPathOf(clients, 'nope')).toBeUndefined();
+  });
+});
 
 const CONTRACT = {
   contract: [
@@ -109,7 +124,7 @@ describe('resolveDocument (#55)', () => {
 });
 
 const SRC = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'server.ts'), 'utf8');
-const toolBlocks = SRC.split('  server.registerTool(\n').slice(1).map((block) => ({ name: /'([a-z_]+)'/.exec(block)![1], block }));
+const toolBlocks = SRC.split(/  (?:const \w+ = )?server\.registerTool\(\n/).slice(1).map((block) => ({ name: /'([a-z_]+)'/.exec(block)![1], block }));
 
 describe('every doc tool takes one path (#55)', () => {
   const docTools = [

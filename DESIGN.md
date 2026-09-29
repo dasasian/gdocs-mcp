@@ -226,7 +226,23 @@ rather than picks:
 `drive ls <doc>` lists its tabs; `drive mv` renames, reorders and nests them
 (`updateDocumentTabProperties`). A new tab is made by `write_doc` to a path whose
 last step names nothing yet, exactly as a new doc is — there is no `touch` and no
-tab `mkdir`. `segment` (header/footer) stays a parameter, not a path step: a
+tab `mkdir`. A path that creates is always absolute (`/`, `~`, a URL or a Drive id start); there
+is no working directory to resolve a bare name against, so a bare name is never
+created. `write_doc("Meeting notes", …)` is refused, and the refusal opens with
+where the doc will go, so the user hears it before anything exists: with a
+project default folder (`set_project_default`), "Not created: no folder was
+given. Tell the user it will go in the default folder /Work/Clients, then call
+write_doc("/Work/Clients/Meeting notes", …)"; with none, "Not created: no
+folder was given. Name a folder, e.g. ~/Meeting notes." A bare string that
+Drive knows as an id keeps its meaning (it names that doc). The default folder
+is resolved to a path when the server starts and written into `write_doc`'s
+description, since the config is known then (the server's working directory is
+the project); the refusal reads the config fresh, so it stays right after a
+`set_project_default` mid-session while the description waits for a restart. A
+folder no path reaches (an orphan, shared only with you) is named by its id,
+which starts a path too.
+
+`segment` (header/footer) stays a parameter, not a path step: a
 header is part of a tab, not a child of it, and a path step would collide with a
 tab titled "Footer".
 
@@ -325,7 +341,7 @@ string is the counts **and the doc's revision id**. The counts alone are not
 enough: an edit that changes words but no count would still match, so the
 revision is in the string, and the counts stay in it because a comment added
 in Drive changes no revision. Either changing makes the second call refuse
-again with a fresh summary. Only the last step of the path may be new; a path
+again with a fresh summary. Creating asks nothing, but only an absolute path creates (§3d). Only the last step of the path may be new; a path
 two levels short is refused, since there is no `mkdir -p` for tabs. A path with
 one tab means that tab, so replacing a one-tab doc asks like any other.
 

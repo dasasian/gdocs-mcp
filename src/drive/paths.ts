@@ -1,9 +1,10 @@
 import type { GoogleClients } from '../google/clients.js';
 import { TAB_TREE_FIELDS } from '../docs/structure.js';
-import type { docs_v1 } from 'googleapis';
+import type { docs_v1, drive_v3 } from 'googleapis';
 
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 const DOC_MIME = 'application/vnd.google-apps.document';
+const MAX_FOLDER_DEPTH = 32;
 
 export const SHARED_ROOT = '/shared';
 export const SHARED_WITH_ME = '/shared-with-me';
@@ -45,10 +46,14 @@ export interface PathCandidate {
   path?: string;
 }
 
-/** `missing` is set only when every step but the last resolved: the parent to create the last step under. */
+/**
+ * `missing` is set only when every step but the last resolved: the parent to
+ * create the last step under. `notAnId` is set when the input was not a path and
+ * Drive has no file with its first step as an id.
+ */
 export type Resolution =
   | { ok: true; entry: Resolved }
-  | { ok: false; status: 'not_found'; message: string; missing?: { parent: Resolved; name: string } }
+  | { ok: false; status: 'not_found'; message: string; missing?: { parent: Resolved; name: string }; notAnId?: true }
   | { ok: false; status: 'ambiguous'; message: string; candidates: PathCandidate[] };
 
 /** A path starts with / or ~; anything else is a Drive id or URL, which is what every other tool returns. */
@@ -296,7 +301,7 @@ export async function resolveEntry(clients: GoogleClients, input: string): Promi
   try {
     meta = (await clients.drive.files.get({ fileId: id, fields: 'id,name,mimeType', supportsAllDrives: true })).data;
   } catch {
-    return { ok: false, status: 'not_found', message: `No Drive file with id "${id}". A path must start with / or ~; anything else is read as an id.` };
+    return { ok: false, status: 'not_found', notAnId: true, message: `No Drive file with id "${id}". A path must start with / or ~; anything else is read as an id.` };
   }
   const entry: Resolved = {
     id,
@@ -345,4 +350,32 @@ export async function resolveDocument(clients: GoogleClients, input: string): Pr
   if (entry.tab) return { documentId: entry.tab.documentId, title: entry.tab.documentTitle, tab: entry.tab };
   if (!entry.isDoc) throw new Error(`"${input}" is ${entry.isFolder ? 'a folder' : 'not a Google Doc'}. Name a doc.`);
   return { documentId: entry.id, title: entry.name };
+}
+
+/** The path that reaches a folder given by id or URL, or undefined when no path does (an orphan, or a folder only shared with you). */
+export async function folderPathOf(clients: GoogleClients, folder: string): Promise<string | undefined> {
+  const rootId = await myDriveRootId(clients);
+  const names: string[] = [];
+  let id = parseDriveId(folder);
+  for (let hop = 0; hop < MAX_FOLDER_DEPTH; hop++) {
+    if (id === rootId) return `/${names.reverse().join('/')}`;
+    let meta: drive_v3.Schema$File;
+    try {
+      meta = (await clients.drive.files.get({ fileId: id, fields: 'name,mimeType,parents,driveId', supportsAllDrives: true })).data;
+    } catch {
+      return undefined;
+    }
+    if (hop === 0 && meta.mimeType !== FOLDER_MIME) return undefined;
+    names.push(meta.name ?? '');
+    const parent = meta.parents?.[0];
+    if (parent) {
+      id = parent;
+    } else if (meta.driveId === id) {
+      const driveName = names.pop() ?? '';
+      return `${SHARED_ROOT}/${driveName}${names.length ? `/${names.reverse().join('/')}` : ''}`;
+    } else {
+      return undefined;
+    }
+  }
+  return undefined;
 }

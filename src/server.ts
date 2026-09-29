@@ -50,7 +50,11 @@ const segmentArg = {
     .describe('which header/footer, when a doc defines more than one (default-page, first-page, even-page). Omit to use whichever exists.'),
 };
 
-export function createServer(): McpServer {
+export interface ServerOptions {
+  defaultFolderPath?: string;
+}
+
+export function createServer(options: ServerOptions = {}): McpServer {
   const server = new McpServer({ name: 'gdocs-mcp', version: '0.6.0' });
 
   server.registerTool(
@@ -68,10 +72,10 @@ export function createServer(): McpServer {
     {
       title: 'Set this project’s default account/folder',
       description:
-        'Write this project’s defaults to a .gdocs-mcp.json in the current working directory (or update an existing one up the tree). Set a default account and/or a default folder (URL or id) for new docs. To set a folder by name, find it first with drive({ cmd: \'find\' }) and pass its id.',
+        'Write this project’s defaults to a .gdocs-mcp.json in the current working directory (or update an existing one up the tree). Set a default account and/or a default folder (URL or id). The folder is where write_doc is told new docs go when it is given a bare name instead of a path: it refuses, names the folder, and gives the full path to call. It is read when the server starts, so write_doc\u2019s description shows a change after a restart; the refusal reads it fresh. To set a folder by name, find it first with drive({ cmd: \'find\' }) and pass its id.',
       inputSchema: {
         account: z.string().optional().describe('default Google account email (must be authorized)'),
-        folder: z.string().optional().describe('default Drive folder (URL or id) for new docs'),
+        folder: z.string().optional().describe('default Drive folder (URL or id): where write_doc says a bare-named new doc will go'),
       },
     },
     async ({ account, folder }) => {
@@ -425,12 +429,12 @@ export function createServer(): McpServer {
 
 
 
-  server.registerTool(
+  const writeDocTool = server.registerTool(
     'write_doc',
     {
       title: 'Write a doc or a tab',
       description:
-        'Write markdown-rendered content to a path, like the local Write tool. A path that names nothing is CREATED and never asks: /Work/Contract creates a doc in the folder /Work, /Work/Contract/Notes a tab in that doc, /Work/Contract/Part 2/Ch.4 a child tab under Part 2 (only the last step may be new; make the folder with drive mkdir first). A path that names something is REPLACED, and the first call is refused with a loss summary — the paragraphs of text and everything a read cannot carry that the replace would take with it: comments, suggestions, tab stops, person/date/link chips, links to bookmarks — plus a confirmLoss string. Ask the user before anything else — show them what would be lost and wait for a yes; never pass confirmLoss on your own. Only after their yes, call again with the same content and confirmLoss set to that string exactly. If the doc changed in between, the string no longer matches and the call is refused again with a fresh summary. A doc with several tabs needs a tab step (the refusal lists them); a doc with one tab means that tab. Replacing keeps the doc’s title, sharing and other tabs but the new paragraphs start unstyled, so anything not in the markdown (including indents) is gone; prefer edit_doc to change a document, which keeps everything its anchor does not cover. Style is CSS, in the spelling read_doc emits: a leading <style> block sets the named styles (p, h1–h6, .title, .subtitle), <p style="…"> / <hN style="…"> / <p class="title"> style a paragraph, <span style="…"> a run. Supported: text-align, line-height, margin-top/bottom/left/right, text-indent (pt; text-indent is relative to margin-left), and on spans/rules font-family, font-size, font-weight, font-style, text-decoration, color. Any other property fails the whole write before anything is sent, listing every offending line. For long documents, pass contentFile instead of content so the server reads the body directly (retyping a long doc inline can silently drop text). Returns images ({src, objectId}) for pushed images. A direct edit, not a tracked suggestion.',
+        'Write markdown-rendered content to a path, like the local Write tool. A path that names nothing is CREATED and never asks, but only an absolute path (or a Drive id or URL start) creates — a bare name like Contract is refused with the full path to call, so the user is told where it goes first: /Work/Contract creates a doc in the folder /Work, /Work/Contract/Notes a tab in that doc, /Work/Contract/Part 2/Ch.4 a child tab under Part 2 (only the last step may be new; make the folder with drive mkdir first). A path that names something is REPLACED, and the first call is refused with a loss summary — the paragraphs of text and everything a read cannot carry that the replace would take with it: comments, suggestions, tab stops, person/date/link chips, links to bookmarks — plus a confirmLoss string. Ask the user before anything else — show them what would be lost and wait for a yes; never pass confirmLoss on your own. Only after their yes, call again with the same content and confirmLoss set to that string exactly. If the doc changed in between, the string no longer matches and the call is refused again with a fresh summary. A doc with several tabs needs a tab step (the refusal lists them); a doc with one tab means that tab. Replacing keeps the doc’s title, sharing and other tabs but the new paragraphs start unstyled, so anything not in the markdown (including indents) is gone; prefer edit_doc to change a document, which keeps everything its anchor does not cover. Style is CSS, in the spelling read_doc emits: a leading <style> block sets the named styles (p, h1–h6, .title, .subtitle), <p style="…"> / <hN style="…"> / <p class="title"> style a paragraph, <span style="…"> a run. Supported: text-align, line-height, margin-top/bottom/left/right, text-indent (pt; text-indent is relative to margin-left), and on spans/rules font-family, font-size, font-weight, font-style, text-decoration, color. Any other property fails the whole write before anything is sent, listing every offending line. For long documents, pass contentFile instead of content so the server reads the body directly (retyping a long doc inline can silently drop text). Returns images ({src, objectId}) for pushed images. A direct edit, not a tracked suggestion.',
       inputSchema: {
         path: writePathArg,
         content: z.string().optional().describe('markdown content (or use contentFile)'),
@@ -452,9 +456,13 @@ export function createServer(): McpServer {
       const clients = await clientsForAccount(account);
       const src = await resolveContentSource({ content, contentFile, baseDir });
       if (src.content === undefined) throw new Error('Provide content or contentFile.');
-      return json(await writeDoc(clients, path, src.content, { confirmLoss, baseDir: src.baseDir }));
+      return json(await writeDoc(clients, path, src.content, { confirmLoss, baseDir: src.baseDir, defaultFolder: findProjectConfig().folder }));
     },
   );
+
+  if (options.defaultFolderPath) {
+    writeDocTool.update({ description: `${writeDocTool.description} This project's default folder for new docs is ${options.defaultFolderPath}.` });
+  }
 
   const cellArg = { cell: z.string().describe('text identifying a cell in the target table') };
 

@@ -80,6 +80,7 @@ interface World {
 function worldClients(world: World): GoogleClients {
   const files = [
     { id: 'work', name: 'Work', mimeType: FOLDER, parents: ['ROOT'] },
+    { id: 'clients', name: 'Clients', mimeType: FOLDER, parents: ['work'] },
     { id: 'memo', name: 'Memo', mimeType: DOC, parents: ['work'] },
     { id: 'contract', name: 'Contract', mimeType: DOC, parents: ['work'] },
   ];
@@ -241,5 +242,56 @@ describe('write_doc replaces only when the loss summary is passed back (#55)', (
     expect((error as Error).message).toContain('/Work/Contract/Summary');
     expect((error as Error).message).toContain('/Work/Contract/Part 2/Ch.4');
     expect(world.requests).toEqual([]);
+  });
+});
+
+describe('write_doc does not create from a bare name (#55)', () => {
+  it('with a project default folder: refuses, says where it will go, and gives the full path to call', async () => {
+    const world = newWorld();
+    const r = await writeDoc(worldClients(world), 'Meeting notes', 'Agenda TBD', { defaultFolder: 'clients' });
+    expect(r.status).toBe('not_created');
+    if (r.status !== 'not_created') return;
+    expect(r.message.startsWith('Not created: no folder was given. Tell the user it will go in the default folder /Work/Clients')).toBe(true);
+    expect(r.message).toContain('write_doc("/Work/Clients/Meeting notes", …)');
+    expect(r.suggestedPath).toBe('/Work/Clients/Meeting notes');
+    expect(world.created).toEqual([]);
+    expect(world.requests).toEqual([]);
+  });
+
+  it('without a default: refuses and shows how to name a folder', async () => {
+    const world = newWorld();
+    const r = await writeDoc(worldClients(world), 'Meeting notes', 'Agenda TBD');
+    expect(r).toMatchObject({ status: 'not_created', message: 'Not created: no folder was given. Name a folder, e.g. ~/Meeting notes.' });
+    expect(world.created).toEqual([]);
+  });
+
+  it('the suggested path, called, creates the doc in the default folder', async () => {
+    const world = newWorld();
+    const clients = worldClients(world);
+    const refused = await writeDoc(clients, 'Meeting notes', 'Agenda TBD', { defaultFolder: 'clients' });
+    if (refused.status !== 'not_created') throw new Error('expected a refusal');
+    const created = await writeDoc(clients, refused.suggestedPath!, 'Agenda TBD', { defaultFolder: 'clients' });
+    expect(created).toMatchObject({ status: 'created', kind: 'doc', path: '/Work/Clients/Meeting notes' });
+    expect(world.created).toEqual([{ name: 'Meeting notes', mimeType: DOC, parents: ['clients'] }]);
+  });
+
+  it('a default folder that no path reaches is named by its id, which starts a path too', async () => {
+    const world = newWorld();
+    const r = await writeDoc(worldClients(world), 'Meeting notes', 'x', { defaultFolder: 'nowhere' });
+    expect(r).toMatchObject({ status: 'not_created', suggestedPath: 'nowhere/Meeting notes' });
+  });
+
+  it('a bare string that is a Drive id keeps its meaning: it names that doc', async () => {
+    const world = newWorld();
+    const r = await writeDoc(worldClients(world), 'memo', 'new', { defaultFolder: 'clients' });
+    expect(r.status).toBe('confirm_required');
+  });
+
+  it('absolute paths and ~ paths are unaffected by a default folder', async () => {
+    const world = newWorld();
+    const clients = worldClients(world);
+    await writeDoc(clients, '/Work/Brief', 'x', { defaultFolder: 'clients' });
+    await writeDoc(clients, '~/Loose', 'x', { defaultFolder: 'clients' });
+    expect(world.created.map((c) => [c.name, c.parents])).toEqual([['Brief', ['work']], ['Loose', ['ROOT']]]);
   });
 });

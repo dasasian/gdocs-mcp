@@ -17,7 +17,7 @@ const SRC = readFileSync(
   'utf8',
 );
 
-const toolNames = new Set([...SRC.matchAll(/\n {2}server\.registerTool\(\n\s*'([a-z_]+)'/g)].map((m) => m[1]));
+const toolNames = new Set([...SRC.matchAll(/\n {2}(?:const \w+ = )?server\.registerTool\(\n\s*'([a-z_]+)'/g)].map((m) => m[1]));
 const descriptions = [...SRC.matchAll(/'([a-z_]+)',\n\s*\{\n\s*title:[^\n]*\n\s*description:\s*\n?\s*'(.*?)',\n\s*inputSchema/gs)].map(
   ([, tool, text]) => ({ tool, text }),
 );

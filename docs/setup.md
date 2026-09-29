@@ -89,7 +89,8 @@ The server is a long-running process, but it reads your **data** (tokens, `.gdoc
 
 | Change | Restart the MCP client? |
 |---|---|
-| Default account or folder (`set_project_default`, or editing `.gdocs-mcp.json`) | No — next tool call uses it |
+| Default account (`set_project_default`, or editing `.gdocs-mcp.json`) | No — next tool call uses it |
+| Default folder (same) | Mostly no — `write_doc`'s refusal of a bare name reads it at once; the folder shown in `write_doc`'s description is read at server start, so it updates after a restart |
 | Newly authorized account (`gdocs-mcp add-account`) | No — the token store is read live |
 | Upgrading the server (`npm update -g @dasasian/gdocs-mcp`) | **Yes** |
 | From source: `git pull` → `npm run build` | **Yes** (and rebuild — the server runs `dist/`, not the source) |

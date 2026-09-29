@@ -6,7 +6,7 @@ import { getDocInline } from './suggestions.js';
 import { readFile } from 'node:fs/promises';
 import nodePath from 'node:path';
 import { markdownToRequests, parseBlocks } from './write.js';
-import { resolveEntry, tabOfEntry, refusal, type Resolved, type TabRef } from '../drive/paths.js';
+import { resolveEntry, tabOfEntry, refusal, folderPathOf, parseDriveId, type Resolved, type TabRef } from '../drive/paths.js';
 import { measureLoss, confirmLossToken, lossSummary, lossDetails, countComments, type Loss } from './loss.js';
 import { uploadImageForInsert, resolveImageSource } from '../drive/images.js';
 import { resolveIndex, fillCellRequests, columnAlignRequests } from './objects.js';
@@ -212,7 +212,8 @@ export async function updateTab(
 export type WriteDocResult =
   | { status: 'created'; kind: 'doc' | 'tab'; path: string; documentId: string; tabId?: string; url: string; warnings?: string[]; images?: { src: string; objectId: string }[] }
   | { status: 'replaced'; path: string; documentId: string; tabId: string; warnings?: string[]; images?: { src: string; objectId: string }[] }
-  | { status: 'confirm_required'; message: string; lost: Loss; details: string[]; confirmLoss: string };
+  | { status: 'confirm_required'; message: string; lost: Loss; details: string[]; confirmLoss: string }
+  | { status: 'not_created'; message: string; suggestedPath?: string };
 
 function childPath(parent: Resolved, name: string): string {
   return `${parent.path === '/' ? '' : parent.path}/${name}`;
@@ -279,18 +280,31 @@ async function replaceTab(
   return { status: 'replaced', path: tab.path, documentId: tab.documentId, tabId: tab.tabId, ...(warnings.length ? { warnings } : {}), ...(images.length ? { images } : {}) };
 }
 
+async function refuseBareName(clients: GoogleClients, name: string, defaultFolder: string | undefined): Promise<WriteDocResult> {
+  if (!defaultFolder) return { status: 'not_created', message: `Not created: no folder was given. Name a folder, e.g. ~/${name}.` };
+  const folder = (await folderPathOf(clients, defaultFolder)) ?? parseDriveId(defaultFolder);
+  const suggestedPath = `${folder === '/' ? '' : folder}/${name}`;
+  return {
+    status: 'not_created',
+    suggestedPath,
+    message: `Not created: no folder was given. Tell the user it will go in the default folder ${folder}, then call write_doc(${JSON.stringify(suggestedPath)}, …) with the same content.`,
+  };
+}
+
 /**
  * Write like the local Write tool: a path that names nothing is created (a doc in
  * a folder, a tab in a doc, a child tab under a tab) and never asks; a path that
  * names something is refused with a loss summary until the caller passes it back
- * as `confirmLoss`. Throws for a path that is ambiguous, a folder, or a multi-tab
- * doc with no tab step.
+ * as `confirmLoss`. A bare name (not a path, URL or Drive id) is never created: it
+ * is refused with the path to call, built from `defaultFolder` (an id or URL) when
+ * there is one. Throws for a path that is ambiguous, a folder, or a multi-tab doc
+ * with no tab step.
  */
 export async function writeDoc(
   clients: GoogleClients,
   path: string,
   content: string,
-  opts: { confirmLoss?: string; baseDir?: string } = {},
+  opts: { confirmLoss?: string; baseDir?: string; defaultFolder?: string } = {},
 ): Promise<WriteDocResult> {
   parseBlocks(content);
   const resolution = await resolveEntry(clients, path);
@@ -298,5 +312,6 @@ export async function writeDoc(
   if (resolution.status === 'not_found' && resolution.missing) {
     return createAt(clients, resolution.missing.parent, resolution.missing.name, content, opts.baseDir);
   }
+  if (resolution.status === 'not_found' && resolution.notAnId) return refuseBareName(clients, path, opts.defaultFolder);
   throw refusal(resolution);
 }

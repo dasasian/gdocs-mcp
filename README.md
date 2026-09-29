@@ -97,13 +97,13 @@ In a project's `.mcp.json` (Claude Code) or equivalent:
 
 `GDOCS_DEFAULT_ACCOUNT` sets which authorized account this project uses by default — so a work project and a personal project can point at different accounts without re-authorizing. Any tool call can override it with an `account` argument.
 
-Prefer it available in **every** project? Register once at user scope: `claude mcp add gdocs -s user -e GDOCS_DEFAULT_ACCOUNT=you@example.com -- gdocs-mcp`. Then a project can pin its own defaults with a `.gdocs-mcp.json` — the account, and a `folder` that is stored but read by no tool since `write_doc` took a path (#55):
+Prefer it available in **every** project? Register once at user scope: `claude mcp add gdocs -s user -e GDOCS_DEFAULT_ACCOUNT=you@example.com -- gdocs-mcp`. Then a project can pin its own defaults with a `.gdocs-mcp.json` — the account, and a default `folder` for new docs:
 
 ```json
 { "account": "work@company.com", "folder": "https://drive.google.com/drive/folders/…" }
 ```
 
-Name the folder in the path you give `write_doc` (`/Reports/Q3 Report`). See [docs/setup.md](docs/setup.md) for the full resolution order.
+`write_doc` creates only from a path (`/Reports/Q3 Report`). Given a bare name (`Q3 Report`) it creates nothing: it refuses, tells the agent to tell you the doc will go in the default folder, and hands back the full path to call. The default folder's path is also in `write_doc`'s description, read when the server starts. With no default it says to name a folder (`~/Q3 Report`). See [docs/setup.md](docs/setup.md) for the full resolution order.
 
 You don't have to edit that file by hand — just tell the agent *"make damithsc@gmail.com my default account for this project"* or *"make my Manuscripts folder the default here,"* and it writes the `.gdocs-mcp.json` for you via `set_project_default` (searching for the folder by name if needed).
 

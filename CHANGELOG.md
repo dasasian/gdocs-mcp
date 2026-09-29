@@ -17,7 +17,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 | `create_doc(title, content, folder)` | `write_doc(path: '/<folder>/<title>', content)` — a path that names nothing is created; never asks |
 | `overwrite_doc(documentId, content, force, expectTitle, tab)` | `write_doc(path, content)`, then again with the `confirmLoss` string from the refusal. `force` and `expectTitle` are gone: the loss summary is the guard, and it is a fact the caller had to fetch |
 | `add_tab(documentId, title, index, parentTabId)` | `write_doc(path: '/<folder>/<doc>/<title>', content)` creates the tab (child tab: name the parent in the path); `index` and `parentTabId` afterwards with `drive mv` |
-| the `folder` argument of `create_doc`, and the project-default folder | the folder in the path; the `.gdocs-mcp.json` `folder` is still stored but no tool reads it |
+| the `folder` argument of `create_doc`, and the silent use of the project-default folder | the folder in the path; a bare name is refused with the default folder's full path to call |
 | the `tab` param on every doc tool | a tab step in `path`: `/Work/Contract/Ch.4`, `<id>/Ch.4`, or a URL with `?tab=` |
 | the `documentId` param on every doc tool | `path` — an id or URL still works, so `documentId: X` becomes `path: X` |
 | `delete_tab(documentId, tabId, expectTitle)` | none — nothing deletes a tab; delete it in Docs (DESIGN.md §3c) |
@@ -50,6 +50,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **`write_doc` does not create from a bare name; the project default folder says where it would go (#55).** `write_doc("Meeting notes", …)` — not a path, URL or Drive id — creates nothing. It is refused with "Not created: no folder was given. Tell the user it will go in the default folder /Work/Clients, then call write_doc(\"/Work/Clients/Meeting notes\", …)", or, with no default, "Name a folder, e.g. ~/Meeting notes.". The folder set with `set_project_default` (which was left read by nothing after `create_doc` went) is resolved to a path when the server starts and shown in `write_doc`'s description; a change made mid-session shows there after a restart, while the refusal reads it fresh. A bare string that is a Drive id still names that doc.
 - **The `write_doc` refusal leads with the instruction to ask the user (#55).** It opens "Ask the user before doing anything else: nothing has been changed, and the user has not agreed to this yet", then the loss list, then how to confirm. Headless Haiku had confirmed its own loss without asking in 2 of 3 runs, so the text now says the thing that mattered first; it is wording only, not a guard.
 - `overwrite_doc` clears the paragraph style the new text would inherit from the paragraph it lands in; an indent on the old last paragraph no longer leaks into the first new one (#49).
 - Title and Subtitle paragraphs read as `<p class="title">` / `<p class="subtitle">` instead of `# …` (#49).
