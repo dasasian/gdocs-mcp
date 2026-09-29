@@ -30,10 +30,6 @@ interface Pattern {
 
 const SPAN_STYLE_RE = /<span\s+[^>]*style="([^"]*)"/gi;
 
-export function inlineStyleIssues(markup: string): string[] {
-  return [...markup.matchAll(SPAN_STYLE_RE)].flatMap((m) => parseTextCss(m[1]).issues.map((i) => `<span style> ${i}`));
-}
-
 // Backslash escapes (CommonMark): a backslash before ASCII punctuation makes that
 // char literal; before anything else (e.g. \t) the backslash is literal too. We
 // neutralize escapes BEFORE emphasis parsing — position-based interleaving is wrong
@@ -46,6 +42,10 @@ const encodeEscapes = (s: string): string =>
   s.replace(ESCAPE_RE, (_m, c: string) => String.fromCharCode(SENTINEL_LO + c.charCodeAt(0)));
 const decodeEscapes = (s: string): string =>
   s.replace(/[\uE000-\uE0FF]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - SENTINEL_LO));
+
+export function inlineStyleIssues(markup: string): string[] {
+  return [...encodeEscapes(markup).matchAll(SPAN_STYLE_RE)].flatMap((m) => parseTextCss(m[1]).issues.map((i) => `<span style> ${i}`));
+}
 
 // Order matters: links/HTML and double-markers before single-markers.
 const PATTERNS: Pattern[] = [

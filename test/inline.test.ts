@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseInline, segmentTextStyle } from '../src/docs/inline.js';
+import { parseInline, segmentTextStyle, inlineStyleIssues } from '../src/docs/inline.js';
 
 describe('parseInline', () => {
   it('returns one plain segment for plain text', () => {
@@ -147,5 +147,14 @@ describe('parseInline — nested containers (#31)', () => {
     expect(parseInline('*a\\*b*')).toEqual([{ text: 'a*b', italic: true }]);
     expect(parseInline('<u></u>')).toEqual([]);
     expect(parseInline('**unclosed')).toEqual([{ text: '**unclosed' }]);
+  });
+});
+
+describe('inlineStyleIssues', () => {
+  it('flags an unsupported span style', () => {
+    expect(inlineStyleIssues('<span style="border:1px solid">x</span>')).toHaveLength(1);
+  });
+  it('ignores a span tag the writer reads as escaped text (#52)', () => {
+    expect(inlineStyleIssues('\\<span style="border:1px solid">x</span>')).toEqual([]);
   });
 });
