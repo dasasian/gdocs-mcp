@@ -184,8 +184,6 @@ function renderParagraph(
   return inline;
 }
 
-// A table cell's text (plain, single line), pipes escaped. Multi-paragraph cells
-// are joined with a space (narrow scope — plain tables).
 function renderCell(cell: docs_v1.Schema$TableCell, opts: RenderOpts): string {
   const runs = (cell.content ?? []).flatMap((el) => el.paragraph?.elements ?? []).flatMap((pe) => (pe.textRun ? [pe.textRun] : []));
   const inlineWith = (escape: Escaper): string => {
