@@ -57,11 +57,19 @@ const isTableSep = (l: string): boolean => l.includes('-') && /^[\s|:-]+$/.test(
 
 export const unescapePipes = (cell: string): string => cell.replace(/\\\|/g, '|');
 
+const WRAPPED_CELL_RE = /^<p>([\s\S]*)<\/p>$/i;
+
+/** What a table cell holds before pipes are unescaped: trimmed, unless the whole cell is wrapped in `<p>`, which keeps every space and tab. */
+export function cellContent(rawCell: string): string {
+  const trimmed = rawCell.trim();
+  return WRAPPED_CELL_RE.exec(trimmed)?.[1] ?? trimmed;
+}
+
 function splitRow(line: string): string[] {
   let t = line.trim();
   if (t.startsWith('|')) t = t.slice(1);
   if (t.endsWith('|')) t = t.slice(0, -1);
-  return t.split(/(?<!\\)\|/).map((c) => unescapePipes(c.trim()));
+  return t.split(/(?<!\\)\|/).map((c) => unescapePipes(cellContent(c)));
 }
 
 // Per-column alignment from a separator row: :--- left, :---: center, ---: right.

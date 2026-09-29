@@ -4,7 +4,7 @@ import { LEVEL_BY_HEADING, CLASS_BY_NAMED_STYLE, CODE_FONT } from './markdown-sp
 import { declarationsFor, styleAttribute } from './css.js';
 import { paragraphCssOf, effectiveStylesFor } from './style-block.js';
 import { rgbToHex } from './color.js';
-import { literalTextEscaper, needsParagraphTag, type Escaper } from './literal-text.js';
+import { literalTextEscaper, needsParagraphTag, cellNeedsParagraphTag, type Escaper } from './literal-text.js';
 import { unescapePipes } from './write.js';
 
 const ORDERED_GLYPHS = new Set(['DECIMAL', 'ZERO_DECIMAL', 'UPPER_ALPHA', 'ALPHA', 'UPPER_ROMAN', 'ROMAN']);
@@ -190,10 +190,11 @@ function renderCell(cell: docs_v1.Schema$TableCell, opts: RenderOpts): string {
   const runs = (cell.content ?? []).flatMap((el) => el.paragraph?.elements ?? []).flatMap((pe) => (pe.textRun ? [pe.textRun] : []));
   const inlineWith = (escape: Escaper): string => {
     const escapeWithPipes: Escaper = (text) => escape(text).replace(/\|/g, '\\|');
-    return runs.map((run) => renderRun(run, opts, undefined, escapeWithPipes)).join('').replace(/\n/g, ' ').trim();
+    return withoutParagraphMark(runs.map((run) => renderRun(run, opts, undefined, escapeWithPipes)).join('')).replace(/\n/g, ' ');
   };
   const literalText = runs.map((run) => run.content ?? '').join('').replace(/\|/g, '');
-  return inlineWith(literalTextEscaper(literalText, inlineWith, unescapePipes));
+  const inline = inlineWith(literalTextEscaper(literalText, inlineWith, unescapePipes));
+  return cellNeedsParagraphTag(inline) ? `<p>${inline}</p>` : inline;
 }
 
 function cellAlign(cell: docs_v1.Schema$TableCell): 'center' | 'right' | null {

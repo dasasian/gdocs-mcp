@@ -53,7 +53,7 @@ export function splitWrappedLine(line: string): WrappedLine | undefined {
   const m = WRAPPED_LINE_RE.exec(line.trim());
   if (!m) return undefined;
   const { markup, issues } = markupFor(m[1], m[2]);
-  return { markup, issues, inner: m[3].trim() };
+  return { markup, issues, inner: m[3] };
 }
 
 /** A line of an edit_doc string: the closing tag is optional, since an anchor can stop mid-paragraph. */

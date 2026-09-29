@@ -1,5 +1,5 @@
 import { parseInline, inlineStyleIssues } from './inline.js';
-import { parseBlocks } from './write.js';
+import { parseBlocks, cellContent } from './write.js';
 import { StyleSyntaxError } from './css.js';
 
 export type Escaper = (text: string) => string;
@@ -48,11 +48,14 @@ export function literalTextEscaper(
   return escaperFor(kept);
 }
 
+/** True when the writer would read this table cell as anything but exactly these words. */
+export const cellNeedsParagraphTag = (cell: string): boolean => cellContent(cell) !== cell;
+
 /** True when the writer would read this line as anything but one plain paragraph of exactly these words. */
 export function needsParagraphTag(line: string): boolean {
   try {
     const [only, ...more] = parseBlocks(line);
-    return !(more.length === 0 && only?.type === 'paragraph' && !only.css && !only.className && only.text === line.trim());
+    return !(more.length === 0 && only?.type === 'paragraph' && !only.css && !only.className && only.text === line);
   } catch (error) {
     if (error instanceof StyleSyntaxError) return true;
     throw error;

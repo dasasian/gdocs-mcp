@@ -1,9 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import type { GoogleClients } from '../src/google/clients.js';
 import type { docs_v1 } from 'googleapis';
 import { renderMarkdown } from '../src/docs/transformer.js';
 import { markdownToRequests, parseBlocks } from '../src/docs/write.js';
 import { parseInline } from '../src/docs/inline.js';
-import { locate } from '../src/docs/edit.js';
+import { locate, editDoc } from '../src/docs/edit.js';
 
 const paragraphOf = (text: string, style?: docs_v1.Schema$ParagraphStyle): docs_v1.Schema$StructuralElement => ({
   paragraph: { elements: [{ startIndex: 1, textRun: { content: `${text}\n` } }], paragraphStyle: style },
@@ -179,5 +180,120 @@ describe('edit_doc finds literal text however it reads (#52)', () => {
   ])('%s', (_name, old) => {
     const { positions } = locate(docText, old);
     expect(positions).toHaveLength(1);
+  });
+});
+
+describe('edge whitespace on a line (#54)', () => {
+  const EDGE_WHITESPACE: [string, string][] = [
+    ['leading tab', '\tIndented clause'],
+    ['four leading spaces', '    Four spaces'],
+    ['trailing tab', 'Trailing tab\t'],
+    ['trailing spaces', 'Trailing spaces  '],
+    ['leading and trailing tab', '\tBoth\t'],
+    ['only a tab', '\t'],
+  ];
+
+  it.each(EDGE_WHITESPACE)('%s reads as a <p> paragraph', (_name, text) => {
+    expect(renderMarkdown(bodyOf(text))).toBe(`<p>${text}</p>`);
+  });
+
+  it.each(EDGE_WHITESPACE)('%s reads, writes and reads back unchanged', (_name, text) => {
+    const read = renderMarkdown(bodyOf(text));
+    const { text: written, gained } = writtenFrom(read);
+    expect(written).toBe(`${text}\n`);
+    expect(gained).toEqual([]);
+    expect(renderMarkdown(bodyOf(written.slice(0, -1)))).toBe(read);
+  });
+
+  it.each([
+    ['<p>\tWrapped tab</p>', '\tWrapped tab'],
+    ['<p>  spaced  </p>', '  spaced  '],
+    ['<p style="text-align:center">\tCentered\t</p>', '\tCentered\t'],
+    ['<p class="title">\tTitled</p>', '\tTitled'],
+  ])('%s keeps every space and tab', (markdown, text) => {
+    expect(writtenFrom(markdown).text).toBe(`${text}\n`);
+  });
+
+  it.each([
+    ['\tIndented clause', 'Indented clause'],
+    ['    Four spaces', 'Four spaces'],
+    ['Trailing tab\t', 'Trailing tab'],
+  ])('outside <p> %j is still trimmed', (markdown, text) => {
+    expect(writtenFrom(markdown).text).toBe(`${text}\n`);
+  });
+
+  it('keeps a tab in the middle of a line with no mark', () => {
+    expect(renderMarkdown(bodyOf('Name:\tSmith'))).toBe('Name:\tSmith');
+    expect(writtenFrom('Name:\tSmith').text).toBe('Name:\tSmith\n');
+  });
+
+  it('does not wrap ordinary text', () => {
+    expect(renderMarkdown(bodyOf('Plain sentence.'))).toBe('Plain sentence.');
+  });
+
+  it('keeps edge whitespace on a wrapped line inside a list-looking paragraph', () => {
+    expect(writtenFrom('<p>\t4. Term</p>').text).toBe('\t4. Term\n');
+  });
+});
+
+describe('edge whitespace through edit_doc (#54)', () => {
+  const docWith = (text: string): docs_v1.Schema$Document => ({
+    revisionId: 'r1',
+    body: { content: [{ startIndex: 1, endIndex: text.length + 2, ...paragraphOf(text) }] },
+  });
+  const clientsFor = (doc: docs_v1.Schema$Document, batchUpdate: ReturnType<typeof vi.fn>): GoogleClients =>
+    ({
+      auth: {},
+      docs: { documents: { get: vi.fn().mockResolvedValue({ data: doc }), batchUpdate } },
+      drive: {},
+    }) as unknown as GoogleClients;
+  const insertedText = (batchUpdate: ReturnType<typeof vi.fn>): string[] =>
+    batchUpdate.mock.calls.flatMap((c) => c[0].requestBody.requests.flatMap((r: docs_v1.Schema$Request) => (r.insertText ? [r.insertText.text] : [])));
+
+  it('inserts a tab typed inside <p>', async () => {
+    const batchUpdate = vi.fn().mockResolvedValue({});
+    await editDoc(clientsFor(docWith('Clause'), batchUpdate), 'd', 'Clause', '<p>\tIndented clause</p>');
+    expect(insertedText(batchUpdate)).toEqual(['\tIndented clause']);
+  });
+
+  it('reports what an anchor with four spaces finds where the doc has a tab', async () => {
+    const batchUpdate = vi.fn().mockResolvedValue({});
+    const result = await editDoc(clientsFor(docWith('\tIndented clause'), batchUpdate), 'd', '    Indented clause', 'X');
+    console.log('TAB-VS-SPACES', JSON.stringify(result));
+  });
+});
+
+describe('edge whitespace in a table cell (#54)', () => {
+  const tableOf = (cells: string[]): docs_v1.Schema$Document => ({
+    body: {
+      content: [
+        {
+          table: {
+            tableRows: [
+              { tableCells: cells.map(() => ({ content: [paragraphOf('h')] })) },
+              { tableCells: cells.map((text) => ({ content: [paragraphOf(text)] })) },
+            ],
+          },
+        },
+      ],
+    },
+  });
+  const cellsWritten = (markdown: string): string[][] => {
+    const [table] = parseBlocks(markdown);
+    return table.type === 'table' ? table.rows : [];
+  };
+
+  it.each([['\tIndented'], ['Signature:\t'], ['  padded  '], ['<p>x</p>'], ['plain']])('%j reads, writes and reads back unchanged', (text) => {
+    const read = renderMarkdown(tableOf([text]));
+    expect(cellsWritten(read)[1]).toEqual([text]);
+    expect(renderMarkdown(tableOf([cellsWritten(read)[1][0]]))).toBe(read);
+  });
+
+  it('wraps only the cell with edge whitespace', () => {
+    expect(renderMarkdown(tableOf(['a', '\tb']))).toBe('| h | h |\n| --- | --- |\n| a | <p>\tb</p> |');
+  });
+
+  it('trims a cell outside <p>', () => {
+    expect(cellsWritten('| h |\n| --- |\n|   plain \t|')[1]).toEqual(['plain']);
   });
 });
