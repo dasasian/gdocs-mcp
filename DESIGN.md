@@ -89,6 +89,32 @@ in one retry. The bug this replaces (#49): the writer knew one shape,
 visible characters. An agent that inferred `text-indent` from `text-align` — a
 correct inference about CSS — shipped the literal tag into a legal document.
 
+### 2b. Text that looks like markup reads as text
+
+A read, written back unchanged, must give back the same document. That fails
+whenever the document's own text happens to spell markup: a clause typed as
+`4. Term` is a Normal paragraph in Docs, but the same characters in markdown are
+an ordered list, and the next `overwrite_doc` makes it one (#52). The reader
+therefore marks such text as literal, in one of two ways:
+
+- **A line start that would parse as a block** — `4.`, `4)`, `-`, `*`, `+`, `#`,
+  `>`, `- [ ]` — reads as `<p>4. Term…</p>`. The same `<p>` that carries a
+  paragraph's style in §2a, so there is one rule: `<p>` is a plain paragraph.
+  Wrapping beats the CommonMark escape `4\.` because the agent copies what it
+  sees: asked to add clause 5 in the same format, Haiku reproduced `<p>` 10/10
+  and `4\.` 6/15 — the misses wrote a bare `5.`, which is the bug again.
+- **Mid-line text that would parse as inline markup** — `5 * 3 * 2`,
+  `[Name](the Company)`, `~~draft~~`, a literal `<b>` — reads with a CommonMark
+  backslash (`5 \* 3 \* 2`). A single character can't be wrapped, so this is the
+  only form available. Only characters that would actually open markup are
+  escaped: `file_name_here`, a signature line of underscores and `<Client Name>`
+  already round-trip and stay clean. A real backslash before punctuation reads
+  as `\\`.
+
+The writer accepts both forms, and CommonMark escapes anywhere, so an agent that
+writes Google's own export style (`4\. Term`) gets a plain paragraph too. Either
+way the document stores only the text; the next read shows the one canonical form.
+
 ---
 
 ## 3. Tool surface
@@ -197,7 +223,7 @@ Two rules this design enforces:
 
 **Matching rules:**
 - **Match space:** doc projected to plain text; `old_string` matched against it.
-- **Markup-tolerant:** `"# Title"` and `"Title"` both match the heading.
+- **Markup-tolerant:** `"# Title"` and `"Title"` both match the heading. Literal-text markers (§2b) are markup too: `5 * 3`, `5 \* 3` and `<p>4. Term` all find the text they spell.
 - **Whitespace-normalized:** collapse repeated spaces, ignore soft-wraps, trim — robust against invisible-character mismatches.
 - **Cross-run:** matches across formatting boundaries (a bold word mid-sentence does not break the match).
 - **0 matches** → error "not found" (+ nearest-text hint).
