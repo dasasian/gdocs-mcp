@@ -10,7 +10,7 @@ The goal is not broad Workspace automation. It is the specific, unoccupied quadr
 
 ## 1. Core model — the Doc *is* the file
 
-There is no canonical local copy and no continuous sync in the core model. The Google Doc is the source of truth, and the agent interacts with it through the same primitives it uses for local files: read, edit (by unique string), overwrite, search.
+There is no canonical local copy and no continuous sync in the core model. The Google Doc is the source of truth, and the agent interacts with it through the same primitives it uses for local files: read, edit (by unique string), write, search.
 
 (Multi-file ⇄ tabs reconciliation is a separate, later layer — see §10.)
 
@@ -94,7 +94,7 @@ correct inference about CSS — shipped the literal tag into a legal document.
 A read, written back unchanged, must give back the same document. That fails
 whenever the document's own text happens to spell markup: a clause typed as
 `4. Term` is a Normal paragraph in Docs, but the same characters in markdown are
-an ordered list, and the next `overwrite_doc` makes it one (#52). The reader
+an ordered list, and the next `write_doc` makes it one (#52). The reader
 therefore marks such text as literal, in one of two ways:
 
 - **A line start that would parse as a block** — `4.`, `4)`, `-`, `*`, `+`,
@@ -139,29 +139,29 @@ way the document stores only the text; the next read shows the one canonical for
 ## 3. Tool surface
 
 The canonical, always-current list is the table in `README.md`; this is the
-conceptual map. The surface is kept deliberately small (~35 tools) — see
+conceptual map. The surface is kept deliberately small (~25 tools) — see
 `CLAUDE.md` for the add-vs-enhance discipline (merge symmetric verbs; a new tool
 only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 
 | Tool | Role |
 |---|---|
-| `read_doc(doc, tab?, mode, segment?)` | Read as markdown+HTML — a `<style>` block of the named styles, `style="…"` where a paragraph or run differs, images as `<img src="image:…" width height>` (§2, §2a). `mode`: `clean` (default) · `tracked` (`<ins>/<del>`+IDs) · `accepted` · `rejected`. `segment`: `body`/`header`/`footer`/`all` (§3a) |
-| `edit_doc(doc, old_string, new_string, tab?, replace_all?, strict?, segment?)` | String-anchored edit (the workhorse). Also the only style writer: a `style`, a class, or a `<style>` rule (§2a, §4) |
-| `overwrite_doc(doc, content\|contentFile, tab?)` | Wholesale replace — **guarded** (§4) |
-| `insert_content(doc, content\|contentFile, at?, tab?)` | Insert new content at a structural position (`end`/`top`/anchor) — the non-anchored counterpart to `edit_doc` (§4) |
-| `export_doc(doc, dir, format?, filename?)` | Server-side render to pdf/docx/odt/rtf/txt/html/epub/md via Drive `files.export` |
-| `create_doc(content\|contentFile, folder?)` | New doc (`contentFile` reads a long body server-side, no inline retype) |
-| `drive(cmd, args, expectName?, acceptOwnershipTransfer?)` | Drive as a shell: `ls` · `find` · `mkdir` · `cp` · `mv`. `mv` covers rename and move; `cp` is Drive `files.copy` (§3c) |
-| `set_page_setup / get_page_setup(doc, tab?)` | Document page setup: margins, page size, orientation |
-| `insert_image(doc, at, uri, width?, height?, align?, baseDir?, segment?, tab?)` | Images from a URL or a local file (markdown can't size/place them) |
-| `insert_table(doc, rows, cols, data?, align?, segment?, tab?)` · `edit_table(doc, cell, op, side?, segment?)` · `set_table_style / get_table_style(doc, cell, segment?)` | Tables: create (cells take inline markdown), insert/delete row-or-column, style and read style back. `segment` reaches a letterhead table (§3a) |
-| `list_suggestions(doc, tab?, segment?)` | Suggestions as before→after diffs |
-| `apply_suggestions(doc, resolutions[], segment?)` | Resolve one or more suggestions atomically (§6) |
+| `read_doc(path, mode, segment?)` | Read as markdown+HTML — a `<style>` block of the named styles, `style="…"` where a paragraph or run differs, images as `<img src="image:…" width height>` (§2, §2a). `mode`: `clean` (default) · `tracked` (`<ins>/<del>`+IDs) · `accepted` · `rejected`. `segment`: `body`/`header`/`footer`/`all` (§3a) |
+| `edit_doc(path, old_string, new_string, replace_all?, strict?, segment?)` | String-anchored edit (the workhorse). Also the only style writer: a `style`, a class, or a `<style>` rule (§2a, §4) |
+| `write_doc(path, content\|contentFile, confirmLoss?)` | The local `Write`: creates the doc or tab when the path names nothing, replaces it when it names something — **guarded** (§4) |
+| `insert_content(path, content\|contentFile, at?)` | Insert new content at a structural position (`end`/`top`/anchor) — the non-anchored counterpart to `edit_doc` (§4) |
+| `export_doc(path, dir, format?, filename?)` | Server-side render to pdf/docx/odt/rtf/txt/html/epub/md via Drive `files.export` |
+| `set_page_setup / get_page_setup(path)` | Document page setup: margins, page size, orientation |
+| `insert_image(path, at, uri, width?, height?, align?, baseDir?, segment?)` | Images from a URL or a local file (markdown can't size/place them) |
+| `insert_table(path, rows, cols, data?, align?, segment?)` · `edit_table(path, cell, op, side?, segment?)` · `set_table_style / get_table_style(path, cell, segment?)` | Tables: create (cells take inline markdown), insert/delete row-or-column, style and read style back. `segment` reaches a letterhead table (§3a) |
+| `list_suggestions(path, segment?)` | Suggestions as before→after diffs |
+| `apply_suggestions(path, resolutions[], segment?)` | Resolve one or more suggestions atomically (§6) |
 | `list_comments / add_comment(replyTo?) / resolve_comment` | Drive comments (`add_comment` also replies) |
-| `list_tabs / add_tab / rename_tab / delete_tab` | Tab structure |
-| `drive` | Drive as a filesystem — `ls` / `find` / `mkdir` / `cp` / `mv` over paths (`~`, `/shared/<drive>`, `/shared-with-me`, `/lost+found`) or ids. Collapsed from five bespoke tools (#44) |
+| `drive(cmd, args, expectName?, acceptOwnershipTransfer?)` | Drive as a shell: `ls` · `find` · `mkdir` · `cp` · `mv` over paths (`~`, `/shared/<drive>`, `/shared-with-me`, `/lost+found`) or ids, down into a doc's tabs (§3c, §3d). `mv` covers rename and move; `cp` is Drive `files.copy`. Collapsed from five bespoke tools (#44) |
 | `list_permissions / share_doc(email?|link) / unshare_doc(email?|permissionId?, expectRole)` | Sharing (person, group, domain, or anyone-with-link). A grant with no email is addressed by the `permissionId` the read returns; `expectRole` is required because a revocation is recorded nowhere (§4) |
 | `add_account / list_accounts` | Multi-account (§9) |
+
+Nothing deletes a doc, a folder or a tab. The user does that in Drive or Docs;
+the reason is the allowlist argument at the end of §3c.
 
 ### 3c. Drive as a filesystem — borrowing a prior, and where it lies
 
@@ -190,6 +190,7 @@ from does:
 | one name per folder, case-sensitive | duplicates allowed, matching folds case | refuse with candidates listed; `cp`/`mv` also refuse to *create* the state |
 | `cp -r` copies a tree | `files.copy` refuses folders | refuse, and say `-r` cannot help |
 | `mv` keeps you the owner | into a shared drive it transfers ownership, irreversibly | refuse without `acceptOwnershipTransfer` |
+| `mv` can move a file anywhere | a tab cannot leave its doc | refuse, and say to read the tab and `write_doc` it into the other doc |
 
 **Paths are a convenience over the part of Drive that happens to be a tree.** A
 file with no parent is reachable by search and by id but by no path (#46), so
@@ -198,7 +199,34 @@ property to state, not a bug to fix.
 
 No destructive command ships. There was none in the surface to collapse, and host
 permissions are granted per tool *name*: a user who allowlists `drive` so `ls`
-stops prompting would be allowlisting `rm` too. See #47.
+stops prompting would be allowlisting `rm` too. See #47. The same argument keeps
+`write_doc` out of `drive`: a write that replaces is a delete and a write.
+
+### 3d. Paths — one name for a doc or a tab
+
+Every tool that takes a document takes one `path`, and it names a doc or a tab
+the way a file path names a file: an id, a URL, `/Work/Contract`, or
+`/Work/Contract/Ch.4`. There is no separate `tab` parameter. The path is walked
+one step at a time against Drive; the first step that is a Google Doc switches
+the walk from folders to that doc's tabs, and a nested tab is one more step
+(`/Work/Contract/Part 2/Ch.4`). An id or URL can start the path
+(`1wIt…/Ch.4`), and a step can be a tabId instead of a title.
+
+The file prior holds where the path is ambiguous, because the tool refuses
+rather than picks:
+
+| the path | response |
+|---|---|
+| a doc with one tab | that tab — most docs, so most calls never name a tab |
+| a doc with several tabs, no tab step | refused like `cat` on a directory, listing each tab's full path |
+| two tabs (or a folder and a doc) with the same name | refused, listing each candidate with its id |
+
+`drive ls <doc>` lists its tabs; `drive mv` renames, reorders and nests them
+(`updateDocumentTabProperties`). A new tab is made by `write_doc` to a path whose
+last step names nothing yet, exactly as a new doc is — there is no `touch` and no
+tab `mkdir`. `segment` (header/footer) stays a parameter, not a path step: a
+header is part of a tab, not a child of it, and a path step would collide with a
+tab titled "Footer".
 
 ### 3a. Segments — the body is not the whole document
 
@@ -273,7 +301,28 @@ one (`p { font-size: 11pt`), `new_string` the changed rule; the edit becomes one
 `updateNamedStyle` for that named style, and every paragraph that doesn't override
 it follows.
 
-**`overwrite_doc` guard:** wholesale replace orphans comments and wipes suggestions. If the target has comments/suggestions, the tool **warns and requires confirmation** before proceeding. `edit_doc` (surgical, anchor-preserving) is the default for nearly everything. A future "smart replace" (diff new vs current, emit minimal edits) is a later upgrade.
+**`write_doc` — creating is free, replacing is asked for once.** `write_doc`
+mirrors the local `Write`: a path that names nothing is created (a doc in a
+folder, a tab in a doc), and a path that names something is replaced. Replacing
+is refused on the first call, and the refusal is a loss summary: the paragraphs
+of text, and everything a read cannot carry that the replace would take with it
+— comments, suggestions, tab stops (the Docs API cannot write them back),
+smart chips, bookmarks.
+
+```
+write_doc("/Work/Contract", …)
+→ refused: replacing "Contract" removes 42 paragraphs, 2 comments,
+  tab stops on 3 paragraphs ("Signature:", "Date:", "Witness:").
+  confirmLoss: "42 paragraphs, 2 comments, 3 tab stops"
+```
+
+The agent tells the user, the user decides, and a second call carrying
+`confirmLoss` proceeds. It is the local `Write`'s "read the file before you
+overwrite it", enforced: the summary is a fact the caller had to fetch, and a
+doc that changed since no longer matches it. The text is always on the list, so a
+path that matched an existing doc by accident (Drive folds case) is never
+replaced silently. `edit_doc` stays the default for changing a document; it
+touches only what its anchor covers and keeps everything else.
 
 ---
 
@@ -347,7 +396,7 @@ A Doc can change between read and edit (collaborators, a human resolving a sugge
 | Operation | Strategy |
 |---|---|
 | `edit_doc` | optimistic: re-read live + re-match `old_string` at write time (self-heals index shifts); `requiredRevisionId` closes the tiny internal read→write window; on match-loss/ambiguity return current surrounding text + "re-read" |
-| `overwrite_doc`, `accept_all` | **strict**: pin `requiredRevisionId` to last read; fail on any concurrent change |
+| `write_doc` (replace), `accept_all` | **strict**: pin `requiredRevisionId` to last read; fail on any concurrent change |
 | `apply_suggestions` | re-resolve by ID; if gone, report "already resolved" |
 
 > **Validated by spike.** A `batchUpdate` with a stale `requiredRevisionId` is rejected (`"The required revision ID ... does not match the latest revision."`), while the current revision succeeds. Optimistic locking is enforceable as designed.
@@ -382,12 +431,15 @@ Per-project default is just an env var in that project's `.mcp.json`, so a work 
 ## 10. Tabs & multi-file reconciliation
 
 ### 10a. Tab-aware editing (core) — a tab is a file in a folder
-Every tool takes an optional `tab` param (tabId or title). The Doc stays canonical; tabs are sub-files. No source-of-truth conflict.
+A tab is addressed by path (§3d): a doc is the folder, its tabs the files in it.
+The Doc stays canonical; tabs are sub-files. No source-of-truth conflict. Writes
+stamp `tabId` onto ranges and locations; reads use `includeTabsContent`.
 
-> **Implemented + validated.** `read_doc`/`edit_doc`/`list_suggestions`/`apply_suggestions` accept `tab`; writes stamp `tabId` onto ranges/locations. Live test confirmed per-tab read isolation, correct per-tab index space for editing, and no cross-tab bleed. Tab selection resolves by tabId or title.
+Tab structure goes through the same tools as files: `drive ls` lists tabs,
+`drive mv` renames, reorders and nests them (`updateDocumentTabProperties`), and
+`write_doc` to a new path adds one (`addDocumentTab`). Deleting a tab is the
+user's, like deleting a file.
 
-> **Tab CRUD — supported, validated live.** The Docs API `batchUpdate` supports `addDocumentTab` / `updateDocumentTabProperties` (rename) / `deleteTab` (cascades to children), plus `tabId` targeting for content edits and read via `includeTabsContent`/`tabProperties`. `add_tab`/`rename_tab`/`delete_tab`/`list_tabs` are implemented and round-trip-tested against the live API. **This means §10b's "push files → one-tab-per-chapter" assemble CAN create tabs programmatically** — the vision is unblocked.
->
 > **Gotcha — stale generated types.** `googleapis@144`'s TypeScript types lag the live API: `addDocumentTab`/`deleteTab`/`updateDocumentTabProperties` are absent from `Schema$Request` even though the API accepts them. We construct + cast these requests (`src/docs/document.ts`). A type-only grep wrongly concluded the feature was missing — always confirm against the live API, not the bundled types. A future `googleapis` bump should remove the casts.
 
 Internal gotcha: three batchUpdate ops (`ReplaceAllText`, `DeleteNamedRange`, `ReplaceNamedRangeContent`) ignore `tabId` and hit **all** tabs — the edit layer must avoid or scope them so a per-chapter edit can't bleed across tabs. Reads require `includeTabsContent=true` (default silently returns first-tab-only).
@@ -401,12 +453,12 @@ Use case: chapter `.md` files ⇄ one Doc with one tab per chapter, with review 
   Claude Code (orchestration)                 MCP server (primitives)
   • read local chapter .md (filesystem)  ──▶  read_doc · edit_doc
   • decide file↔tab mapping                   list_suggestions · apply_suggestions
-  • reason about / merge differences          add_tab · edit_doc  · comments
-  • go through suggestions, judge each        overwrite_doc(markdown, tab) ← push a chapter
-  • apply the result as edits            ──▶  create_doc(markdown)
+  • reason about / merge differences          drive ls · edit_doc · comments
+  • go through suggestions, judge each        write_doc("<doc>/Ch.3", …) ← push a chapter
+  • apply the result as edits            ──▶  edit_doc
 ```
 
-The only thing the server genuinely owed this use case was a **mechanical** content primitive: rendering a whole chapter of markdown (block structure) into a doc/tab. That's now built (`write.ts`): `create_doc`/`overwrite_doc` render markdown (headings, paragraphs, inline, bullet/ordered lists), and `overwrite_doc` is tab-aware — so "push `chapter-03.md` into the Ch.3 tab" is one call. Everything else (mapping, merging, review) is Claude's job, no server code.
+The only thing the server genuinely owed this use case was a **mechanical** content primitive: rendering a whole chapter of markdown (block structure) into a doc/tab. That's now built (`write.ts`): `write_doc` renders markdown (headings, paragraphs, inline, bullet/ordered lists) into a doc or a tab, creating the tab if it is new — so "push `chapter-03.md` into the Ch.3 tab" is one call. Everything else (mapping, merging, review) is Claude's job, no server code.
 
 **Distinction that drives the boundary:** mechanical/deterministic transforms → server; judgment/decisions → Claude. Merging is judgment → Claude. Markdown↔Docs rendering is mechanical → server.
 
@@ -417,7 +469,7 @@ The only thing the server genuinely owed this use case was a **mechanical** cont
 Images publish one-way cleanly (local `![](file)` → embedded in the Doc, `.md` read-only) but don't round-trip as URLs, and Google **downscales to ≤2048px + re-encodes** on embed — so a pulled image is a lossy copy, not the original, and it can't be checksum-matched or API-tagged with a source marker. Identity/change-tracking must therefore be **recorded**, not inferred.
 
 The server provides the fingerprints; the agent owns the record:
-- `create_doc`/`overwrite_doc` return `images: [{ src, objectId }]` (publish side).
+- `write_doc` returns `images: [{ src, objectId }]` (publish side).
 - `download_images` returns `sha256` per image (doc side).
 - `read_doc` marks image positions as `![](image:<objectId>)`.
 
@@ -489,7 +541,7 @@ Security posture is first-class: token files `0600`, scope justification documen
 
 The three differentiators are unproven *because* nobody has done them:
 1. **Suggestion accept/reject via range-reconstruction** — ✅ **validated** (spike): clean ACCEPT of a replacement (no ghost) *and* multi-suggestion batch resolve with descending-index ordering (no corruption). Remaining cases (reject path, insertion/deletion-only, style) are lower-risk variants of the same proven mechanism.
-2. **markdown + HTML + `<ins>/<del>` round-trip** — ✅ **read validated**; ✅ **style-write validated** (paragraph, text and named styles, §2a); ✅ **inline `new_string` markdown *and* HTML validated** in `edit_doc`; ✅ **block-level markdown→Docs validated** (`write.ts`: headings, paragraphs, inline, bullet/ordered nested lists → `create_doc`/`overwrite_doc`, with a **lossless live round-trip** md→Docs→md). Reader/writer share `markdown-spec` constants + round-trip tests (the "extend in pairs" discipline) instead of a bidirectional spec engine. Open: Tier-2 blocks (tables, images, code blocks) in the renderer.
+2. **markdown + HTML + `<ins>/<del>` round-trip** — ✅ **read validated**; ✅ **style-write validated** (paragraph, text and named styles, §2a); ✅ **inline `new_string` markdown *and* HTML validated** in `edit_doc`; ✅ **block-level markdown→Docs validated** (`write.ts`: headings, paragraphs, inline, bullet/ordered nested lists → `write_doc`, with a **lossless live round-trip** md→Docs→md). Reader/writer share `markdown-spec` constants + round-trip tests (the "extend in pairs" discipline) instead of a bidirectional spec engine. Open: Tier-2 blocks (tables, images, code blocks) in the renderer.
 3. **String-anchored editing over batchUpdate** — ✅ **validated in code**: plain-text projection + index map across runs, exact + markup-tolerant match, ambiguity→context, optimistic revision, delete+insert. Live round-trip edit confirmed. Open: whitespace-normalized matching; new_string formatting.
 
 The canonical-projection requirement (§10b) is the linchpin for AI-merge and a stressor for round-trip fidelity generally.
@@ -502,7 +554,7 @@ The canonical-projection requirement (§10b) is the linchpin for AI-merge and a 
 v1   core: doc-as-file (read/edit/overwrite/format/insert/search)
           + suggestions (list/apply) + comments + tab-aware editing + tab CRUD
           + objects (image/table) + sharing + multi-account
-          + markdown block rendering (create_doc/overwrite_doc)
+          + markdown block rendering (write_doc)
           + gcloud setup script + setup guide                ← onboarding (see below)
 later  Tier-2 block rendering (tables/images/code in the markdown writer)
        (the manuscript "sync" is NOT a server feature — Claude orchestrates it

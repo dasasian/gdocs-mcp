@@ -22,28 +22,31 @@ canonical tool list is the table in `README.md`; known API dead-ends are in
 
 The tool count is a **budget, not a free-for-all** — every tool's schema costs
 context on every call and enlarges the model's selection space, which measurably
-lowers accuracy. We deliberately keep the surface small (~35 tools). Before adding
+lowers accuracy. We deliberately keep the surface small (~25 tools). Before adding
 one, do this review and record the trade-off in the PR/commit:
 
 1. **Default to enhancing an existing tool.** Can this be a new parameter or a
    `target`/`op` variant on a tool that already exists? Prefer that. Examples we
    chose: headers and footers became a `segment` param on every content tool,
-   not a family of their own; file passthrough became `contentFile` on
-   create/overwrite.
+   not a family of their own; a tab became a step in the document `path`, not
+   a `tab` param or a family of tab tools (DESIGN.md §3d).
 2. **Merge symmetric verbs.** CRUD verbs that share a target and param shape
-   should be one parametric tool: `edit_table({op, side})`, `update_doc({name?,
-   folder?})`, `add_comment({replyTo?})`, `share_doc` (person vs. link),
-   `apply_suggestions` (1+ ids).
+   should be one parametric tool: `edit_table({op, side})`, `write_doc`
+   (create when the path names nothing, replace when it names something),
+   `drive mv` (rename and move, for files and tabs), `add_comment({replyTo?})`,
+   `share_doc` (person vs. link), `apply_suggestions` (1+ ids).
 3. **A new tool is justified only when the vocabulary or return shape genuinely
    differs.** `set_page_setup` earns its place because page geometry (margins/
    size/orientation via `updateDocumentStyle`) shares nothing with text styling.
    Same test gates `get_page_setup` as its read counterpart.
-4. **Keep destructive / create-destroy verbs as distinct, named tools.** Do NOT
-   hide `delete_*` / `unshare_doc` / `overwrite_doc` behind a generic `op` enum —
-   their confirmation guards (`expectTitle`, `expectQuote`, `force`) must stay
-   legible at the call site.
+4. **Keep destructive verbs as distinct, named tools.** Do NOT hide
+   `unshare_doc` or a replacing `write_doc` behind a generic `op` enum or inside
+   `drive` — their confirmation guards (`confirmLoss`, `expectQuote`,
+   `expectRole`) must stay legible at the call site, and a user who allowlists a
+   safe tool must not be allowlisting a destructive one with it (#47). No tool
+   deletes a doc, folder or tab.
    **A guard must be a fact the caller had to fetch, not one they supplied.**
-   `expectTitle` comes from a read, `expectQuote` from `list_comments`,
+   `confirmLoss` comes from `write_doc`'s own refusal, `expectQuote` from `list_comments`,
    `expectedChange`/`documentTitle` from `list_suggestions`, `expectRole` from
    `list_permissions` — echoing one back proves the caller looked, and that the
    thing hasn't changed since. A guard over something they typed proves nothing:
