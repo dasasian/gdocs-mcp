@@ -6,7 +6,7 @@ import { listSuggestions, applySuggestions } from './docs/suggestions.js';
 import { listComments, addComment, replyComment, resolveComment } from './drive/comments.js';
 import { readDoc } from './docs/read.js';
 import { editDoc } from './docs/edit.js';
-import { createDoc, insertContent, overwriteDoc, listTabs, addTab, renameTab, deleteTab, resolveContentSource } from './docs/document.js';
+import { createDoc, insertContent, overwriteDoc, resolveContentSource } from './docs/document.js';
 import { setPageSetup, getPageSetup } from './docs/page.js';
 import { insertImage, insertTable, insertRow, deleteRow, insertColumn, deleteColumn, setTableStyle, getTableStyle } from './docs/objects.js';
 import { listPermissions, shareDoc, unshareDoc, setLinkAccess } from './drive/sharing.js';
@@ -596,7 +596,9 @@ export function createServer(): McpServer {
         'Paths start with / or ~ (My Drive); /shared/<drive name> is a shared drive, /shared-with-me the files others shared with you, and /lost+found the files you own that are in no folder at all. ' +
         'Anything not starting with / or ~ is read as a Drive id or URL, so ids from any other tool can be pasted straight in. ' +
         'Drive permits two files with the same name in one folder and folds case when matching, unlike any real filesystem — a path that matches more than one thing is refused with the candidates listed, never guessed. ' +
-        'Content is edited with edit_doc/overwrite_doc, not here; there is no rm.',
+        'A doc is a folder of tabs: ls <doc> lists its tabs, ls <folder> shows each doc with its tab count, and a path continues into tabs (/Work/Contract/Part 2/Ch.4; a tab step may also be a tabId). ' +
+        'mv on a tab renames it, nests it (dst is another tab, or a new name under one) or un-nests it (dst is the doc), and `index` reorders it; a tab cannot leave its doc, and cp of a tab is refused. ' +
+        'Content is edited with edit_doc/overwrite_doc, not here; there is no rm, and nothing here deletes a tab.',
       inputSchema: {
         cmd: z.enum(['ls', 'find', 'mkdir', 'cp', 'mv']),
         args: z
@@ -607,6 +609,12 @@ export function createServer(): McpServer {
           .string()
           .optional()
           .describe('mv only: the name the source is expected to have; the move is refused if it resolved to something else'),
+        index: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe('mv of a tab only: its position among its new siblings, 0 first. Without it a tab keeps its place, or goes first when nested.'),
         acceptOwnershipTransfer: z
           .boolean()
           .optional()
@@ -614,9 +622,9 @@ export function createServer(): McpServer {
         ...accountArg,
       },
     },
-    async ({ cmd, args, expectName, acceptOwnershipTransfer, account }) => {
+    async ({ cmd, args, expectName, index, acceptOwnershipTransfer, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await driveShell(clients, cmd, args ?? [], { expectName, acceptOwnershipTransfer }));
+      return json(await driveShell(clients, cmd, args ?? [], { expectName, acceptOwnershipTransfer, index }));
     },
   );
 
@@ -682,70 +690,6 @@ export function createServer(): McpServer {
     async ({ documentId, email, permissionId, expectRole, expectTitle, account }) => {
       const clients = await clientsForAccount(account);
       return json(await unshareDoc(clients, documentId, { email, permissionId, expectRole, expectTitle }));
-    },
-  );
-
-  server.registerTool(
-    'list_tabs',
-    {
-      title: 'List document tabs',
-      description: 'List the tabs in a Google Doc (tabId, title, index, nesting).',
-      inputSchema: { documentId: z.string(), ...accountArg },
-    },
-    async ({ documentId, account }) => {
-      const clients = await clientsForAccount(account);
-      return json(await listTabs(clients, documentId));
-    },
-  );
-
-  server.registerTool(
-    'add_tab',
-    {
-      title: 'Add a tab',
-      description: 'Add a new tab to a Google Doc. Returns the new tabId. Optionally set position (index) and parent tab for nesting.',
-      inputSchema: {
-        documentId: z.string(),
-        title: z.string(),
-        index: z.number().optional().describe('position among tabs'),
-        parentTabId: z.string().optional().describe('nest under this tab'),
-        ...accountArg,
-      },
-    },
-    async ({ documentId, title, index, parentTabId, account }) => {
-      const clients = await clientsForAccount(account);
-      return json(await addTab(clients, documentId, title, { index, parentTabId }));
-    },
-  );
-
-  server.registerTool(
-    'rename_tab',
-    {
-      title: 'Rename a tab',
-      description: 'Rename a tab by tabId.',
-      inputSchema: { documentId: z.string(), tabId: z.string(), title: z.string(), ...accountArg },
-    },
-    async ({ documentId, tabId, title, account }) => {
-      const clients = await clientsForAccount(account);
-      return json(await renameTab(clients, documentId, tabId, title));
-    },
-  );
-
-  server.registerTool(
-    'delete_tab',
-    {
-      title: 'Delete a tab',
-      description:
-        'Delete a tab by tabId (cascades to child tabs). expectTitle (the tab’s title from list_tabs) is REQUIRED — it is shown in the confirmation and verified against the live tab, so an opaque/stale tabId cannot silently delete the wrong tab.',
-      inputSchema: {
-        documentId: z.string(),
-        tabId: z.string(),
-        expectTitle: z.string().describe('the tab’s title (from list_tabs); verified before deleting'),
-        ...accountArg,
-      },
-    },
-    async ({ documentId, tabId, expectTitle, account }) => {
-      const clients = await clientsForAccount(account);
-      return json(await deleteTab(clients, documentId, tabId, { expectTitle }));
     },
   );
 

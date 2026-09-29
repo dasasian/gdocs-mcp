@@ -1,12 +1,13 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
-import { contentOf, resolveTabId, findTab, flattenTabs, tableInsertedAt, writeControlFor, TAB_METADATA_FIELDS, type SegmentKind, type SegmentPage } from './structure.js';
+import { contentOf, resolveTabId, tableInsertedAt, writeControlFor, TAB_TREE_FIELDS, type SegmentKind, type SegmentPage } from './structure.js';
 import { resolveSegmentTarget } from './segments.js';
 import { parseSuggestions } from './suggestions.js';
 import { readFile } from 'node:fs/promises';
 import nodePath from 'node:path';
 import { markdownToRequests, parseBlocks } from './write.js';
 import { findProjectConfig } from '../auth/accounts.js';
+import { parseDriveId } from '../drive/paths.js';
 import { uploadImageForInsert, resolveImageSource } from '../drive/images.js';
 import { resolveIndex, fillCellRequests, columnAlignRequests } from './objects.js';
 
@@ -159,13 +160,6 @@ export async function insertContent(
   };
 }
 
-/** A Drive id from a folder/doc URL, or the raw id. */
-export function parseDriveId(input: string): string {
-  const m = /\/(?:folders|d)\/([a-zA-Z0-9_-]+)/.exec(input);
-  if (m) return m[1];
-  return input.trim().replace(/[?#].*$/, '');
-}
-
 /**
  * Body from either `content` or a `contentFile` read server-side (so a long
  * document passes through mechanically, #14). With contentFile and no baseDir,
@@ -283,60 +277,13 @@ export async function addTab(
   return { tabId: reply?.addDocumentTab?.tabProperties?.tabId ?? '', title };
 }
 
-export async function renameTab(
+export async function updateTab(
   clients: GoogleClients,
   documentId: string,
   tabId: string,
-  title: string,
-): Promise<{ tabId: string; title: string }> {
-  const req = {
-    updateDocumentTabProperties: { tabProperties: { tabId, title }, fields: 'title' },
-  } as unknown as RawRequest;
+  change: { title?: string; index?: number; parentTabId?: string },
+): Promise<void> {
+  const fields = (['title', 'index', 'parentTabId'] as const).filter((f) => change[f] !== undefined).join(',');
+  const req = { updateDocumentTabProperties: { tabProperties: { tabId, ...change }, fields } } as unknown as RawRequest;
   await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests: [req] } });
-  return { tabId, title };
-}
-
-export async function deleteTab(
-  clients: GoogleClients,
-  documentId: string,
-  tabId: string,
-  opts: { expectTitle?: string } = {},
-): Promise<{ status: 'ok' | 'not_found' | 'mismatch'; deleted?: string; title?: string; message?: string }> {
-  const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true, fields: TAB_METADATA_FIELDS })).data;
-  const tab = findTab(doc, tabId);
-  if (!tab) return { status: 'not_found', message: `tab "${tabId}" not found` };
-  const title = tab.tabProperties?.title ?? '';
-  if (opts.expectTitle !== undefined && opts.expectTitle !== title) {
-    return {
-      status: 'mismatch',
-      title,
-      message: `expectTitle "${opts.expectTitle}" != live tab title "${title}". Re-check list_tabs — refusing to delete a different tab than intended.`,
-    };
-  }
-  const req = { deleteTab: { tabId } } as unknown as RawRequest;
-  await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests: [req] } });
-  return { status: 'ok', deleted: tabId, title };
-}
-
-export interface TabInfo {
-  tabId: string;
-  title: string;
-  index: number;
-  nestingLevel: number;
-  parentTabId: string | null;
-}
-
-export async function listTabs(clients: GoogleClients, documentId: string): Promise<TabInfo[]> {
-  const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true, fields: TAB_METADATA_FIELDS })).data;
-  return flattenTabs(doc).flatMap((t) => {
-    const p = t.tabProperties;
-    if (!p?.tabId) return [];
-    return [{
-      tabId: p.tabId,
-      title: p.title ?? '',
-      index: p.index ?? 0,
-      nestingLevel: p.nestingLevel ?? 0,
-      parentTabId: p.parentTabId ?? null,
-    }];
-  });
 }

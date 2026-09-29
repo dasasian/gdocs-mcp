@@ -6,7 +6,19 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Breaking
+
+> **`list_tabs`, `add_tab`, `rename_tab` and `delete_tab` are removed (#55).** Tabs are reached through `drive` and, as writes land, `write_doc`.
+
+| Removed | Use instead |
+|---|---|
+| `list_tabs(documentId)` | `drive({cmd:'ls', args:['<doc>']})` — one level of tabs, each with the `path` to pass back |
+| `rename_tab(documentId, tabId, title)` | `drive({cmd:'mv', args:['<doc>/<tab>', '<doc>/<new title>']})` |
+| `delete_tab(documentId, tabId, expectTitle)` | none — nothing deletes a tab; delete it in Docs (DESIGN.md §3c) |
+
 ### Added
+
+- **`drive` reaches into a doc's tabs (#55).** A path walks folders, and the first step that is a Google Doc switches to that doc's tabs; a nested tab is one more step, a step may be a title or a tabId, and an id or a URL (`?tab=` is honoured) can start the path. `ls <doc>` lists tabs, `ls <folder>` shows each doc's tab count (the first 50 docs). `mv` renames, nests and un-nests a tab; the new `index` parameter reorders it. `mv` of a tab to another doc or a folder and `cp` of a tab are refused with the reason; two tabs with one name are refused with every candidate listed.
 
 - **`read_doc` shows style as CSS (#49).** The read opens with a `<style>` block, one rule per named style (`p`, `h1`–`h6`, `.title`, `.subtitle`), in pt. A paragraph shows `style="…"` only where it differs from its rule: `text-align`, `line-height`, `margin-top`/`margin-bottom`/`margin-left`/`margin-right`, `text-indent`. A hanging indent reads as `margin-left:36pt; text-indent:-18pt` (CSS measures `text-indent` from `margin-left`; Docs measures its first-line indent from the page margin). List items show no indent — their nesting owns it.
 

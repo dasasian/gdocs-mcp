@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../src/google/clients.js';
-import { deleteTab, overwriteDoc } from '../src/docs/document.js';
+import { overwriteDoc } from '../src/docs/document.js';
 import { resolveComment } from '../src/drive/comments.js';
 
 // Verification guards (#10): each mutating tool checks a caller-echoed human-readable
@@ -16,33 +15,6 @@ function docClients(data: unknown, batchUpdate = vi.fn().mockResolvedValue({})):
     drive: {} as GoogleClients['drive'],
   };
 }
-
-const tabDoc = {
-  title: 'My Doc',
-  tabs: [{ tabProperties: { tabId: 't.0', title: 'Chapter 1' } }],
-} as unknown as docs_v1.Schema$Document;
-
-describe('deleteTab guard', () => {
-  it('refuses when expectTitle does not match the live tab title', async () => {
-    const batchUpdate = vi.fn().mockResolvedValue({});
-    const r = await deleteTab(docClients(tabDoc, batchUpdate), 'd', 't.0', { expectTitle: 'Chapter 9' });
-    expect(r.status).toBe('mismatch');
-    expect(r.title).toBe('Chapter 1');
-    expect(batchUpdate).not.toHaveBeenCalled();
-  });
-
-  it('deletes when the title matches', async () => {
-    const batchUpdate = vi.fn().mockResolvedValue({});
-    const r = await deleteTab(docClients(tabDoc, batchUpdate), 'd', 't.0', { expectTitle: 'Chapter 1' });
-    expect(r.status).toBe('ok');
-    expect(batchUpdate).toHaveBeenCalledOnce();
-  });
-
-  it('reports not_found for an unknown tabId', async () => {
-    const r = await deleteTab(docClients(tabDoc), 'd', 't.9', { expectTitle: 'x' });
-    expect(r.status).toBe('not_found');
-  });
-});
 
 describe('overwriteDoc guard', () => {
   it('refuses when expectTitle does not match', async () => {

@@ -24,7 +24,7 @@ Most Google Docs MCP servers treat a doc as flat text. This one fills the gap no
 - **Suggestions as diffs you can act on.** `list_suggestions` shows pending tracked-changes as `before → after`; `apply_suggestions` accepts/rejects one or more cleanly. `read_doc` can render them inline as `<ins>/<del>`.
 - **File-like editing.** `edit_doc` matches a unique snippet of text (like a local `Edit`) and rewrites it — indices are never exposed.
 - **Comments.** Read threads (author, quoted text, replies, resolved status), reply, resolve, add.
-- **Tabs as sub-files.** Full create/rename/delete, and every read/edit tool can target a specific tab.
+- **Tabs as sub-files.** A doc is a folder of tabs: `drive ls <doc>` lists them, `drive mv` renames, reorders and nests them.
 - **Multiple accounts.** Authorize several Google accounts; pick a default per project.
 
 ## What you can ask for
@@ -129,8 +129,7 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 | `set_table_style` | Style an existing table (located by cell text): cell padding, background, cell borders (`width: 0` = borderless), column widths, pinned header rows — scope table/row/column/cell; `segment` for header/footer tables |
 | `get_table_style` | Read a table's style (located by cell text): column widths, pinned header rows, and the matched cell's padding, background and per-side borders — the read counterpart to `set_table_style` |
 | `list_comments` / `add_comment` / `resolve_comment` | Comment threads (`add_comment` also replies, via `replyTo`) |
-| `list_tabs` / `add_tab` / `rename_tab` / `delete_tab` | Tab structure |
-| `drive` | Drive as a filesystem: `ls` `find` `mkdir` `cp` `mv`. Paths are `/` or `~` (My Drive), `/shared/<drive>`, `/shared-with-me`, `/lost+found`; anything else is an id. `cp` preserves what markdown can’t round-trip (headers/footers, image sizing, exact formatting), so prefer it over rebuilding a template. See [Drive as a filesystem](#drive-as-a-filesystem) |
+| `drive` | Drive as a filesystem: `ls` `find` `mkdir` `cp` `mv`. Paths are `/` or `~` (My Drive), `/shared/<drive>`, `/shared-with-me`, `/lost+found`; anything else is an id. `cp` preserves what markdown can’t round-trip (headers/footers, image sizing, exact formatting), so prefer it over rebuilding a template. See [Drive as a filesystem](#drive-as-a-filesystem). A doc is a folder of its tabs: `ls <doc>` lists them, `ls <folder>` shows each doc's tab count, a path continues into tabs (`/Work/Contract/Part 2/Ch.4`), and `mv` renames, nests (`dst` is another tab), un-nests (`dst` is the doc) and, with `index`, reorders a tab. A tab cannot leave its doc and `cp` of a tab is refused |
 | `list_permissions` / `share_doc` / `unshare_doc` | Sharing (`share_doc` handles both people and anyone-with-link). `list_permissions` names every audience, including domain-wide grants a Workspace adds on creation; `unshare_doc` revokes those by `permissionId`, and requires `expectRole` since a revocation appears in no version history |
 | `list_accounts` | Authorized Google accounts |
 | `set_project_default` / `get_project_config` | Set/show this project’s default account + folder (writes `.gdocs-mcp.json`) |

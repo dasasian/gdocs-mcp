@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { GoogleClients } from '../google/clients.js';
-import { parseDriveId } from '../docs/document.js';
+import { parseDriveId } from './paths.js';
 
 // Export a Doc to a real file format (#22). Google renders it server-side via
 // Drive files.export — pagination, page setup and layout are applied by the same

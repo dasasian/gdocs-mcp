@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseDriveId, resolveContentSource } from '../src/docs/document.js';
+import { resolveContentSource } from '../src/docs/document.js';
+import { parseDriveId } from '../src/drive/paths.js';
 import type { GoogleClients } from '../src/google/clients.js';
 
 describe('resolveContentSource', () => {

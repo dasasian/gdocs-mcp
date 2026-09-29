@@ -1,16 +1,19 @@
 import type { GoogleClients } from '../google/clients.js';
-import { parseDriveId } from '../docs/document.js';
+import { updateTab } from '../docs/document.js';
 import {
   listFolder,
   listOrphans,
   listSharedWithMe,
   listSharedDrives,
+  withTabCounts,
   searchDrive,
   createFolder,
   type DriveEntry,
 } from './files.js';
 import {
   resolvePath,
+  resolveEntry,
+  listTabs,
   resolveRoot,
   looksLikePath,
   splitPath,
@@ -18,6 +21,7 @@ import {
   SHARED_ROOT,
   SHARED_WITH_ME,
   type Resolved,
+  type TabRef,
 } from './paths.js';
 
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
@@ -62,6 +66,7 @@ export type ShellCommand = 'ls' | 'find' | 'mkdir' | 'cp' | 'mv';
 export interface ShellOptions {
   expectName?: string;
   acceptOwnershipTransfer?: boolean;
+  index?: number;
 }
 
 export type ShellResult = Record<string, unknown>;
@@ -71,18 +76,9 @@ function fail(message: string, extra: Record<string, unknown> = {}): ShellResult
 }
 
 async function resolveTarget(clients: GoogleClients, target: string): Promise<{ entry: Resolved } | { error: ShellResult }> {
-  if (looksLikePath(target)) {
-    const r = await resolvePath(clients, target);
-    if (r.ok) return { entry: r.entry };
-    return { error: fail(r.message, r.status === 'ambiguous' ? { status: 'ambiguous', candidates: r.candidates } : { status: 'not_found' }) };
-  }
-  const id = parseDriveId(target);
-  try {
-    const res = await clients.drive.files.get({ fileId: id, fields: 'id,name,mimeType', supportsAllDrives: true });
-    return { entry: { id: res.data.id ?? id, name: res.data.name ?? '', isFolder: res.data.mimeType === FOLDER_MIME } };
-  } catch {
-    return { error: fail(`No Drive file with id "${id}". A path must start with / or ~; anything else is read as an id.`, { status: 'not_found' }) };
-  }
+  const r = await resolveEntry(clients, target);
+  if (r.ok) return { entry: r.entry };
+  return { error: fail(r.message, r.status === 'ambiguous' ? { status: 'ambiguous', candidates: r.candidates } : { status: 'not_found' }) };
 }
 
 function dirname(path: string): string {
@@ -110,10 +106,19 @@ async function ls(clients: GoogleClients, args: string[]): Promise<ShellResult> 
 
   const target = await resolveTarget(clients, path);
   if ('error' in target) return target.error;
-  if (!target.entry.isFolder) {
-    return fail(`"${target.entry.name}" is a file, not a folder. Read a doc with read_doc.`, { status: 'not_a_folder', id: target.entry.id });
+  const { entry } = target;
+  if (entry.isDoc || entry.tab) {
+    const tabs = await listTabs(clients, entry.id, entry.tab?.documentPath ?? entry.path);
+    const parentTabId = entry.tab?.tabId ?? null;
+    const entries = tabs
+      .filter((t) => t.parentTabId === parentTabId)
+      .map((t) => ({ type: 'tab', tabId: t.tabId, name: t.title, index: t.index, path: t.path, childTabs: t.childCount }));
+    return { path, id: entry.id, entries };
   }
-  return { path, id: target.entry.id, entries: await listFolder(clients, target.entry.id) };
+  if (!entry.isFolder) {
+    return fail(`"${entry.name}" is a file, not a folder. Read a doc with read_doc.`, { status: 'not_a_folder', id: entry.id });
+  }
+  return { path, id: entry.id, entries: await withTabCounts(clients, await listFolder(clients, entry.id)) };
 }
 
 async function find(clients: GoogleClients, args: string[]): Promise<ShellResult> {
@@ -227,6 +232,13 @@ async function cp(clients: GoogleClients, args: string[]): Promise<ShellResult> 
   const source = await resolveTarget(clients, src);
   if ('error' in source) return source.error;
 
+  if (source.entry.tab) {
+    return fail(
+      'Drive cannot copy a tab — files.copy copies whole docs. Read the tab and write_doc it to the new path.',
+      { status: 'unsupported', id: source.entry.id },
+    );
+  }
+
   if (source.entry.isFolder) {
     return fail(
       `Drive cannot copy a folder${recursive ? ', and -r does not change that' : ''} — files.copy refuses. Copy the files individually, or duplicate the folder in the Drive UI.`,
@@ -263,6 +275,58 @@ async function cp(clients: GoogleClients, args: string[]): Promise<ShellResult> 
   };
 }
 
+async function mvTab(clients: GoogleClients, tab: TabRef, dst: string, index: number | undefined): Promise<ShellResult> {
+  const destination = await resolveEntry(clients, dst);
+  let parent: Resolved;
+  let title = tab.title;
+  if (destination.ok) {
+    parent = destination.entry;
+  } else if (destination.status === 'not_found' && destination.missing) {
+    parent = destination.missing.parent;
+    title = destination.missing.name;
+  } else {
+    return fail(destination.message, destination.status === 'ambiguous' ? { status: 'ambiguous', candidates: destination.candidates } : { status: 'not_found' });
+  }
+  if (parent.isFolder || parent.id !== tab.documentId) {
+    return fail(
+      `A tab cannot leave its doc: "${dst}" is not in "${tab.documentTitle}". Read the tab and write_doc it into the other doc.`,
+      { status: 'unsupported', id: tab.documentId },
+    );
+  }
+  const parentTabId = parent.tab?.tabId ?? null;
+  if (parentTabId === tab.tabId) return fail(`A tab cannot be moved into itself: "${dst}".`);
+
+  const tabs = await listTabs(clients, tab.documentId, tab.documentPath);
+  const clash = tabs.find((t) => t.parentTabId === parentTabId && t.tabId !== tab.tabId && t.title.toLowerCase() === title.toLowerCase());
+  if (clash) {
+    return fail(
+      `"${parent.path}" already has a tab named "${clash.title}". Two tabs with one name make the path ambiguous afterwards; move to a different name instead.`,
+      { status: 'exists', id: clash.tabId },
+    );
+  }
+
+  const change = {
+    ...(title !== tab.title ? { title } : {}),
+    ...(parentTabId !== tab.parentTabId ? { parentTabId: parentTabId ?? '' } : {}),
+    ...(index !== undefined ? { index } : {}),
+  };
+  if (!Object.keys(change).length) return { status: 'ok', tabId: tab.tabId, name: tab.title, unchanged: true };
+  try {
+    await updateTab(clients, tab.documentId, tab.tabId, change);
+  } catch (e) {
+    return fail(`The Docs API refused the move: ${e instanceof Error ? e.message : String(e)}`, { status: 'error', tabId: tab.tabId });
+  }
+  const after = (await listTabs(clients, tab.documentId, tab.documentPath)).find((t) => t.tabId === tab.tabId);
+  return {
+    status: 'ok',
+    tabId: tab.tabId,
+    name: after?.title ?? title,
+    path: after?.path,
+    index: after?.index,
+    ...(title !== tab.title ? { renamedFrom: tab.title } : {}),
+  };
+}
+
 async function mv(clients: GoogleClients, args: string[], opts: ShellOptions): Promise<ShellResult> {
   const { positional } = parseArgs(args);
   const [src, dst] = positional;
@@ -277,6 +341,8 @@ async function mv(clients: GoogleClients, args: string[], opts: ShellOptions): P
       { status: 'mismatch', id: source.entry.id, name: source.entry.name },
     );
   }
+
+  if (source.entry.tab) return mvTab(clients, source.entry.tab, dst, opts.index);
 
   const destination = await resolveDestination(clients, dst);
   if ('error' in destination) return destination.error;

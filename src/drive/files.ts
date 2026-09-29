@@ -1,5 +1,6 @@
 import type { GoogleClients } from '../google/clients.js';
-import { parseDriveId } from '../docs/document.js';
+import { parseDriveId } from './paths.js';
+import { TAB_TREE_FIELDS, flattenTabs } from '../docs/structure.js';
 
 // Drive navigation: list a folder's contents and search by name.
 
@@ -10,6 +11,8 @@ export interface DriveEntry {
   name: string;
   type: EntryType;
   modifiedTime: string | null;
+  /** documents only: how many tabs it holds. */
+  tabs?: number;
   /** the folders this entry sits in (#26) — id plus resolved name, so a result can be traced upward. */
   parents?: { id: string; name: string }[];
 }
@@ -41,6 +44,7 @@ const LIST_FIELDS = 'files(id,name,mimeType,modifiedTime,parents)';
 // result set to names in one pass (#26). Bounded, and failures degrade to the
 // bare id rather than failing the listing.
 const MAX_PARENT_LOOKUPS = 25;
+const MAX_TAB_COUNT_LOOKUPS = 50;
 
 async function withParents(clients: GoogleClients, files: RawFile[]): Promise<DriveEntry[]> {
   const ids = [...new Set(files.flatMap((f) => f.parents ?? []))].slice(0, MAX_PARENT_LOOKUPS);
@@ -61,6 +65,23 @@ async function withParents(clients: GoogleClients, files: RawFile[]): Promise<Dr
     if (parents.length) entry.parents = parents.map((id) => ({ id, name: names.get(id) ?? '' }));
     return entry;
   });
+}
+
+/** Tab counts cost one Docs call per document, so only the first MAX_TAB_COUNT_LOOKUPS documents get one; the rest carry none. */
+export async function withTabCounts(clients: GoogleClients, entries: DriveEntry[]): Promise<DriveEntry[]> {
+  const counted = new Map<string, number>();
+  const docs = entries.filter((e) => e.type === 'document').slice(0, MAX_TAB_COUNT_LOOKUPS);
+  await Promise.all(
+    docs.map(async (e) => {
+      try {
+        const r = await clients.docs.documents.get({ documentId: e.id, includeTabsContent: true, fields: TAB_TREE_FIELDS });
+        counted.set(e.id, flattenTabs(r.data).length);
+      } catch {
+        return;
+      }
+    }),
+  );
+  return entries.map((e) => (counted.has(e.id) ? { ...e, tabs: counted.get(e.id) } : e));
 }
 
 // List the entries directly inside a folder (default: My Drive root).

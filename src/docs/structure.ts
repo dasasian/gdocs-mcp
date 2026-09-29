@@ -14,7 +14,7 @@ export function flattenTabs(doc: docs_v1.Schema$Document): docs_v1.Schema$Tab[] 
 }
 
 /** Partial-response masks are tabs-only: the Docs API refuses one that mixes legacy top-level fields with tabs content. */
-export const TAB_METADATA_FIELDS = 'tabs.tabProperties,tabs.childTabs';
+export const TAB_TREE_FIELDS = 'tabs(tabProperties,childTabs(tabProperties,childTabs(tabProperties,childTabs(tabProperties))))';
 export const PAGE_SETUP_FIELDS = 'revisionId,tabs.tabProperties,tabs.childTabs,tabs.documentTab.documentStyle';
 
 export function findTab(doc: docs_v1.Schema$Document, tabId: string): docs_v1.Schema$Tab | undefined {

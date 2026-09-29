@@ -14,7 +14,20 @@ interface FakeFile {
 
 // A fake Drive: files.list answers name queries out of the fixture the way the
 // real API does — case-folded, and happy to return two files with one name.
-function driveWith(files: FakeFile[], drives: { id: string; name: string }[] = []) {
+interface FakeTab {
+  id: string;
+  title: string;
+  children?: FakeTab[];
+}
+
+function tabTree(tabs: FakeTab[]): unknown[] {
+  return tabs.map((t, index) => ({
+    tabProperties: { tabId: t.id, title: t.title, index },
+    ...(t.children ? { childTabs: tabTree(t.children) } : {}),
+  }));
+}
+
+function driveWith(files: FakeFile[], drives: { id: string; name: string }[] = [], tabsByDoc: Record<string, FakeTab[]> = {}) {
   const calls = { list: [] as Record<string, unknown>[], copy: [] as Record<string, unknown>[], update: [] as Record<string, unknown>[], create: [] as Record<string, unknown>[] };
 
   const list = vi.fn().mockImplementation(async (params: Record<string, string>) => {
@@ -58,15 +71,25 @@ function driveWith(files: FakeFile[], drives: { id: string; name: string }[] = [
     return { data: { id: made.id, name: made.name, parents: made.parents } };
   });
 
+  const tabUpdates: Record<string, unknown>[] = [];
+  const docsGet = vi.fn().mockImplementation(async ({ documentId }: { documentId: string }) => {
+    const f = files.find((x) => x.id === documentId);
+    return { data: { title: f?.name ?? '', tabs: tabTree(tabsByDoc[documentId] ?? [{ id: 't.0', title: 'Tab 1' }]) } };
+  });
+  const batchUpdate = vi.fn().mockImplementation(async (p: { requestBody: { requests: Record<string, unknown>[] } }) => {
+    tabUpdates.push(...p.requestBody.requests);
+    return { data: { replies: [{}] } };
+  });
+
   const clients = {
     auth: {} as GoogleClients['auth'],
-    docs: {} as GoogleClients['docs'],
+    docs: { documents: { get: docsGet, batchUpdate } } as unknown as GoogleClients['docs'],
     drive: {
       files: { list, get, copy, update, create },
       drives: { list: vi.fn().mockResolvedValue({ data: { drives } }) },
     } as unknown as GoogleClients['drive'],
   };
-  return { clients, calls, list, copy, update, create };
+  return { clients, calls, list, copy, update, create, tabUpdates, docsGet };
 }
 
 const TREE: FakeFile[] = [
@@ -153,8 +176,8 @@ describe('ls (#44)', () => {
   });
 
   it('refuses to list a file as though it were a folder', async () => {
-    const { clients } = driveWith([...TREE]);
-    const r = await driveShell(clients, 'ls', ['/Work/2026/Reports/Lease']);
+    const { clients } = driveWith([...TREE, { id: 'scan', name: 'Scan', mimeType: 'application/pdf', parents: ['reports'] }]);
+    const r = await driveShell(clients, 'ls', ['/Work/2026/Reports/Scan']);
     expect(r.status).toBe('not_a_folder');
   });
 });
@@ -375,5 +398,119 @@ describe('dispatch (#44)', () => {
     const { clients } = driveWith([...TREE]);
     const r = await driveShell(clients, 'rm' as 'ls', []);
     expect(r.message).toContain('ls, find, mkdir, cp, mv');
+  });
+});
+
+const CONTRACT: FakeFile[] = [
+  ...TREE,
+  { id: 'contract', name: 'Contract', mimeType: DOC, parents: ['work'] },
+  { id: 'single', name: 'Memo', mimeType: DOC, parents: ['work'] },
+];
+const CONTRACT_TABS: Record<string, FakeTab[]> = {
+  contract: [
+    { id: 't.a', title: 'Summary' },
+    { id: 't.b', title: 'Part 2', children: [{ id: 't.c', title: 'Ch.4' }] },
+    { id: 't.d', title: 'Notes' },
+  ],
+};
+
+describe('a doc is a folder of tabs (#55)', () => {
+  it('ls <doc> lists its tabs, each with the path to pass back', async () => {
+    const { clients } = driveWith([...CONTRACT], [], CONTRACT_TABS);
+    const r = await driveShell(clients, 'ls', ['/Work/Contract']);
+    expect(r.entries).toEqual([
+      { type: 'tab', tabId: 't.a', name: 'Summary', index: 0, path: '/Work/Contract/Summary', childTabs: 0 },
+      { type: 'tab', tabId: 't.b', name: 'Part 2', index: 1, path: '/Work/Contract/Part 2', childTabs: 1 },
+      { type: 'tab', tabId: 't.d', name: 'Notes', index: 2, path: '/Work/Contract/Notes', childTabs: 0 },
+    ]);
+  });
+
+  it('ls <tab> lists its child tabs, and a step can be a tabId', async () => {
+    const { clients } = driveWith([...CONTRACT], [], CONTRACT_TABS);
+    const byTitle = await driveShell(clients, 'ls', ['/Work/Contract/Part 2']);
+    const byId = await driveShell(clients, 'ls', ['/Work/Contract/t.b']);
+    expect((byTitle.entries as { name: string }[]).map((e) => e.name)).toEqual(['Ch.4']);
+    expect((byTitle.entries as { path: string }[])[0].path).toBe('/Work/Contract/Part 2/Ch.4');
+    expect(byId.entries).toEqual(byTitle.entries);
+  });
+
+  it('starts from an id or a URL and continues into tabs', async () => {
+    const { clients } = driveWith([...CONTRACT], [], CONTRACT_TABS);
+    const fromId = await driveShell(clients, 'ls', ['contract/Part 2']);
+    const fromUrl = await driveShell(clients, 'ls', ['https://docs.google.com/document/d/contract/edit?tab=t.b']);
+    expect((fromId.entries as { name: string }[]).map((e) => e.name)).toEqual(['Ch.4']);
+    expect(fromUrl.entries).toEqual(fromId.entries);
+  });
+
+  it('ls <folder> shows each doc with its tab count', async () => {
+    const { clients } = driveWith([...CONTRACT], [], CONTRACT_TABS);
+    const r = await driveShell(clients, 'ls', ['/Work']);
+    const docs = (r.entries as { name: string; tabs?: number }[]).filter((e) => e.name === 'Contract' || e.name === 'Memo');
+    expect(docs.map((d) => [d.name, d.tabs])).toEqual([['Contract', 4], ['Memo', 1]]);
+  });
+
+  it('refuses two tabs with one name, listing each with its id', async () => {
+    const twins = { contract: [{ id: 't.a', title: 'Notes' }, { id: 't.b', title: 'notes' }] };
+    const { clients } = driveWith([...CONTRACT], [], twins);
+    const r = await driveShell(clients, 'ls', ['/Work/Contract/Notes']);
+    expect(r.status).toBe('ambiguous');
+    expect((r.candidates as { id: string }[]).map((c) => c.id)).toEqual(['t.a', 't.b']);
+  });
+
+  it('refuses a folder and a doc with one name, listing each with its id', async () => {
+    const { clients } = driveWith([...CONTRACT, { id: 'contractdir', name: 'contract', mimeType: FOLDER, parents: ['work'] }], [], CONTRACT_TABS);
+    const r = await driveShell(clients, 'ls', ['/Work/Contract/Summary']);
+    expect(r.status).toBe('ambiguous');
+    expect((r.candidates as { id: string }[]).map((c) => c.id).sort()).toEqual(['contract', 'contractdir']);
+  });
+
+  it('mv renames a tab', async () => {
+    const { clients, tabUpdates } = driveWith([...CONTRACT], [], CONTRACT_TABS);
+    const r = await driveShell(clients, 'mv', ['/Work/Contract/Notes', '/Work/Contract/Appendix']);
+    expect(r.status).toBe('ok');
+    expect(tabUpdates).toEqual([{ updateDocumentTabProperties: { tabProperties: { tabId: 't.d', title: 'Appendix' }, fields: 'title' } }]);
+  });
+
+  it('mv nests a tab into another tab, keeping its name', async () => {
+    const { clients, tabUpdates } = driveWith([...CONTRACT], [], CONTRACT_TABS);
+    await driveShell(clients, 'mv', ['/Work/Contract/Notes', '/Work/Contract/Part 2']);
+    expect(tabUpdates).toEqual([{ updateDocumentTabProperties: { tabProperties: { tabId: 't.d', parentTabId: 't.b' }, fields: 'parentTabId' } }]);
+  });
+
+  it('mv to the doc un-nests a tab, and index reorders it', async () => {
+    const { clients, tabUpdates } = driveWith([...CONTRACT], [], CONTRACT_TABS);
+    await driveShell(clients, 'mv', ['/Work/Contract/Part 2/Ch.4', '/Work/Contract'], { index: 0 });
+    expect(tabUpdates).toEqual([{ updateDocumentTabProperties: { tabProperties: { tabId: 't.c', parentTabId: '', index: 0 }, fields: 'index,parentTabId' } }]);
+  });
+
+  it('mv with only an index reorders in place', async () => {
+    const { clients, tabUpdates } = driveWith([...CONTRACT], [], CONTRACT_TABS);
+    await driveShell(clients, 'mv', ['/Work/Contract/Notes', '/Work/Contract'], { index: 0 });
+    expect(tabUpdates).toEqual([{ updateDocumentTabProperties: { tabProperties: { tabId: 't.d', index: 0 }, fields: 'index' } }]);
+  });
+
+  it('mv of a tab to another doc or a folder is refused, with the reason', async () => {
+    const { clients, tabUpdates } = driveWith([...CONTRACT], [], CONTRACT_TABS);
+    const toDoc = await driveShell(clients, 'mv', ['/Work/Contract/Notes', '/Work/Memo']);
+    const toFolder = await driveShell(clients, 'mv', ['/Work/Contract/Notes', '/Archive']);
+    for (const r of [toDoc, toFolder]) {
+      expect(r.status).toBe('unsupported');
+      expect(r.message).toMatch(/cannot leave its doc/);
+    }
+    expect(tabUpdates).toEqual([]);
+  });
+
+  it('mv refuses to create a second tab with the same name', async () => {
+    const clashing = { contract: [{ id: 't.a', title: 'Notes' }, { id: 't.b', title: 'Part 2', children: [{ id: 't.c', title: 'notes' }] }] };
+    const { clients, tabUpdates } = driveWith([...CONTRACT], [], clashing);
+    const r = await driveShell(clients, 'mv', ['/Work/Contract/Part 2/notes', '/Work/Contract']);
+    expect(tabUpdates).toEqual([]);
+    expect(r.status).toBe('exists');
+  });
+
+  it('cp of a tab is refused', async () => {
+    const { clients } = driveWith([...CONTRACT], [], CONTRACT_TABS);
+    const r = await driveShell(clients, 'cp', ['/Work/Contract/Notes', '/Archive']);
+    expect(r.status).toBe('unsupported');
   });
 });
