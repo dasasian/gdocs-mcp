@@ -1,5 +1,6 @@
 import type { GoogleClients } from '../google/clients.js';
 import { renderMarkdown } from './transformer.js';
+import { styleRulesOf, renderStyleBlock } from './style-block.js';
 import { resolveTabId, listSegments, resolveSegmentId, type SegmentInfo, type SegmentKind, type SegmentPage } from './structure.js';
 
 export type ReadMode = 'clean' | 'tracked' | 'accepted' | 'rejected';
@@ -43,13 +44,15 @@ export async function readDoc(
   const segments = listSegments(res.data, tabId);
   const title = res.data.title ?? '';
   const segment = opts.segment ?? 'body';
+  const styleBlock = renderStyleBlock(styleRulesOf(res.data, tabId));
+  const withStyleBlock = (markdown: string): string => [styleBlock, markdown].filter(Boolean).join('\n\n');
 
   if (segment === 'all') {
     const parts = [`<!-- segment: body -->\n${renderMarkdown(res.data, { tracked, tabId })}`];
     for (const s of segments) {
       parts.push(`<!-- segment: ${label(s)} -->\n${renderMarkdown(res.data, { tracked, tabId, segmentId: s.segmentId })}`);
     }
-    return { title, markdown: parts.join('\n\n'), segments };
+    return { title, markdown: withStyleBlock(parts.join('\n\n')), segments };
   }
 
   if (segment === 'header' || segment === 'footer') {
@@ -63,7 +66,7 @@ export async function readDoc(
         note: `This doc has no ${opts.page ? `${opts.page}-page ` : ''}${segment}. Segments present: ${have}.`,
       };
     }
-    return { title, markdown: renderMarkdown(res.data, { tracked, tabId, segmentId }), segments };
+    return { title, markdown: withStyleBlock(renderMarkdown(res.data, { tracked, tabId, segmentId })), segments };
   }
 
   // Body read. A header/footer's content is NOT part of the body tree, so a
@@ -74,7 +77,7 @@ export async function readDoc(
     : undefined;
   return {
     title,
-    markdown: renderMarkdown(res.data, { tracked, tabId }),
+    markdown: withStyleBlock(renderMarkdown(res.data, { tracked, tabId })),
     ...(segments.length ? { segments } : {}),
     ...(note ? { note } : {}),
   };

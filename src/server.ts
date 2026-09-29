@@ -101,7 +101,7 @@ export function createServer(): McpServer {
     {
       title: 'Read a Google Doc',
       description:
-        'Read a Google Doc as markdown + inline HTML. mode: clean (committed text, default) · tracked (suggestions shown as <ins>/<del>) · accepted · rejected. segment picks the content tree: body (default), header, footer, or all (body plus every header/footer, each labelled). A body read always reports which headers/footers exist and what they hold, since their content — a letterhead logo, a page number — is NOT part of the body and would otherwise be invisible.',
+        'Read a Google Doc as markdown + inline HTML. The read opens with a <style> block — one CSS rule per named style (p = Normal text, h1–h6, .title, .subtitle), in pt — and a paragraph or run shows style="…" only where it differs from its rule (text-align, line-height, margin-top/bottom/left/right, text-indent; a hanging indent is margin-left:36pt with a negative text-indent). Title and Subtitle paragraphs read as <p class="title">. List items show no indent: their nesting owns it. mode: clean (committed text, default) · tracked (suggestions shown as <ins>/<del>) · accepted · rejected. segment picks the content tree: body (default), header, footer, or all (body plus every header/footer, each labelled). A body read always reports which headers/footers exist and what they hold, since their content — a letterhead logo, a page number — is NOT part of the body and would otherwise be invisible.',
       inputSchema: {
         documentId: z.string().describe('Google Doc id'),
         mode: z.enum(['clean', 'tracked', 'accepted', 'rejected']).optional().describe('read mode (default clean)'),

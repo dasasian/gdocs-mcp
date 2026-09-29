@@ -1,6 +1,8 @@
 import type { docs_v1 } from 'googleapis';
 import { contentOf, listsOf, inlineObjectsOf } from './structure.js';
-import { LEVEL_BY_HEADING, CSS_BY_ALIGN, CODE_FONT } from './markdown-spec.js';
+import { LEVEL_BY_HEADING, CLASS_BY_NAMED_STYLE, CODE_FONT } from './markdown-spec.js';
+import { declarationsFor, styleAttribute } from './css.js';
+import { paragraphCssOf, effectiveStylesFor } from './style-block.js';
 import { rgbToHex } from './color.js';
 
 const ORDERED_GLYPHS = new Set(['DECIMAL', 'ZERO_DECIMAL', 'UPPER_ALPHA', 'ALPHA', 'UPPER_ROMAN', 'ROMAN']);
@@ -93,7 +95,7 @@ export function renderMarkdown(doc: docs_v1.Schema$Document, opts: RenderOpts = 
       if (el.table) blocks.push(renderTable(el.table, opts));
       continue;
     }
-    const line = renderParagraph(para, opts, objects);
+    const line = renderParagraph(para, opts, objects, doc);
     if (para.bullet) {
       const listId = para.bullet.listId ?? null;
       const startsDistinctList = listBuf.length > 0 && listId !== lastListId;
@@ -147,7 +149,8 @@ const lineBreaksAsBr = (s: string): string => s.replace(/\x0b/g, '<br>');
 function renderParagraph(
   para: docs_v1.Schema$Paragraph,
   opts: RenderOpts,
-  objects: Record<string, docs_v1.Schema$InlineObject> = {},
+  objects: Record<string, docs_v1.Schema$InlineObject>,
+  doc: docs_v1.Schema$Document,
 ): string {
   let inline = '';
   for (const pe of para.elements ?? []) {
@@ -157,20 +160,17 @@ function renderParagraph(
     }
   }
   inline = lineBreaksAsBr(withoutParagraphMark(inline));
+  if (para.bullet) return inline;
 
   const named = para.paragraphStyle?.namedStyleType ?? 'NORMAL_TEXT';
+  const overrides = paragraphCssOf(para.paragraphStyle, effectiveStylesFor(doc, named, opts.tabId));
+  const style = styleAttribute(declarationsFor(overrides));
+  const styleAttr = style ? ` style="${style}"` : '';
   const level = LEVEL_BY_HEADING[named];
-  if (level && !para.bullet) {
-    return `${'#'.repeat(level)} ${inline}`;
-  }
-
-  const align = para.paragraphStyle?.alignment;
-  const hasNonDefaultAlignment = !!align && align !== 'START' && align !== 'ALIGNMENT_UNSPECIFIED';
-  if (!para.bullet && hasNonDefaultAlignment) {
-    const css = CSS_BY_ALIGN[align] ?? 'justify';
-    return `<p style="text-align:${css}">${inline}</p>`;
-  }
-  return inline;
+  if (level) return style ? `<h${level}${styleAttr}>${inline}</h${level}>` : `${'#'.repeat(level)} ${inline}`;
+  const className = CLASS_BY_NAMED_STYLE[named as keyof typeof CLASS_BY_NAMED_STYLE];
+  if (className) return `<p class="${className}"${styleAttr}>${inline}</p>`;
+  return style ? `<p${styleAttr}>${inline}</p>` : inline;
 }
 
 // A table cell's text (plain, single line), pipes escaped. Multi-paragraph cells

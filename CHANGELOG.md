@@ -6,7 +6,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **`read_doc` shows style as CSS (#49).** The read opens with a `<style>` block, one rule per named style (`p`, `h1`–`h6`, `.title`, `.subtitle`), in pt. A paragraph shows `style="…"` only where it differs from its rule: `text-align`, `line-height`, `margin-top`/`margin-bottom`/`margin-left`/`margin-right`, `text-indent`. A hanging indent reads as `margin-left:36pt; text-indent:-18pt` (CSS measures `text-indent` from `margin-left`; Docs measures its first-line indent from the page margin). List items show no indent — their nesting owns it.
+
+### Changed
+
+- Title and Subtitle paragraphs read as `<p class="title">` / `<p class="subtitle">` instead of `# …` (#49).
 
 ## [0.6.0] — 2026-08-21
 
