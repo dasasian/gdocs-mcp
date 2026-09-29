@@ -183,3 +183,10 @@ describe('a run’s font-family', () => {
     expect(read(run('Georgia', true))).toBe('<span style="font-family:Georgia">**force**</span>');
   });
 });
+
+describe('an empty paragraph', () => {
+  it('reads as nothing, styled or not, so overwrite_doc does not grow the doc by one paragraph per round trip', () => {
+    expect(read(para('', { alignment: 'CENTER', indentStart: pt(72) }))).toBe('');
+    expect(read(para('', { namedStyleType: 'TITLE' }))).toBe('');
+  });
+});

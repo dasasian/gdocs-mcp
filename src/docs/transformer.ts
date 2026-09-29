@@ -164,11 +164,12 @@ function renderParagraph(
   }
   inline = lineBreaksAsBr(withoutParagraphMark(inline));
   if (para.bullet) return inline;
+  const level = LEVEL_BY_HEADING[para.paragraphStyle?.namedStyleType ?? 'NORMAL_TEXT'];
+  if (inline === '') return level ? `${'#'.repeat(level)} ` : '';
 
   const overrides = paragraphCssOf(para.paragraphStyle, eff);
   const style = styleAttribute(declarationsFor(overrides));
   const styleAttr = style ? ` style="${style}"` : '';
-  const level = LEVEL_BY_HEADING[named];
   if (level) return style ? `<h${level}${styleAttr}>${inline}</h${level}>` : `${'#'.repeat(level)} ${inline}`;
   const className = CLASS_BY_NAMED_STYLE[named as keyof typeof CLASS_BY_NAMED_STYLE];
   if (className) return `<p class="${className}"${styleAttr}>${inline}</p>`;
