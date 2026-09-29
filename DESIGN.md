@@ -109,6 +109,16 @@ therefore marks such text as literal, in one of two ways:
   `[Name](the Company)`, `~~draft~~`, a literal `<b>` — reads with a CommonMark
   backslash (`5 \* 3 \* 2`). A single character can't be wrapped, so this is the
   only form available. A real backslash before punctuation reads as `\\`.
+- **A line that starts or ends with a space or tab** — `⇥Indented clause`,
+  `Signature:⇥` — reads as `<p>⇥Indented clause</p>`. Markdown drops edge
+  whitespace (and four leading spaces are a code block), but in Docs it is
+  content: a trailing tab against a tab stop with an underline leader *is* the
+  signature line (#54). Tabs stay tabs; a tab and spaces are not the same thing
+  in Docs. A tab in the middle of a line needs no mark.
+
+Inside `<p>…</p>` the writer keeps every space and tab exactly, whether the `<p>`
+came from a read or the agent typed it. Outside `<p>`, edge whitespace on a line
+is still trimmed, so stray spaces an agent types are harmless.
 
 **The writer's parser decides.** The reader keeps no list of what counts as
 markup. It renders the line, parses it the way the writer will (`parseBlocks`,
