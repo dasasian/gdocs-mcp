@@ -69,8 +69,9 @@ retyped, so nothing is silently dropped from the long files.
 margins and body font against the 2026 template and tell me which are off."*
 
 **What happens:** `drive({ cmd: "find" })` locates them — including files that sit in
-no folder and that browsing would never show — then `get_page_setup` and `get_style`
-read each one's real, inherited-resolved values, which markdown cannot express.
+no folder and that browsing would never show — then `get_page_setup` and `read_doc`
+read each one's real values — the page margins, and the body font in the `p` rule of the
+`<style>` block that opens every read.
 
 **Why it's nice:** consistency drift across a folder of documents is invisible until
 someone opens all of them. This reads them instead.
@@ -112,14 +113,16 @@ inline — that's the difference between a clean publish and silently fused sent
 
 **Ask Claude:** *"Set the entire doc to Georgia 11pt to match our house style."*
 
-**What happens:** `set_style` with `whole_document: true` applies the font across the
-whole doc in one call (no per-paragraph loop). Bold headings **stay bold** — the
-server works around a Google API quirk where changing the font otherwise strips the
-bold attribute.
+**What happens:** `read_doc` opens with the doc's `<style>` block; `edit_doc` changes the
+font in the `p` rule (`old_string: p { font-family: Arial`, `new_string: p { font-family: Georgia`).
+That is one `updateNamedStyle`, and every paragraph that doesn't carry its own font follows,
+headings and bold text included. Anything that does carry one reads as a
+`<span style="font-family:…">` and is listed for you to fix.
 
 **Variant:** *"Make just the signature block at the bottom Times New Roman."* →
-`set_style` with a `from`/`to` selection styles the whole span between two anchors,
-no need to quote everything in between.
+`edit_doc` with the block's words in both strings, the second wrapped in
+`<span style="font-family:Times New Roman">…</span>`. Same words in, same words out, so it
+sends only a style request and cannot change the text.
 
 ---
 
@@ -178,9 +181,11 @@ existing table.
 **Ask Claude:** *"Center the address block, and set the whole intro paragraph to
 justified."*
 
-**What happens:** `set_style` sets paragraph alignment over the selection. Reading
+**What happens:** `edit_doc` gives the anchor's words back with a wrapper —
+`<p style="text-align:center">Landlord</p>` — which sends only the style request. Reading
 the doc back returns the same `<p style="text-align:center">…</p>` you can reuse —
-alignment and in-paragraph line breaks (`<br>`) round-trip between read and write.
+alignment, indents, spacing and in-paragraph line breaks (`<br>`) round-trip between read and
+write. Anything outside that small set (a border, say) is refused before a request is sent.
 
 ---
 

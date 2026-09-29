@@ -7,9 +7,7 @@ import { listComments, addComment, replyComment, resolveComment } from './drive/
 import { readDoc } from './docs/read.js';
 import { editDoc } from './docs/edit.js';
 import { createDoc, insertContent, overwriteDoc, listTabs, addTab, renameTab, deleteTab, resolveContentSource } from './docs/document.js';
-import { setStyle } from './docs/format.js';
 import { setPageSetup, getPageSetup } from './docs/page.js';
-import { getStyle } from './docs/inspect.js';
 import { insertImage, insertTable, insertRow, deleteRow, insertColumn, deleteColumn, setTableStyle, getTableStyle } from './docs/objects.js';
 import { listPermissions, shareDoc, unshareDoc, setLinkAccess } from './drive/sharing.js';
 import { driveShell } from './drive/shell.js';
@@ -122,7 +120,7 @@ export function createServer(): McpServer {
     {
       title: 'Edit a Google Doc',
       description:
-        'Replace an exact unique snippet of text in a Google Doc (like a local file Edit). old_string is matched markup-tolerantly; ambiguous matches return surrounding context to disambiguate. new_string is interpreted as inline markdown and inline HTML (**bold**, *italic*, `code`, [text](url), `<u>`, `<span style="color:…;font-size:…pt">`, `<p style="…">`, `<p class="title">`) — the same spelling read_doc emits, so a read can be edited and written back. STYLE IS CSS, and this is the only way to change it. Restyle text you are not otherwise changing by giving the same words with different markup: old_string `<p>4. Term`, new_string `<p style="margin-left:36pt; text-indent:-18pt">4. Term` sends only style requests — no delete, no insert, so a long paragraph is never retyped and its words cannot change; markup missing from new_string is cleared (drop the wrapper to remove an indent). To restyle a whole named style, edit its rule in read_doc’s <style> block: old_string `p { font-family: Arial; font-size: 11pt`, new_string `p { font-family: Arial; font-size: 12pt` becomes one updateNamedStyle and every paragraph that does not override it follows. An unsupported property (border, float, a px length, a typo) fails the edit before any request is sent, listing every offending line and the supported set. To restyle text you are NOT otherwise changing, use set_style instead: it needs no copy of the text. NOTE: this is a direct edit — the change is applied as live text, not a tracked suggestion (the Docs API cannot create suggestions). If the doc has pending suggestions from other reviewers, flag to the user that your edit will sit alongside them as an accepted change.',
+        'Replace an exact unique snippet of text in a Google Doc (like a local file Edit). old_string is matched markup-tolerantly; ambiguous matches return surrounding context to disambiguate. new_string is interpreted as inline markdown and inline HTML (**bold**, *italic*, `code`, [text](url), `<u>`, `<span style="color:…;font-size:…pt">`, `<p style="…">`, `<p class="title">`) — the same spelling read_doc emits, so a read can be edited and written back. STYLE IS CSS, and this is the only way to change it. Restyle text you are not otherwise changing by giving the same words with different markup: old_string `<p>4. Term`, new_string `<p style="margin-left:36pt; text-indent:-18pt">4. Term` sends only style requests — no delete, no insert, so a long paragraph is never retyped and its words cannot change; markup missing from new_string is cleared (drop the wrapper to remove an indent). To restyle a whole named style, edit its rule in read_doc’s <style> block: old_string `p { font-family: Arial; font-size: 11pt`, new_string `p { font-family: Arial; font-size: 12pt` becomes one updateNamedStyle and every paragraph that does not override it follows. An unsupported property (border, float, a px length, a typo) fails the edit before any request is sent, listing every offending line and the supported set. NOTE: this is a direct edit — the change is applied as live text, not a tracked suggestion (the Docs API cannot create suggestions). If the doc has pending suggestions from other reviewers, flag to the user that your edit will sit alongside them as an accepted change.',
       inputSchema: {
         documentId: z.string().describe('Google Doc id'),
         old_string: z.string().describe('exact text to replace (quote a unique slice from read_doc)'),
@@ -137,51 +135,6 @@ export function createServer(): McpServer {
       const clients = await clientsForAccount(account);
       const result = await editDoc(clients, documentId, old_string, new_string, { replaceAll: replace_all, tab, segment, page });
       return json(result.status === 'ok' ? { ...result, note: DIRECT_EDIT_NOTE } : result);
-    },
-  );
-
-  server.registerTool(
-    'set_style',
-    {
-      title: 'Style text in a doc',
-      description:
-        'Apply styling to existing text in place (no content change), the way you select text in Docs and apply formatting. Pick ONE target: `from` (+ optional `to`) to style a selection — from the start of the unique `from` snippet to the end of the unique `to` snippet (omit `to` to style just `from`); or `whole_document: true` to style the entire doc/tab (e.g. one font throughout, without per-paragraph calls). Styles: bold/italic/underline/strikethrough, color (hex), fontSize (pt), fontFamily, link, paragraph alignment, and paragraph spacing (spaceBefore/spaceAfter in pt, lineSpacing %). Use get_style first to read current spacing/fonts. Prefer this over rewriting the text with edit_doc and a `<span style="…">`: that also works, but it makes you restate the whole run, and retyping text is how text gets silently dropped. NOTE: a direct style change, not a tracked suggestion.',
-      inputSchema: {
-        documentId: z.string().describe('Google Doc id'),
-        from: z.string().optional().describe('start anchor: a unique text snippet to style from (quote a slice from read_doc). Required unless whole_document is set.'),
-        to: z.string().optional().describe('optional end anchor: a unique snippet; styles the whole span from the start of `from` to the end of `to` (a selection). Must appear after `from`.'),
-        whole_document: z.boolean().optional().describe('style the entire document (or tab, or the targeted header/footer) instead of a selection — e.g. to set one font throughout. Mutually exclusive with from/to.'),
-        style: z
-          .object({
-            bold: z.boolean().optional(),
-            italic: z.boolean().optional(),
-            underline: z.boolean().optional(),
-            strikethrough: z.boolean().optional(),
-            color: z.string().optional().describe('hex, e.g. #1a73e8'),
-            fontSize: z.number().optional().describe('points'),
-            fontFamily: z.string().optional(),
-            link: z.string().optional().describe('url'),
-            align: z.enum(['left', 'center', 'right', 'justify']).optional(),
-            spaceBefore: z.number().optional().describe('points of space above the paragraph'),
-            spaceAfter: z.number().optional().describe('points of space below the paragraph'),
-            lineSpacing: z.number().optional().describe('percent of single spacing (100=single, 150=1.5x)'),
-          })
-          .describe('styles to apply'),
-        ...segmentArg,
-        ...tabArg,
-        ...accountArg,
-      },
-    },
-    async ({ documentId, from, to, whole_document, style, segment, page, tab, account }) => {
-      if (whole_document && from !== undefined) {
-        throw new Error('Provide either whole_document or from/to, not both.');
-      }
-      if (!whole_document && from === undefined) {
-        throw new Error('Provide a `from` anchor (with optional `to`), or set whole_document.');
-      }
-      const target = whole_document ? { whole: true as const } : { from: from!, to };
-      const clients = await clientsForAccount(account);
-      return json(await setStyle(clients, documentId, target, style, { tab, segment, page }));
     },
   );
 
@@ -204,7 +157,7 @@ export function createServer(): McpServer {
     {
       title: 'Set document page setup',
       description:
-        'Set document-level page setup for a doc (or tab): page margins, page size, and orientation — the File > Page setup controls, which set_style can’t reach. Margins and explicit page sizes are in points (72 pt = 1 inch). pageSize is a preset (letter/legal/a4/tabloid) or an explicit {width,height} in points; orientation (portrait/landscape) swaps the page dimensions. A direct change, not a tracked suggestion.',
+        'Set document-level page setup for a doc (or tab): page margins, page size, and orientation — the File > Page setup controls. Margins and explicit page sizes are in points (72 pt = 1 inch). pageSize is a preset (letter/legal/a4/tabloid) or an explicit {width,height} in points; orientation (portrait/landscape) swaps the page dimensions. A direct change, not a tracked suggestion.',
       inputSchema: {
         documentId: z.string().describe('Google Doc id'),
         marginTop: z.number().optional().describe('top margin in points (72 = 1 inch)'),
@@ -225,26 +178,6 @@ export function createServer(): McpServer {
       return json(
         await setPageSetup(clients, documentId, { marginTop, marginBottom, marginLeft, marginRight, pageSize, orientation }, { tab }),
       );
-    },
-  );
-
-  server.registerTool(
-    'get_style',
-    {
-      title: 'Read computed style at a text anchor',
-      description:
-        'Read the effective (inherited-resolved) style at a unique text snippet — read_doc’s markdown can’t express these; the read counterpart to set_style. Returns paragraph style (namedStyleType, alignment, spaceBefore/spaceAfter in pt, lineSpacing %, and whether spacing is inherited) and text style (bold/italic/underline/strikethrough, fontSize pt, fontFamily, color hex, link). Use it to diagnose things markdown hides — e.g. an unexpected gap between paragraphs is spacing (spaceAfter>0), not a blank line, and is fixed with set_style’s spaceAfter, not edit_doc.',
-      inputSchema: {
-        documentId: z.string(),
-        target_string: z.string().describe('exact text to read the style of (quote a unique slice from read_doc)'),
-        ...segmentArg,
-        ...tabArg,
-        ...accountArg,
-      },
-    },
-    async ({ documentId, target_string, segment, page, tab, account }) => {
-      const clients = await clientsForAccount(account);
-      return json(await getStyle(clients, documentId, target_string, { tab, segment, page }));
     },
   );
 

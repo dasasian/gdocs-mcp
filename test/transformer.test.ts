@@ -89,7 +89,7 @@ describe('renderMarkdown', () => {
 // DESIGN.md §2 makes inline HTML the escape hatch for formatting markdown can't
 // express, and requires it be "visible in the read" so an agent can verify its
 // own style changes. The writer parsed <span style="…"> all along; the reader
-// never produced it, so a set_style colour change was invisible on re-read.
+// never produced it, so a colour change was invisible on re-read.
 
 const md = (content: docs_v1.Schema$StructuralElement[]) => renderMarkdown(doc(content));
 

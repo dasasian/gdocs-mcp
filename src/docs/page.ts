@@ -3,7 +3,7 @@ import type { GoogleClients } from '../google/clients.js';
 import { resolveTabId, documentStyleOf, writeControlFor, PAGE_SETUP_FIELDS } from './structure.js';
 
 // Document-level page setup via updateDocumentStyle: margins, page size, orientation.
-// All dimensions are points (72 pt = 1 inch), consistent with set_style's pt units.
+// All dimensions are points (72 pt = 1 inch), consistent with every other length in the server.
 // Google Docs has no "orientation" field — landscape/portrait is just the ordering
 // of pageSize width/height, so we resolve a size then order it.
 

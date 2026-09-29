@@ -14,6 +14,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`edit_doc` is how style changes (#49).** `new_string` accepts `<p style>`, `<hN style>`, `<p class>`, `<span style>` and `<style>` rules. When `old_string` and `new_string` carry the same words and differ only in markup, only `updateParagraphStyle` / `updateTextStyle` are sent — never a delete or an insert — so a 300-word paragraph is restyled from a short anchor (`<p>4. Term` → `<p style="text-indent:36pt">4. Term`) and its words cannot change. Markup the new text no longer has is cleared. An edit inside the `<style>` block becomes one `updateNamedStyle` per changed rule, and every paragraph that does not override it follows.
 - **An unsupported property is an error, not text (#49).** `<p style="border:1px">` used to be inserted into the doc as visible characters. Now the whole write is refused before any request is sent — `create_doc` does not even create the doc — with one error naming every offending line and the supported set.
 
+### Removed
+
+> **Breaking: `get_style` and `set_style` are removed.** Anything calling them by name must move to `read_doc` (to see style) and `edit_doc` (to change it). 32 tools become 30.
+
+- `read_doc` shows what `get_style` returned — and for the whole doc, not one anchor. `edit_doc` does what `set_style` did: same words with new markup restyles without retyping, and a `<style>` rule edit restyles the whole document (#49).
+
 ### Changed
 
 - `overwrite_doc` clears the paragraph style the new text would inherit from the paragraph it lands in; an indent on the old last paragraph no longer leaks into the first new one (#49).

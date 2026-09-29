@@ -6,7 +6,6 @@ import { resolveSegmentTarget } from '../src/docs/segments.js';
 import { readDoc } from '../src/docs/read.js';
 import { editDoc } from '../src/docs/edit.js';
 import { insertImage } from '../src/docs/objects.js';
-import { setStyle } from '../src/docs/format.js';
 
 const para = (text: string): docs_v1.Schema$StructuralElement => ({
   paragraph: { elements: [{ textRun: { content: `${text}\n` } }] },
@@ -186,12 +185,5 @@ describe('writes into a segment carry segmentId (#23)', () => {
     const img = reqs(b)[0].insertInlineImage!;
     expect(img.location).toMatchObject({ index: 0, segmentId: 'hDefault' });
     expect(img.objectSize!.width).toEqual({ magnitude: 120, unit: 'PT' });
-  });
-
-  it('set_style whole_document means the whole header when a segment is targeted', async () => {
-    const b = vi.fn().mockResolvedValue({ data: {} });
-    const r = await setStyle(clientsFor(letterhead(), b), 'd', { whole: true }, { fontSize: 9 }, { segment: 'header' });
-    expect(r.status).toBe('ok');
-    expect(reqs(b)[0].updateTextStyle!.range!.segmentId).toBe('hDefault');
   });
 });

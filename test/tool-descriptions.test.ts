@@ -5,8 +5,8 @@ import path from 'node:path';
 
 // A description that points at a tool which does not exist sends the model
 // somewhere there is nothing. It cannot fail a build, a type check or any other
-// test, and it survives a rename indefinitely — `set_style` told callers to run
-// `inspect_style` long after that tool became `get_style`, and `list_suggestions`
+// test, and it survives a rename indefinitely — `edit_doc` told callers to run
+// `inspect_style` long after that tool was renamed, and `list_suggestions`
 // pointed at `apply_suggestion` after the singular was deleted (#45).
 //
 // So this reads the source rather than the built server: descriptions are prose,
@@ -25,11 +25,11 @@ const descriptions = [...SRC.matchAll(/'([a-z_]+)',\n\s*\{\n\s*title:[^\n]*\n\s*
 // snake_case things in a description that are deliberately NOT tool names:
 // parameter names and result statuses. Add to this only after checking the token
 // really is one of those — the point of the test is that a typo lands here.
-const NOT_TOOLS = new Set(['old_string', 'new_string', 'whole_document', 'wrong_doc']);
+const NOT_TOOLS = new Set(['old_string', 'new_string', 'wrong_doc']);
 
 describe('tool descriptions (#45)', () => {
   it('finds every registered tool and its description', () => {
-    expect(toolNames.size).toBeGreaterThan(30);
+    expect(toolNames.size).toBeGreaterThanOrEqual(30);
     expect(descriptions.length).toBe(toolNames.size);
   });
 

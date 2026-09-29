@@ -391,8 +391,8 @@ export interface TableStyleInfo {
   /** how many leading rows repeat on every page. */
   headerRows?: number;
   /** the MATCHED cell's own style. Cells in one table can differ, so a table-wide
-   *  answer would have to average or guess; this reports one cell exactly, the same
-   *  reason get_style takes a single anchor while set_style takes a selection. */
+   *  answer would have to average or guess; this reports one cell exactly, a
+   *  range would mix cells. */
   cell?: {
     /** Docs gives every cell 5pt padding by default, so this is present on tables
      *  nobody has styled. It is the real value, not a guess at intent. */
