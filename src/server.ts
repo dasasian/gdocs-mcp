@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { clientsForAccount } from './google/clients.js';
+import { resolveTab, resolveDocument } from './drive/paths.js';
 import { listAccounts, findProjectConfig, findProjectConfigPath, setProjectConfig } from './auth/accounts.js';
 import { listSuggestions, applySuggestions } from './docs/suggestions.js';
 import { listComments, addComment, replyComment, resolveComment } from './drive/comments.js';
@@ -28,12 +29,11 @@ const accountArg = {
     .describe('Google account email to use. Defaults to GDOCS_DEFAULT_ACCOUNT, or the sole account.'),
 };
 
-const tabArg = {
-  tab: z
-    .string()
-    .optional()
-    .describe('Target a specific tab by tabId or title (from list_tabs). Defaults to the first tab.'),
-};
+const tabPathArg = z
+  .string()
+  .describe('The doc or tab: a Drive id or URL, /folder/doc, or /folder/doc/tab (nested: /folder/doc/tab/child). A doc with one tab needs no tab step; a doc with several is refused until one is named, and the refusal lists every tab path.');
+
+const docPathArg = z.string().describe('The doc: a Drive id or URL, or /folder/doc. A tab path names its doc.');
 
 const segmentArg = {
   segment: z
@@ -99,17 +99,17 @@ export function createServer(): McpServer {
       description:
         'Read a Google Doc as markdown + inline HTML. The read opens with a <style> block — one CSS rule per named style (p = Normal text, h1–h6, .title, .subtitle), in pt — and a paragraph or run shows style="…" only where it differs from its rule (text-align, line-height, margin-top/bottom/left/right, text-indent; a hanging indent is margin-left:36pt with a negative text-indent). Title and Subtitle paragraphs read as <p class="title">. List items show no indent: their nesting owns it. mode: clean (committed text, default) · tracked (suggestions shown as <ins>/<del>) · accepted · rejected. segment picks the content tree: body (default), header, footer, or all (body plus every header/footer, each labelled). Text that would otherwise read as markup is marked as literal: a paragraph wrapped in <p>…</p> ("4. Term" is a paragraph, not a list) or a backslash before a character (5 \\* 3), and \\\\ is a real backslash — write them back as read, and the document keeps only the words. A body read always reports which headers/footers exist and what they hold, since their content — a letterhead logo, a page number — is NOT part of the body and would otherwise be invisible.',
       inputSchema: {
-        documentId: z.string().describe('Google Doc id'),
+        path: tabPathArg,
         mode: z.enum(['clean', 'tracked', 'accepted', 'rejected']).optional().describe('read mode (default clean)'),
         segment: z.enum(['body', 'header', 'footer', 'all']).optional().describe('content tree to read (default body)'),
         page: segmentArg.page,
-        ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, mode, segment, page, tab, account }) => {
+    async ({ path, mode, segment, page, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await readDoc(clients, documentId, mode ?? 'clean', tab, { segment, page }));
+      const target = await resolveTab(clients, path);
+      return json(await readDoc(clients, target.documentId, mode ?? 'clean', target.tabId, { segment, page }));
     },
   );
 
@@ -120,18 +120,18 @@ export function createServer(): McpServer {
       description:
         'Replace an exact unique snippet of text in a Google Doc (like a local file Edit). old_string is matched markup-tolerantly; ambiguous matches return surrounding context to disambiguate. new_string is interpreted as inline markdown and inline HTML (**bold**, *italic*, `code`, [text](url), `<u>`, `<span style="color:…;font-size:…pt">`, `<p style="…">`, `<p class="title">`) — the same spelling read_doc emits, so a read can be edited and written back. STYLE IS CSS, and this is the only way to change it. Restyle text you are not otherwise changing by giving the same words with different markup: old_string `<p>4. Term`, new_string `<p style="margin-left:36pt; text-indent:-18pt">4. Term` sends only style requests — no delete, no insert, so a long paragraph is never retyped and its words cannot change; markup missing from new_string is cleared (drop the wrapper to remove an indent). To restyle a whole named style, edit its rule in read_doc’s <style> block: old_string `p { font-family: Arial; font-size: 11pt`, new_string `p { font-family: Arial; font-size: 12pt` becomes one updateNamedStyle and every paragraph that does not override it follows. An unsupported property (border, float, a px length, a typo) fails the edit before any request is sent, listing every offending line and the supported set. NOTE: this is a direct edit — the change is applied as live text, not a tracked suggestion (the Docs API cannot create suggestions). If the doc has pending suggestions from other reviewers, flag to the user that your edit will sit alongside them as an accepted change.',
       inputSchema: {
-        documentId: z.string().describe('Google Doc id'),
+        path: tabPathArg,
         old_string: z.string().describe('exact text to replace (quote a unique slice from read_doc)'),
         new_string: z.string().describe('replacement text'),
         replace_all: z.boolean().optional().describe('replace every occurrence (default false)'),
         ...segmentArg,
-        ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, old_string, new_string, replace_all, segment, page, tab, account }) => {
+    async ({ path, old_string, new_string, replace_all, segment, page, account }) => {
       const clients = await clientsForAccount(account);
-      const result = await editDoc(clients, documentId, old_string, new_string, { replaceAll: replace_all, tab, segment, page });
+      const target = await resolveTab(clients, path);
+      const result = await editDoc(clients, target.documentId, old_string, new_string, { replaceAll: replace_all, tabId: target.tabId, segment, page });
       return json(result.status === 'ok' ? { ...result, note: DIRECT_EDIT_NOTE } : result);
     },
   );
@@ -142,11 +142,12 @@ export function createServer(): McpServer {
       title: 'Read document page setup',
       description:
         'Read a doc’s (or tab’s) page setup — margins, page size (in points, plus a preset name if it matches letter/legal/a4/tabloid), and orientation. The read counterpart to set_page_setup; use it to mirror another document’s layout onto a new doc.',
-      inputSchema: { documentId: z.string().describe('Google Doc id'), ...tabArg, ...accountArg },
+      inputSchema: { path: tabPathArg, ...accountArg },
     },
-    async ({ documentId, tab, account }) => {
+    async ({ path, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await getPageSetup(clients, documentId, { tab }));
+      const target = await resolveTab(clients, path);
+      return json(await getPageSetup(clients, target.documentId, { tabId: target.tabId }));
     },
   );
 
@@ -157,7 +158,7 @@ export function createServer(): McpServer {
       description:
         'Set document-level page setup for a doc (or tab): page margins, page size, and orientation — the File > Page setup controls. Margins and explicit page sizes are in points (72 pt = 1 inch). pageSize is a preset (letter/legal/a4/tabloid) or an explicit {width,height} in points; orientation (portrait/landscape) swaps the page dimensions. A direct change, not a tracked suggestion.',
       inputSchema: {
-        documentId: z.string().describe('Google Doc id'),
+        path: tabPathArg,
         marginTop: z.number().optional().describe('top margin in points (72 = 1 inch)'),
         marginBottom: z.number().optional().describe('bottom margin in points'),
         marginLeft: z.number().optional().describe('left margin in points'),
@@ -167,14 +168,14 @@ export function createServer(): McpServer {
           .optional()
           .describe('a preset name, or {width,height} in points'),
         orientation: z.enum(['portrait', 'landscape']).optional().describe('portrait or landscape (orders the page width/height)'),
-        ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, marginTop, marginBottom, marginLeft, marginRight, pageSize, orientation, tab, account }) => {
+    async ({ path, marginTop, marginBottom, marginLeft, marginRight, pageSize, orientation, account }) => {
       const clients = await clientsForAccount(account);
+      const target = await resolveTab(clients, path);
       return json(
-        await setPageSetup(clients, documentId, { marginTop, marginBottom, marginLeft, marginRight, pageSize, orientation }, { tab }),
+        await setPageSetup(clients, target.documentId, { marginTop, marginBottom, marginLeft, marginRight, pageSize, orientation }, { tabId: target.tabId }),
       );
     },
   );
@@ -186,15 +187,15 @@ export function createServer(): McpServer {
       description:
         'Download every embedded image in a Google Doc to a local folder. Returns the objectId→filename mapping, which correlates with read_doc’s `<img src="image:<objectId>">` markers so you can rewrite them to local paths (the inverse of publishing).',
       inputSchema: {
-        documentId: z.string(),
+        path: tabPathArg,
         dir: z.string().describe('absolute local folder to save images into (created if missing)'),
-        ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, dir, tab, account }) => {
+    async ({ path, dir, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await downloadImages(clients, documentId, dir, tab));
+      const target = await resolveTab(clients, path);
+      return json(await downloadImages(clients, target.documentId, dir, target.tabId));
     },
   );
 
@@ -205,7 +206,7 @@ export function createServer(): McpServer {
       description:
         'Insert an inline image from a public URL or a local file (uploaded to Drive, embedded, then the temp upload removed). Position via at (top/end/or a unique text anchor), size via width/height (points), and align left/center/right. Set segment:"header" for a letterhead logo — that is where a repeating, correctly-sized logo belongs, and it is why a template’s logo is invisible to a body read. A direct edit, not a tracked suggestion. Note: floating/text-wrapped images are not supported by the Docs API.',
       inputSchema: {
-        documentId: z.string(),
+        path: tabPathArg,
         uri: z.string().describe('public image URL, or a path to a local image file (absolute, or relative to baseDir)'),
         at: z.string().optional().describe('"top", "end", or a unique text snippet to insert after (default top)'),
         width: z.number().optional().describe('points'),
@@ -217,13 +218,13 @@ export function createServer(): McpServer {
           .boolean()
           .optional()
           .describe('when segment is header/footer and the doc has none, create it first (the letterhead case). Only the default header/footer can be created via the API.'),
-        ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, uri, at, width, height, align, baseDir, segment, page, createSegment, tab, account }) => {
+    async ({ path, uri, at, width, height, align, baseDir, segment, page, createSegment, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await insertImage(clients, documentId, uri, { at, width, height, align, baseDir, tab, segment, page, createSegment }));
+      const target = await resolveTab(clients, path);
+      return json(await insertImage(clients, target.documentId, uri, { at, width, height, align, baseDir, tabId: target.tabId, segment, page, createSegment }));
     },
   );
 
@@ -234,7 +235,7 @@ export function createServer(): McpServer {
       description:
         'Insert a rows×columns table, optionally populated from a 2D array of cell text — cell text may use inline markdown (**bold**, *italic*, `code`, [links](url)). Per-column alignment via align. Position via at (top/end/or a unique text anchor, default end). A direct edit, not a tracked suggestion.',
       inputSchema: {
-        documentId: z.string(),
+        path: tabPathArg,
         rows: z.number().int().positive(),
         columns: z.number().int().positive(),
         data: z.array(z.array(z.string())).optional().describe('row-major cell text, e.g. [["A","B"],["1","2"]]'),
@@ -250,13 +251,13 @@ export function createServer(): McpServer {
           .boolean()
           .optional()
           .describe('when segment is header/footer and the doc has none, create it first. Only the default header/footer can be created via the API.'),
-        ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, rows, columns, data, columnWidths, headerShade, align, at, segment, page, createSegment, tab, account }) => {
+    async ({ path, rows, columns, data, columnWidths, headerShade, align, at, segment, page, createSegment, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await insertTable(clients, documentId, rows, columns, { at, tab, data, columnWidths, headerShade, align, segment, page, createSegment }));
+      const target = await resolveTab(clients, path);
+      return json(await insertTable(clients, target.documentId, rows, columns, { at, tabId: target.tabId, data, columnWidths, headerShade, align, segment, page, createSegment }));
     },
   );
 
@@ -266,11 +267,12 @@ export function createServer(): McpServer {
       title: 'List suggestions in a doc',
       description:
         'List pending suggestions (tracked changes) in a Google Doc as before→after diffs, in document order. Returns the doc `title` and, per suggestion, a human-readable `preview` — pass these verbatim as documentTitle/expectedChange to apply_suggestions. Note: the Docs API exposes no author or timestamp for suggestions.',
-      inputSchema: { documentId: z.string().describe('Google Doc id'), ...segmentArg, ...tabArg, ...accountArg },
+      inputSchema: { path: tabPathArg, ...segmentArg, ...accountArg },
     },
-    async ({ documentId, segment, page, tab, account }) => {
+    async ({ path, segment, page, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await listSuggestions(clients, documentId, tab, { segment, page }));
+      const target = await resolveTab(clients, path);
+      return json(await listSuggestions(clients, target.documentId, target.tabId, { segment, page }));
     },
   );
 
@@ -281,7 +283,7 @@ export function createServer(): McpServer {
       description:
         'Resolve one or more pending suggestions (from list_suggestions) in ONE atomic update: accept keeps the proposed text, reject keeps the original. Pass one resolution to resolve a single suggestion, or several at once — required for suggestions that overlap or adjoin each other (a "cluster"), which cannot be resolved one at a time without corrupting neighbours. You MUST include every suggestion in any cluster you touch; a partially-resolved cluster is refused (status "incomplete"). documentTitle is checked against the live document first (status "wrong_doc" on mismatch, e.g. an id from a different, similarly-titled document). Copy each suggestion\'s `preview` from list_suggestions into its `expectedChange` (verified before applying). If the result includes a `conflicts` array, two suggestions genuinely conflicted (one inserts text inside another\'s deletion, both accepted) — it was auto-resolved by keeping the insertion; surface this to the user as NOT a clean merge.',
       inputSchema: {
-        documentId: z.string().describe('Google Doc id'),
+        path: tabPathArg,
         documentTitle: z.string().describe("The document's title, from list_suggestions. Shown for confirmation only."),
         resolutions: z
           .array(
@@ -293,13 +295,13 @@ export function createServer(): McpServer {
           )
           .describe('one entry per suggestion to resolve'),
         ...segmentArg,
-        ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, documentTitle, resolutions, segment, page, tab, account }) => {
+    async ({ path, documentTitle, resolutions, segment, page, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await applySuggestions(clients, documentId, documentTitle, resolutions, tab, { segment, page }));
+      const target = await resolveTab(clients, path);
+      return json(await applySuggestions(clients, target.documentId, documentTitle, resolutions, target.tabId, { segment, page }));
     },
   );
 
@@ -309,10 +311,11 @@ export function createServer(): McpServer {
       title: 'List comments on a doc',
       description:
         'List comments on a Google Doc (author display name, quoted text, body, resolved status, replies). Author email is not available via the Drive API.',
-      inputSchema: { documentId: z.string().describe('Google Doc id'), ...accountArg },
+      inputSchema: { path: docPathArg, ...accountArg },
     },
-    async ({ documentId, account }) => {
+    async ({ path, account }) => {
       const clients = await clientsForAccount(account);
+      const { documentId } = await resolveDocument(clients, path);
       return json(await listComments(clients, documentId));
     },
   );
@@ -324,14 +327,15 @@ export function createServer(): McpServer {
       description:
         'Add a comment to a Google Doc, or reply to an existing comment thread by passing replyTo (a comment id from list_comments). A new comment (no replyTo) is not anchored to specific text — the Docs/Drive API cannot anchor programmatically-created comments.',
       inputSchema: {
-        documentId: z.string(),
+        path: docPathArg,
         content: z.string(),
         replyTo: z.string().optional().describe('a comment id (from list_comments) to reply to; omit to start a new top-level comment'),
         ...accountArg,
       },
     },
-    async ({ documentId, content, replyTo, account }) => {
+    async ({ path, content, replyTo, account }) => {
       const clients = await clientsForAccount(account);
+      const { documentId } = await resolveDocument(clients, path);
       if (replyTo !== undefined) return json(await replyComment(clients, documentId, replyTo, content));
       return json({ ...(await addComment(clients, documentId, content)), note: UNANCHORED_COMMENT_NOTE });
     },
@@ -344,15 +348,16 @@ export function createServer(): McpServer {
       description:
         'Resolve (or reopen) a comment thread by comment id. Pass expectQuote (a snippet of the comment’s quoted text or body, from list_comments) — shown for confirmation and verified against the live comment, so a wrong/stale id is refused instead of resolving the wrong thread.',
       inputSchema: {
-        documentId: z.string(),
+        path: docPathArg,
         commentId: z.string(),
         reopen: z.boolean().optional().describe('reopen instead of resolve'),
         expectQuote: z.string().optional().describe('snippet of the comment’s quoted text/body; verified before resolving'),
         ...accountArg,
       },
     },
-    async ({ documentId, commentId, reopen, expectQuote, account }) => {
+    async ({ path, commentId, reopen, expectQuote, account }) => {
       const clients = await clientsForAccount(account);
+      const { documentId } = await resolveDocument(clients, path);
       return json(await resolveComment(clients, documentId, commentId, reopen ?? false, { expectQuote }));
     },
   );
@@ -391,7 +396,7 @@ export function createServer(): McpServer {
       description:
         'Insert NEW markdown-rendered content at a structural position — no anchor text required. `at`: "end" (default, the end of the doc/tab) · "top" · a unique text snippet to insert immediately after. Use this where edit_doc can\u2019t reach: adding a paragraph after a table that ends the doc (a table\u2019s cells can\u2019t anchor an insert outside the table, and the trailing empty paragraph has no text to match), or appending to an empty doc. Use edit_doc instead when you are replacing or extending existing text. Content is full markdown (headings, lists, tables, images), same renderer as create_doc. Style is CSS, in the spelling read_doc emits: a leading <style> block sets the named styles (p, h1–h6, .title, .subtitle), <p style="…"> / <hN style="…"> / <p class="title"> style a paragraph, <span style="…"> a run. Supported: text-align, line-height, margin-top/bottom/left/right, text-indent (pt; text-indent is relative to margin-left), and on spans/rules font-family, font-size, font-weight, font-style, text-decoration, color. Any other property fails the whole write before anything is sent, listing every offending line. A direct edit, not a tracked suggestion.',
       inputSchema: {
-        documentId: z.string(),
+        path: tabPathArg,
         content: z.string().optional().describe('markdown content to insert (or use contentFile)'),
         contentFile: z
           .string()
@@ -407,15 +412,15 @@ export function createServer(): McpServer {
           .optional()
           .describe('when segment is header/footer and the doc has none, create it first (the letterhead case). Only the default header/footer can be created via the API.'),
         baseDir: z.string().optional().describe('absolute dir to resolve relative local image paths against'),
-        ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, content, contentFile, at, segment, page, createSegment, baseDir, tab, account }) => {
+    async ({ path, content, contentFile, at, segment, page, createSegment, baseDir, account }) => {
       const clients = await clientsForAccount(account);
+      const target = await resolveTab(clients, path);
       const src = await resolveContentSource({ content, contentFile, baseDir });
       if (src.content === undefined) throw new Error('Provide content or contentFile.');
-      const result = await insertContent(clients, documentId, src.content, { at, tab, baseDir: src.baseDir, segment, page, createSegment });
+      const result = await insertContent(clients, target.documentId, src.content, { at, tabId: target.tabId, baseDir: src.baseDir, segment, page, createSegment });
       return json(result.status === 'ok' ? { ...result, note: DIRECT_EDIT_NOTE } : result);
     },
   );
@@ -427,15 +432,16 @@ export function createServer(): McpServer {
       description:
         'Export a Google Doc to a real file on disk \u2014 pdf (default), docx, odt, rtf, txt, html, epub, or md. Google renders it server-side (File > Download in the UI), so page setup, pagination and layout match the editor. Returns the local path and byte size. Note: Drive refuses to export files larger than 10 MB.',
       inputSchema: {
-        documentId: z.string(),
+        path: docPathArg,
         dir: z.string().describe('absolute local folder to save the export into (created if missing)'),
         format: z.enum(EXPORT_FORMATS as [ExportFormat, ...ExportFormat[]]).optional().describe('default pdf'),
         filename: z.string().optional().describe('override the filename (default: the doc\u2019s title + extension)'),
         ...accountArg,
       },
     },
-    async ({ documentId, dir, format, filename, account }) => {
+    async ({ path, dir, format, filename, account }) => {
       const clients = await clientsForAccount(account);
+      const { documentId } = await resolveDocument(clients, path);
       return json(await exportDoc(clients, documentId, dir, { format, filename }));
     },
   );
@@ -449,7 +455,7 @@ export function createServer(): McpServer {
       description:
         'Replace the entire body of a doc (or one tab) with markdown-rendered content; the new paragraphs start unstyled, so anything not in the markdown (including indents) is gone. Style is CSS, in the spelling read_doc emits: a leading <style> block sets the named styles (p, h1–h6, .title, .subtitle), <p style="…"> / <hN style="…"> / <p class="title"> style a paragraph, <span style="…"> a run. Supported: text-align, line-height, margin-top/bottom/left/right, text-indent (pt; text-indent is relative to margin-left), and on spans/rules font-family, font-size, font-weight, font-style, text-decoration, color. Any other property fails the whole write before anything is sent, listing every offending line. Refuses if comments/suggestions are present (would orphan them) unless force=true. Pass expectTitle (the doc’s title) — shown for confirmation and verified against the live doc before replacing. For long documents, pass contentFile instead of content so the server reads the body directly (retyping a long doc inline can silently drop text). A direct edit, not a tracked suggestion.',
       inputSchema: {
-        documentId: z.string(),
+        path: tabPathArg,
         content: z.string().optional().describe('markdown content (or use contentFile)'),
         contentFile: z
           .string()
@@ -460,15 +466,15 @@ export function createServer(): McpServer {
         force: z.boolean().optional().describe('proceed even if comments/suggestions would be lost'),
         expectTitle: z.string().optional().describe('the doc’s title; verified before overwriting so a wrong id is refused'),
         baseDir: z.string().optional().describe('absolute dir to resolve relative local image paths against (e.g. the markdown file’s folder)'),
-        ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, content, contentFile, force, expectTitle, baseDir, tab, account }) => {
+    async ({ path, content, contentFile, force, expectTitle, baseDir, account }) => {
       const clients = await clientsForAccount(account);
+      const target = await resolveTab(clients, path);
       const src = await resolveContentSource({ content, contentFile, baseDir });
       if (src.content === undefined) throw new Error('Provide content or contentFile.');
-      return json(await overwriteDoc(clients, documentId, src.content, { force, tab, baseDir: src.baseDir, expectTitle }));
+      return json(await overwriteDoc(clients, target.documentId, src.content, { force, tabId: target.tabId, baseDir: src.baseDir, expectTitle }));
     },
   );
 
@@ -481,7 +487,7 @@ export function createServer(): McpServer {
       description:
         'Structurally edit the table containing the given cell text: insert or delete a row or column. `op` picks the operation; `side` picks which side an insert goes on (for rows: after=below (default)/before=above; for columns: after=right (default)/before=left) and is ignored for deletes. Deletes remove the row/column that contains `cell`.',
       inputSchema: {
-        documentId: z.string(),
+        path: tabPathArg,
         ...cellArg,
         op: z.enum(['insert_row', 'delete_row', 'insert_column', 'delete_column']).describe('the structural edit to perform'),
         side: z
@@ -489,23 +495,23 @@ export function createServer(): McpServer {
           .optional()
           .describe('for inserts: which side of `cell` to add on — rows after=below (default)/before=above; columns after=right (default)/before=left. Ignored for deletes.'),
         ...segmentArg,
-        ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, cell, op, side, segment, page, tab, account }) => {
+    async ({ path, cell, op, side, segment, page, account }) => {
       const clients = await clientsForAccount(account);
+      const target = await resolveTab(clients, path);
       const after = side !== 'before'; // default 'after'
-      const seg = { segment, page, tab };
+      const seg = { segment, page, tabId: target.tabId };
       switch (op) {
         case 'insert_row':
-          return json(await insertRow(clients, documentId, cell, { below: after, ...seg }));
+          return json(await insertRow(clients, target.documentId, cell, { below: after, ...seg }));
         case 'delete_row':
-          return json(await deleteRow(clients, documentId, cell, seg));
+          return json(await deleteRow(clients, target.documentId, cell, seg));
         case 'insert_column':
-          return json(await insertColumn(clients, documentId, cell, { right: after, ...seg }));
+          return json(await insertColumn(clients, target.documentId, cell, { right: after, ...seg }));
         case 'delete_column':
-          return json(await deleteColumn(clients, documentId, cell, seg));
+          return json(await deleteColumn(clients, target.documentId, cell, seg));
       }
     },
   );
@@ -517,16 +523,16 @@ export function createServer(): McpServer {
       description:
         'Read the style of the table containing the given cell text: per-column widths (points), how many header rows are pinned, and the matched cell’s padding, background and per-side borders. The read counterpart to set_table_style — use it to check a change took, to preserve a table’s look while rewriting it, or to copy one table’s layout onto another. Column widths come back in the exact shape set_table_style accepts. Table-wide facts (widths, header rows) are reported for the whole table; padding/background/borders are reported for the MATCHED cell, since cells in one table can differ and a table-wide answer would have to guess. Note Docs gives every cell 5pt padding by default, so padding is reported even on a table nobody has styled.',
       inputSchema: {
-        documentId: z.string(),
+        path: tabPathArg,
         cell: z.string().describe('text of any cell in the target table (locates the table)'),
         ...segmentArg,
-        ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, cell, segment, page, tab, account }) => {
+    async ({ path, cell, segment, page, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await getTableStyle(clients, documentId, cell, { segment, page, tab }));
+      const target = await resolveTab(clients, path);
+      return json(await getTableStyle(clients, target.documentId, cell, { segment, page, tabId: target.tabId }));
     },
   );
 
@@ -537,7 +543,7 @@ export function createServer(): McpServer {
       description:
         'Edit style/layout of an existing table (located by any cell’s text): cell padding (pt), background color (hex), cell borders, column widths (pt), and pinned header rows. scope selects which cells padding/background/border hit — table (default), row, column, or cell (the row/column of the matched cell). Fixes e.g. thin left padding that clips the first letter of cells; border {width:0} makes a table borderless; headerRows repeats the top rows on every page. A direct edit, not a tracked suggestion.',
       inputSchema: {
-        documentId: z.string(),
+        path: tabPathArg,
         cell: z.string().describe('text of any cell in the target table (locates the table)'),
         scope: z.enum(['table', 'row', 'column', 'cell']).optional().describe('default table'),
         padding: z
@@ -571,13 +577,13 @@ export function createServer(): McpServer {
           .optional()
           .describe('repeat the top N rows on every page (Docs’ "pin header rows"); 0 unpins. Independent of scope.'),
         ...segmentArg,
-        ...tabArg,
         ...accountArg,
       },
     },
-    async ({ documentId, cell, scope, padding, backgroundColor, border, columnWidths, headerRows, segment, page, tab, account }) => {
+    async ({ path, cell, scope, padding, backgroundColor, border, columnWidths, headerRows, segment, page, account }) => {
       const clients = await clientsForAccount(account);
-      return json(await setTableStyle(clients, documentId, cell, { scope, padding, backgroundColor, border, columnWidths, headerRows, segment, page, tab }));
+      const target = await resolveTab(clients, path);
+      return json(await setTableStyle(clients, target.documentId, cell, { scope, padding, backgroundColor, border, columnWidths, headerRows, segment, page, tabId: target.tabId }));
     },
   );
 
@@ -633,10 +639,11 @@ export function createServer(): McpServer {
     {
       title: 'List who a doc is shared with',
       description: 'List the permissions on a Google Doc (people, groups, domain, anyone-with-link) with their roles. Each entry carries a `subject` naming who it covers — an email, "<domain> (domain)", or "anyone with the link" — since a domain or link grant has no email. For those, `allowFileDiscovery: true` means the file also surfaces in that audience\'s search, not merely that it opens with the link. Note a doc created under a Workspace domain may already carry a domain grant before you share it.',
-      inputSchema: { documentId: z.string(), ...accountArg },
+      inputSchema: { path: docPathArg, ...accountArg },
     },
-    async ({ documentId, account }) => {
+    async ({ path, account }) => {
       const clients = await clientsForAccount(account);
+      const { documentId } = await resolveDocument(clients, path);
       return json(await listPermissions(clients, documentId));
     },
   );
@@ -648,15 +655,16 @@ export function createServer(): McpServer {
       description:
         'Grant access to a Google Doc. With `email`, share with that person as reader/commenter/writer (optionally sending a notification). Without `email`, set anyone-with-link access to that role, or role "none" to disable link sharing. (To revoke a specific person’s access, use unshare_doc.)',
       inputSchema: {
-        documentId: z.string(),
+        path: docPathArg,
         email: z.string().optional().describe('person to share with; omit to set anyone-with-link access instead'),
         role: z.enum(['reader', 'commenter', 'writer', 'none']).optional().describe('access level; default writer. "none" (link only) disables link sharing.'),
         notify: z.boolean().optional().describe('when sharing with a person, send a notification email (default true)'),
         ...accountArg,
       },
     },
-    async ({ documentId, email, role, notify, account }) => {
+    async ({ path, email, role, notify, account }) => {
       const clients = await clientsForAccount(account);
+      const { documentId } = await resolveDocument(clients, path);
       if (email !== undefined) {
         if (role === 'none') throw new Error('role "none" is only for link access (omit email); use unshare_doc to revoke a person.');
         return json(await shareDoc(clients, documentId, email, role ?? 'writer', notify ?? true));
@@ -672,7 +680,7 @@ export function createServer(): McpServer {
       description:
         'Revoke a grant on a Google Doc. Pass `email` for a person or a group. A grant with no email — a domain-wide grant, or anyone-with-link — has no email to pass, so address it by `permissionId` from list_permissions (run that first; it also tells you the role you are about to remove). Refuses to touch the owner. `expectRole` is REQUIRED — run list_permissions first and echo the role back; a permission change is recorded nowhere and cannot be restored from version history, so this is the only thing standing between a misaimed call and a silent, unrecoverable revocation. Note a doc created under a Workspace domain may carry a domain grant nobody explicitly added.',
       inputSchema: {
-        documentId: z.string(),
+        path: docPathArg,
         email: z.string().optional().describe('person or group to revoke; omit when using permissionId'),
         permissionId: z
           .string()
@@ -687,8 +695,9 @@ export function createServer(): McpServer {
         ...accountArg,
       },
     },
-    async ({ documentId, email, permissionId, expectRole, expectTitle, account }) => {
+    async ({ path, email, permissionId, expectRole, expectTitle, account }) => {
       const clients = await clientsForAccount(account);
+      const { documentId } = await resolveDocument(clients, path);
       return json(await unshareDoc(clients, documentId, { email, permissionId, expectRole, expectTitle }));
     },
   );

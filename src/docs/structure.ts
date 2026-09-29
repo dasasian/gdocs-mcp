@@ -41,16 +41,14 @@ export function tableInsertedAt(
 }
 
 /** A tabId checked against the doc; undefined stays undefined and means the first tab. */
-export function resolveTabId(doc: docs_v1.Schema$Document, tab?: string): string | undefined {
-  if (!tab) return undefined;
+export function resolveTabId(doc: docs_v1.Schema$Document, tabId?: string): string | undefined {
+  if (!tabId) return undefined;
   const tabs = flattenTabs(doc);
-  const byId = tabs.find((t) => t.tabProperties?.tabId === tab);
-  const match = byId ?? tabs.find((t) => t.tabProperties?.title === tab);
-  if (!match?.tabProperties?.tabId) {
-    const available = tabs.map((t) => t.tabProperties?.title).filter(Boolean).join(', ');
-    throw new Error(`tab "${tab}" not found. Available: ${available || '(none)'}`);
+  if (!tabs.some((t) => t.tabProperties?.tabId === tabId)) {
+    const available = tabs.map((t) => t.tabProperties?.tabId).filter(Boolean).join(', ');
+    throw new Error(`tab "${tabId}" not found. Available: ${available || '(none)'}`);
   }
-  return match.tabProperties.tabId;
+  return tabId;
 }
 
 // ---- Segments (#23) --------------------------------------------------------

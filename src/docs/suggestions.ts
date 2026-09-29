@@ -108,11 +108,11 @@ export function formatSuggestionPreview(s: Pick<Suggestion, 'type' | 'before' | 
 export async function listSuggestions(
   clients: GoogleClients,
   documentId: string,
-  tab?: string,
+  requestedTabId?: string,
   opts: { segment?: SegmentKind; page?: SegmentPage } = {},
 ): Promise<{ revisionId: string; title: string; suggestions: (Suggestion & { preview: string })[]; message?: string }> {
   const doc = await getDocInline(clients, documentId);
-  const tabId = resolveTabId(doc, tab);
+  const tabId = resolveTabId(doc, requestedTabId);
   const seg = await resolveSegmentTarget(clients, documentId, doc, { segment: opts.segment, page: opts.page, tabId });
   if (seg.error) return { revisionId: doc.revisionId ?? '', title: doc.title ?? '', suggestions: [], message: seg.error };
   const suggestions = parseSuggestions(seg.doc, tabId, seg.segmentId).map((s) => ({ ...s, preview: formatSuggestionPreview(s) }));
@@ -296,14 +296,14 @@ export async function applySuggestions(
   documentId: string,
   documentTitle: string,
   resolutions: Resolution[],
-  tab?: string,
+  requestedTabId?: string,
   opts: { segment?: SegmentKind; page?: SegmentPage } = {},
 ): Promise<ApplyManyResult> {
   const doc = await getDocInline(clients, documentId);
   const wrongDoc = checkDocumentTitle(doc, documentTitle);
   if (wrongDoc) return { status: 'wrong_doc', errors: [wrongDoc] };
 
-  const tabId = resolveTabId(doc, tab);
+  const tabId = resolveTabId(doc, requestedTabId);
   // Read and write must agree on the segment: indices are per-segment, so runs
   // collected from a header can only be written back with that header's id.
   const seg = await resolveSegmentTarget(clients, documentId, doc, { segment: opts.segment, page: opts.page, tabId });

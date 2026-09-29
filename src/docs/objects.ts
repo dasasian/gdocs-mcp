@@ -63,7 +63,7 @@ export async function insertImage(
     width?: number;
     height?: number;
     align?: 'left' | 'center' | 'right';
-    tab?: string;
+    tabId?: string;
     segment?: SegmentKind;
     page?: SegmentPage;
     createSegment?: boolean;
@@ -72,7 +72,7 @@ export async function insertImage(
   } = {},
 ): Promise<InsertResult> {
   const first = await clients.docs.documents.get({ documentId, includeTabsContent: true });
-  const tabId = resolveTabId(first.data, opts.tab);
+  const tabId = resolveTabId(first.data, opts.tabId);
   // The letterhead case (#23): a logo belongs in the page header, where it
   // repeats and stays sized — not pasted into the body of page 1.
   const seg = await resolveSegmentTarget(clients, documentId, first.data, {
@@ -150,7 +150,7 @@ export interface SegmentOpts {
 
 export interface TableOptions extends SegmentOpts {
   at?: string;
-  tab?: string;
+  tabId?: string;
   data?: string[][];
   columnWidths?: number[]; // points per column
   headerShade?: string; // hex bg color for row 0, e.g. "#f1f3f4"
@@ -269,11 +269,11 @@ async function tableOp(
   clients: GoogleClients,
   documentId: string,
   cellText: string,
-  opts: SegmentOpts & { tab?: string },
+  opts: SegmentOpts & { tabId?: string },
   build: (tcl: docs_v1.Schema$TableCellLocation) => docs_v1.Schema$Request,
 ): Promise<StructureResult> {
   const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
-  const tabId = resolveTabId(doc, opts.tab);
+  const tabId = resolveTabId(doc, opts.tabId);
   // create:false — you can't restructure a table in a header that doesn't exist,
   // so an absent segment is an error to report, not something to conjure up.
   const seg = await resolveSegmentTarget(clients, documentId, doc, { segment: opts.segment, page: opts.page, tabId });
@@ -289,19 +289,19 @@ async function tableOp(
   return { status: 'ok', location: { rowIndex: loc.rowIndex, columnIndex: loc.columnIndex } };
 }
 
-export function insertRow(clients: GoogleClients, documentId: string, cellText: string, opts: SegmentOpts & { below?: boolean; tab?: string } = {}) {
+export function insertRow(clients: GoogleClients, documentId: string, cellText: string, opts: SegmentOpts & { below?: boolean; tabId?: string } = {}) {
   return tableOp(clients, documentId, cellText, opts, (tcl) => ({ insertTableRow: { tableCellLocation: tcl, insertBelow: opts.below ?? true } }));
 }
 
-export function deleteRow(clients: GoogleClients, documentId: string, cellText: string, opts: SegmentOpts & { tab?: string } = {}) {
+export function deleteRow(clients: GoogleClients, documentId: string, cellText: string, opts: SegmentOpts & { tabId?: string } = {}) {
   return tableOp(clients, documentId, cellText, opts, (tcl) => ({ deleteTableRow: { tableCellLocation: tcl } }));
 }
 
-export function insertColumn(clients: GoogleClients, documentId: string, cellText: string, opts: SegmentOpts & { right?: boolean; tab?: string } = {}) {
+export function insertColumn(clients: GoogleClients, documentId: string, cellText: string, opts: SegmentOpts & { right?: boolean; tabId?: string } = {}) {
   return tableOp(clients, documentId, cellText, opts, (tcl) => ({ insertTableColumn: { tableCellLocation: tcl, insertRight: opts.right ?? true } }));
 }
 
-export function deleteColumn(clients: GoogleClients, documentId: string, cellText: string, opts: SegmentOpts & { tab?: string } = {}) {
+export function deleteColumn(clients: GoogleClients, documentId: string, cellText: string, opts: SegmentOpts & { tabId?: string } = {}) {
   return tableOp(clients, documentId, cellText, opts, (tcl) => ({ deleteTableColumn: { tableCellLocation: tcl } }));
 }
 
@@ -341,7 +341,7 @@ function locateTable(doc: docs_v1.Schema$Document, cellText: string, tabId?: str
 }
 
 export interface TableStyleOptions extends SegmentOpts {
-  tab?: string;
+  tabId?: string;
   /** which cells padding/background apply to; default 'table' (the whole table). */
   scope?: 'table' | 'row' | 'column' | 'cell';
   /** cell padding in points (any subset). */
@@ -423,10 +423,10 @@ export async function getTableStyle(
   clients: GoogleClients,
   documentId: string,
   cellText: string,
-  opts: SegmentOpts & { tab?: string } = {},
+  opts: SegmentOpts & { tabId?: string } = {},
 ): Promise<TableStyleInfo> {
   const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
-  const tabId = resolveTabId(res.data, opts.tab);
+  const tabId = resolveTabId(res.data, opts.tabId);
   const seg = await resolveSegmentTarget(clients, documentId, res.data, { segment: opts.segment, page: opts.page, tabId });
   if (seg.error) return { status: 'no_segment', message: seg.error };
   const loc = locateTable(seg.doc, cellText, tabId, seg.segmentId);
@@ -485,7 +485,7 @@ export async function setTableStyle(
   opts: TableStyleOptions = {},
 ): Promise<TableStyleResult> {
   const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
-  const tabId = resolveTabId(res.data, opts.tab);
+  const tabId = resolveTabId(res.data, opts.tabId);
   const seg = await resolveSegmentTarget(clients, documentId, res.data, { segment: opts.segment, page: opts.page, tabId });
   if (seg.error) return { status: 'no_segment', message: seg.error };
   const loc = locateTable(seg.doc, cellText, tabId, seg.segmentId);
@@ -599,7 +599,7 @@ export async function insertTable(
   opts: TableOptions = {},
 ): Promise<InsertResult> {
   const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
-  const tabId = resolveTabId(res.data, opts.tab);
+  const tabId = resolveTabId(res.data, opts.tabId);
   // Unlike the structure ops, inserting may legitimately need the segment made
   // first — same createSegment flag insert_image uses for the letterhead case.
   const seg = await resolveSegmentTarget(clients, documentId, res.data, {

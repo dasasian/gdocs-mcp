@@ -246,11 +246,11 @@ export async function editDoc(
   documentId: string,
   oldString: string,
   newString: string,
-  opts: { replaceAll?: boolean; tab?: string; segment?: SegmentKind; page?: SegmentPage } = {},
+  opts: { replaceAll?: boolean; tabId?: string; segment?: SegmentKind; page?: SegmentPage } = {},
 ): Promise<EditResult> {
   const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
   const revisionId = res.data.revisionId ?? undefined;
-  const tabId = resolveTabId(res.data, opts.tab);
+  const tabId = resolveTabId(res.data, opts.tabId);
   const target = await resolveSegmentTarget(clients, documentId, res.data, { segment: opts.segment, page: opts.page, tabId });
   if (target.error) return { status: 'no_segment', message: target.error };
   const segmentId = target.segmentId;

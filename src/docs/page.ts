@@ -64,10 +64,10 @@ export interface PageSetupInfo {
 export async function getPageSetup(
   clients: GoogleClients,
   documentId: string,
-  opts: { tab?: string } = {},
+  opts: { tabId?: string } = {},
 ): Promise<PageSetupInfo> {
   const doc = await getForPageSetup(clients, documentId);
-  const tabId = resolveTabId(doc, opts.tab);
+  const tabId = resolveTabId(doc, opts.tabId);
   const ds = documentStyleOf(doc, tabId);
   const mag = (d: docs_v1.Schema$Dimension | undefined): number | undefined => d?.magnitude ?? undefined;
 
@@ -97,11 +97,11 @@ export async function setPageSetup(
   clients: GoogleClients,
   documentId: string,
   setup: PageSetup,
-  opts: { tab?: string } = {},
+  opts: { tabId?: string } = {},
 ): Promise<PageSetupResult> {
   const doc = await getForPageSetup(clients, documentId);
   const revisionId = doc.revisionId ?? undefined;
-  const tabId = resolveTabId(doc, opts.tab);
+  const tabId = resolveTabId(doc, opts.tabId);
 
   const documentStyle: docs_v1.Schema$DocumentStyle = {};
   const fields: string[] = [];

@@ -31,7 +31,7 @@ export async function readDoc(
   clients: GoogleClients,
   documentId: string,
   mode: ReadMode = 'clean',
-  tab?: string,
+  requestedTabId?: string,
   opts: { segment?: SegmentKind | 'all'; page?: SegmentPage } = {},
 ): Promise<ReadResult> {
   const res = await clients.docs.documents.get({
@@ -39,7 +39,7 @@ export async function readDoc(
     includeTabsContent: true,
     suggestionsViewMode: VIEW_MODE[mode],
   });
-  const tabId = resolveTabId(res.data, tab);
+  const tabId = resolveTabId(res.data, requestedTabId);
   const tracked = mode === 'tracked';
   const segments = listSegments(res.data, tabId);
   const title = res.data.title ?? '';

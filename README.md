@@ -134,7 +134,7 @@ You don't have to edit that file by hand — just tell the agent *"make damithsc
 | `list_accounts` | Authorized Google accounts |
 | `set_project_default` / `get_project_config` | Set/show this project’s default account + folder (writes `.gdocs-mcp.json`) |
 
-Every doc tool accepts an optional `account` (override the default) and, where relevant, a `tab` (target a tab by id or title).
+Every doc tool takes one `path` for the doc — an id, a URL, `/Work/Contract` or `/Work/Contract/Ch.4` — and an optional `account` (override the default). A doc with one tab needs no tab step; a doc with several is refused until one is named, and the refusal lists every tab's path. Two tabs (or a folder and a doc) with one name are refused with each candidate's id.
 
 ## Drive as a filesystem
 

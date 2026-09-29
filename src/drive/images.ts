@@ -92,10 +92,10 @@ export async function downloadImages(
   clients: GoogleClients,
   documentId: string,
   destDir: string,
-  tab?: string,
+  requestedTabId?: string,
 ): Promise<DownloadedImage[]> {
   const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
-  const tabId = resolveTabId(doc, tab);
+  const tabId = resolveTabId(doc, requestedTabId);
   const objects = inlineObjectsOf(doc, tabId);
   const token = (await clients.auth.getAccessToken()).token;
   mkdirSync(destDir, { recursive: true });

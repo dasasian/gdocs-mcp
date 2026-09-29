@@ -119,7 +119,7 @@ export async function insertContent(
   clients: GoogleClients,
   documentId: string,
   content: string,
-  opts: { at?: string; tab?: string; baseDir?: string; segment?: SegmentKind; page?: SegmentPage; createSegment?: boolean } = {},
+  opts: { at?: string; tabId?: string; baseDir?: string; segment?: SegmentKind; page?: SegmentPage; createSegment?: boolean } = {},
 ): Promise<{
   status: 'ok' | 'not_found' | 'ambiguous' | 'no_segment';
   message?: string;
@@ -131,7 +131,7 @@ export async function insertContent(
   createdSegment?: string;
 }> {
   const first = await clients.docs.documents.get({ documentId, includeTabsContent: true });
-  const tabId = resolveTabId(first.data, opts.tab);
+  const tabId = resolveTabId(first.data, opts.tabId);
   const seg = await resolveSegmentTarget(clients, documentId, first.data, {
     segment: opts.segment,
     page: opts.page,
@@ -220,10 +220,10 @@ export async function overwriteDoc(
   clients: GoogleClients,
   documentId: string,
   content: string,
-  opts: { force?: boolean; tab?: string; baseDir?: string; expectTitle?: string } = {},
+  opts: { force?: boolean; tabId?: string; baseDir?: string; expectTitle?: string } = {},
 ): Promise<{ status: 'ok' | 'blocked' | 'mismatch'; message?: string; warnings?: string[]; images?: { src: string; objectId: string }[] }> {
   const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
-  const tabId = resolveTabId(doc, opts.tab);
+  const tabId = resolveTabId(doc, opts.tabId);
 
   if (opts.expectTitle !== undefined && opts.expectTitle !== (doc.title ?? '')) {
     return { status: 'mismatch', message: `expectTitle "${opts.expectTitle}" != live doc title "${doc.title ?? ''}". Refusing to overwrite a different doc than intended.` };
