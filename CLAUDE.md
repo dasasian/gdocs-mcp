@@ -27,8 +27,9 @@ one, do this review and record the trade-off in the PR/commit:
 
 1. **Default to enhancing an existing tool.** Can this be a new parameter or a
    `target`/`op` variant on a tool that already exists? Prefer that. Examples we
-   chose: whole-document styling became a `whole_document` flag on `set_style`,
-   not a new tool; file passthrough became `contentFile` on create/overwrite.
+   chose: headers and footers became a `segment` param on every content tool,
+   not a family of their own; file passthrough became `contentFile` on
+   create/overwrite.
 2. **Merge symmetric verbs.** CRUD verbs that share a target and param shape
    should be one parametric tool: `edit_table({op, side})`, `update_doc({name?,
    folder?})`, `add_comment({replyTo?})`, `share_doc` (person vs. link),
@@ -50,12 +51,13 @@ one, do this review and record the trade-off in the PR/commit:
    the selector (#43).
 5. **Uniform-vocabulary targets can merge; target-dependent style can't.** A tool
    is clearest to the model when its style/param fields don't change based on the
-   target. `set_style` covers `from`/`to`/`whole` because they share one text+
-   paragraph vocabulary; it does NOT absorb table or page styling (different
-   fields). Reads over a *range* are ambiguous (mixed styles) — that's why
-   `get_style` stays single-anchor while `set_style` takes a selection.
-6. **Pair reads with writes.** `get_style`/`set_style`, `get_page_setup`/
-   `set_page_setup`. A setter for a new dimension gets a matching getter. Shipping
+   target. Paragraph and run style go through `edit_doc` as CSS because they
+   share one vocabulary (DESIGN.md §2a); table and page styling do NOT (different
+   fields), so `set_table_style` and `set_page_setup` stay their own tools.
+6. **Pair reads with writes.** Every write must be visible to a read. For
+   paragraph and run style that read is `read_doc` itself — the CSS it emits is
+   the CSS `edit_doc` accepts, so no getter is needed. Anything markdown can't
+   carry gets a getter: `get_page_setup`/`set_page_setup`. Shipping
    without one is a deliberate choice you state in the commit, not a default —
    this rule used to say "consider", which is how `set_table_style` shipped with
    no reader at all, leaving column widths and shading settable but invisible

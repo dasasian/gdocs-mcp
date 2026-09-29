@@ -26,19 +26,68 @@ There is no canonical local copy and no continuous sync in the core model. The G
 The agent reads and writes **GitHub-flavored markdown with inline HTML**:
 
 - **Content & inline emphasis** → markdown (`#`, `**bold**`, lists, tables, links).
-- **Docs-only formatting** markdown can't express (alignment/justify, color, font, size, spacing, indent, image dimensions) → inline HTML (`<p style="text-align: justify">`, `<span style="color:#1a73e8">`, `<img width="400">`).
+- **Docs-only formatting** markdown can't express (alignment, color, font, size, spacing, indent, image dimensions) → CSS, in the two places a web page puts it (§2a): a `<style>` block for the document's defaults, and `style="…"` on a `<p>` or `<span>` that differs from them. `<img width="400">` for images.
 - **Suggestions / tracked changes** → HTML `<ins>` / `<del>` with an ID marker (`data-sug` attribute or `<!-- sug:id -->`).
 
 This single format does both jobs: formatting is **visible in the read** (so the agent can perceive *and* verify style changes), and it is a format the agent authors natively. It replaces an earlier "clean markdown + separate formatting sidecar" idea.
 
 "Visible in the read" is the load-bearing half, and it was aspirational for a
 while: the writer parsed `<span style="color:…">` and `<img width>` long before
-the reader emitted either, so a `set_style` colour change or an image's size
-simply vanished on the next read — the agent could not verify its own edit.
-Closed in #30. The rule that follows: a construct the writer accepts must be a
-construct the reader emits, or the escape hatch is a one-way valve.
+the reader emitted either, so a colour change or an image's size simply vanished
+on the next read — the agent could not verify its own edit. Closed in #30. The
+rule that follows: a construct the writer accepts must be a construct the reader
+emits, or the escape hatch is a one-way valve.
 
 Markdown is otherwise a ceiling — it cannot express alignment, color, fonts, image sizing, etc. The HTML escape-hatch is what lifts that ceiling.
+
+### 2a. Style is CSS, and the read is the only place to see it
+
+There is one place style lives: the markdown `read_doc` returns. No separate style
+reader, no separate style writer. The agent already knows how a web page is styled,
+so the doc is styled the same way:
+
+```
+<style>
+p        { font-family: Arial; font-size: 11pt; margin-bottom: 8pt }
+h1       { font-size: 20pt; font-weight: bold }
+.title   { font-size: 26pt }
+</style>
+
+# Agreement
+<p class="title">Operating Agreement</p>
+<p style="margin-left:36pt; text-indent:-18pt">4. Term. The Company shall…</p>
+```
+
+- **The `<style>` block is the named styles.** One rule per named style: `p` is
+  Normal text, `h1`–`h6` the headings, `.title` / `.subtitle` the two named styles
+  HTML has no tag for (a paragraph in one reads as `<p class="title">`). Editing a
+  rule is one `updateNamedStyle`, so the whole document restyles by inheritance,
+  exactly as the CSS cascade says it should. Live-verified: `updateNamedStyle`
+  rejects the request unless `namedStyleType` is in its field mask.
+- **`style="…"` appears only where a paragraph or run differs from its rule.** A
+  paragraph with no `style` inherits; that is what "inherited" means, and the agent
+  reads it without being told. Emitting every resolved value on every paragraph
+  would double the read and bury the text `edit_doc` anchors on.
+- **Units are `pt`.** Docs stores points; converting to `in`/`em` on the way out
+  would make every round trip lossy.
+- **CSS and Docs measure first-line indent differently.** CSS `text-indent` is
+  relative to `margin-left`; Docs `indentFirstLine` is measured from the page
+  margin. The reader emits `text-indent = indentFirstLine − indentStart` and the
+  writer adds it back, so a hanging indent reads as the negative `text-indent` a
+  web author would write.
+- **List nesting owns list indent.** A list item's indent comes from its nesting
+  level, which markdown already carries. The reader never emits `margin-left` or
+  `text-indent` a list's nesting explains; emitting it would indent the item twice
+  on the next write, and again on every read → write after.
+
+**A property the writer can't apply is an error, not text.** The supported set is
+small and named in `markdown-spec`. A `style` holding anything else — `border`,
+`float`, a typo — fails the whole write before any request is sent, and the error
+names every offending line and the supported set, so the agent fixes all of them
+in one retry. The bug this replaces (#49): the writer knew one shape,
+`<p style="text-align:…">`, and wrote any other `<p style>` into the document as
+visible characters. An agent that inferred `text-indent` from `text-align` — a
+correct inference about CSS — shipped the literal tag into a legal document.
 
 ---
 
@@ -51,15 +100,13 @@ only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 
 | Tool | Role |
 |---|---|
-| `read_doc(doc, tab?, mode, segment?)` | Read as markdown+HTML — colour/size/font as `<span style>`, images as `<img src="image:…" width height>` (§2). `mode`: `clean` (default) · `tracked` (`<ins>/<del>`+IDs) · `accepted` · `rejected`. `segment`: `body`/`header`/`footer`/`all` (§3a) |
-| `edit_doc(doc, old_string, new_string, tab?, replace_all?, strict?, segment?)` | String-anchored edit (the workhorse) |
+| `read_doc(doc, tab?, mode, segment?)` | Read as markdown+HTML — a `<style>` block of the named styles, `style="…"` where a paragraph or run differs, images as `<img src="image:…" width height>` (§2, §2a). `mode`: `clean` (default) · `tracked` (`<ins>/<del>`+IDs) · `accepted` · `rejected`. `segment`: `body`/`header`/`footer`/`all` (§3a) |
+| `edit_doc(doc, old_string, new_string, tab?, replace_all?, strict?, segment?)` | String-anchored edit (the workhorse). Also the only style writer: a `style`, a class, or a `<style>` rule (§2a, §4) |
 | `overwrite_doc(doc, content\|contentFile, tab?)` | Wholesale replace — **guarded** (§4) |
 | `insert_content(doc, content\|contentFile, at?, tab?)` | Insert new content at a structural position (`end`/`top`/anchor) — the non-anchored counterpart to `edit_doc` (§4) |
 | `export_doc(doc, dir, format?, filename?)` | Server-side render to pdf/docx/odt/rtf/txt/html/epub/md via Drive `files.export` |
 | `create_doc(content\|contentFile, folder?)` | New doc (`contentFile` reads a long body server-side, no inline retype) |
 | `drive(cmd, args, expectName?, acceptOwnershipTransfer?)` | Drive as a shell: `ls` · `find` · `mkdir` · `cp` · `mv`. `mv` covers rename and move; `cp` is Drive `files.copy` (§3c) |
-| `set_style(doc, {from,to?}\|whole_document, style, tab?)` | Style existing text **in place** by selection or whole-doc, no content change |
-| `get_style(doc, target_string, tab?)` | Read the computed style at an anchor (read side of `set_style`) |
 | `set_page_setup / get_page_setup(doc, tab?)` | Document page setup: margins, page size, orientation |
 | `insert_image(doc, at, uri, width?, height?, align?, baseDir?, segment?, tab?)` | Images from a URL or a local file (markdown can't size/place them) |
 | `insert_table(doc, rows, cols, data?, align?, segment?, tab?)` · `edit_table(doc, cell, op, side?, segment?)` · `set_table_style / get_table_style(doc, cell, segment?)` | Tables: create (cells take inline markdown), insert/delete row-or-column, style and read style back. `segment` reaches a letterhead table (§3a) |
@@ -75,7 +122,7 @@ only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 
 Drive navigation is one tool speaking shell (`ls` · `find` · `mkdir` · `cp` · `mv`)
 rather than five bespoke names. The trick this project already plays with markdown
-(`read_doc`), the file-edit idiom (`edit_doc`) and CSS (`set_style`) needs three
+(`read_doc`), the file-edit idiom (`edit_doc`) and CSS (§2a) needs three
 conditions to hold together: the vocabulary is **pre-trained**, the namespace is
 **stable**, and an **interpreter** is cheap. Miss the first and the surface has not
 shrunk — it has moved from a typed schema into prose the model reads less reliably.
@@ -157,11 +204,29 @@ Two rules this design enforces:
 - **>1 matches** → error listing each with surrounding context; agent retries with more context (same escape hatch as local `Edit`). This is also how disambiguation works without polluting reads with anchor IDs.
 - **`replace_all`** flag, same semantics as local `Edit`.
 
-**Output (`new_string`):** interpreted as **markdown + inline HTML** for inline constructs (bold/italic/code/links + HTML styling). Inserted text inherits the paragraph style of the match location. Block-level restructuring (new tables, headings from scratch) goes through dedicated insert tools, not `edit_doc`.
+**Output (`new_string`):** interpreted as **markdown + inline HTML** for inline constructs (bold/italic/code/links + `<span style>`), plus a paragraph's own `<p style="…">` / `<p class="…">`. Inserted text inherits the paragraph style of the match location. Block-level restructuring (new tables, headings from scratch) goes through dedicated insert tools, not `edit_doc`.
 
 Design asymmetry, deliberate: **locate by loose plain-text match, author with markdown/HTML formatting.**
 
-**`set_style` vs inline HTML in `edit_doc`:** complementary. `edit_doc` changes content (and inline style as written). `set_style` styles text that is *already there*, by selection (`from`/`to`) or whole-document, without re-typing it (avoids transcription risk) and returns *what it set* (restores the verify loop).
+**Same words in, same words out → a style-only edit.** When `old_string` and
+`new_string` carry the same text and differ only in markup, `edit_doc` sends only
+`updateParagraphStyle` / `updateTextStyle` and never deletes or inserts. The words
+cannot change because no request that could change them is built — not because
+the agent was careful to copy them. That guarantee is what lets the anchor stay
+short: indenting a 300-word clause is
+
+```
+old_string: <p>4. Term
+new_string: <p style="text-indent:36pt">4. Term
+```
+
+and the other 298 words are never sent. Styling many paragraphs is many such
+edits; there is no range-styling tool, because the main path covers it.
+
+**The `<style>` block is edited the same way.** `old_string` is a rule or part of
+one (`p { font-size: 11pt`), `new_string` the changed rule; the edit becomes one
+`updateNamedStyle` for that named style, and every paragraph that doesn't override
+it follows.
 
 **`overwrite_doc` guard:** wholesale replace orphans comments and wipes suggestions. If the target has comments/suggestions, the tool **warns and requires confirmation** before proceeding. `edit_doc` (surgical, anchor-preserving) is the default for nearly everything. A future "smart replace" (diff new vs current, emit minimal edits) is a later upgrade.
 
@@ -291,7 +356,7 @@ Use case: chapter `.md` files ⇄ one Doc with one tab per chapter, with review 
   Claude Code (orchestration)                 MCP server (primitives)
   • read local chapter .md (filesystem)  ──▶  read_doc · edit_doc
   • decide file↔tab mapping                   list_suggestions · apply_suggestions
-  • reason about / merge differences          add_tab · set_style · comments
+  • reason about / merge differences          add_tab · edit_doc  · comments
   • go through suggestions, judge each        overwrite_doc(markdown, tab) ← push a chapter
   • apply the result as edits            ──▶  create_doc(markdown)
 ```
@@ -379,7 +444,7 @@ Security posture is first-class: token files `0600`, scope justification documen
 
 The three differentiators are unproven *because* nobody has done them:
 1. **Suggestion accept/reject via range-reconstruction** — ✅ **validated** (spike): clean ACCEPT of a replacement (no ghost) *and* multi-suggestion batch resolve with descending-index ordering (no corruption). Remaining cases (reject path, insertion/deletion-only, style) are lower-risk variants of the same proven mechanism.
-2. **markdown + HTML + `<ins>/<del>` round-trip** — ✅ **read validated**; ✅ **style-write validated** via `set_style`; ✅ **inline `new_string` markdown *and* HTML validated** in `edit_doc`; ✅ **block-level markdown→Docs validated** (`write.ts`: headings, paragraphs, inline, bullet/ordered nested lists → `create_doc`/`overwrite_doc`, with a **lossless live round-trip** md→Docs→md). Reader/writer share `markdown-spec` constants + round-trip tests (the "extend in pairs" discipline) instead of a bidirectional spec engine. Open: Tier-2 blocks (tables, images, code blocks) in the renderer.
+2. **markdown + HTML + `<ins>/<del>` round-trip** — ✅ **read validated**; ✅ **style-write validated** (paragraph, text and named styles, §2a); ✅ **inline `new_string` markdown *and* HTML validated** in `edit_doc`; ✅ **block-level markdown→Docs validated** (`write.ts`: headings, paragraphs, inline, bullet/ordered nested lists → `create_doc`/`overwrite_doc`, with a **lossless live round-trip** md→Docs→md). Reader/writer share `markdown-spec` constants + round-trip tests (the "extend in pairs" discipline) instead of a bidirectional spec engine. Open: Tier-2 blocks (tables, images, code blocks) in the renderer.
 3. **String-anchored editing over batchUpdate** — ✅ **validated in code**: plain-text projection + index map across runs, exact + markup-tolerant match, ambiguity→context, optimistic revision, delete+insert. Live round-trip edit confirmed. Open: whitespace-normalized matching; new_string formatting.
 
 The canonical-projection requirement (§10b) is the linchpin for AI-merge and a stressor for round-trip fidelity generally.
