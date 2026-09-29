@@ -543,4 +543,13 @@ describe('a doc is a folder of tabs (#55)', () => {
     const r = await driveShell(clients, 'cp', ['/Work/Contract/Notes', '/Archive']);
     expect(r.status).toBe('unsupported');
   });
+
+  it('a folder id or folder URL starts a path, and the walk goes on into a doc and its tabs', async () => {
+    const { clients } = driveWith([...CONTRACT], [], CONTRACT_TABS);
+    const byId = await driveShell(clients, 'ls', ['work/Contract/Part 2']);
+    const byUrl = await driveShell(clients, 'ls', ['https://drive.google.com/drive/folders/work']);
+    expect((byId.entries as { name: string }[]).map((e) => e.name)).toEqual(['Ch.4']);
+    expect((byUrl.entries as { name: string }[]).map((e) => e.name)).toContain('Contract');
+    expect(byUrl.id).toBe('work');
+  });
 });

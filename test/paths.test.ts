@@ -80,6 +80,12 @@ describe('resolveTab (#55)', () => {
     expect((error as Error).message).toMatch(/t\.a.*\n.*t\.b/);
   });
 
+  it('a folder id starts a path that goes on into a doc and its tabs', async () => {
+    const clients = clientsWith(CONTRACT);
+    expect(await resolveTab(clients, 'work/Contract/Part 2/Ch.4')).toMatchObject({ documentId: 'contract', tabId: 't.c' });
+    expect(await resolveTab(clients, 'work/Memo')).toMatchObject({ documentId: 'memo', tabId: 't.0' });
+  });
+
   it('refuses a folder, and a tab that does not exist', async () => {
     const clients = clientsWith(CONTRACT);
     await expect(resolveTab(clients, '/Work')).rejects.toThrow(/folder/);

@@ -209,8 +209,10 @@ the way a file path names a file: an id, a URL, `/Work/Contract`, or
 `/Work/Contract/Ch.4`. There is no separate `tab` parameter. The path is walked
 one step at a time against Drive; the first step that is a Google Doc switches
 the walk from folders to that doc's tabs, and a nested tab is one more step
-(`/Work/Contract/Part 2/Ch.4`). An id or URL can start the path
-(`1wIt…/Ch.4`), and a step can be a tabId instead of a title.
+(`/Work/Contract/Part 2/Ch.4`). An id or URL can start the path,
+and what it names decides where the walk begins: a doc id walks into its tabs
+(`1wIt…/Ch.4`), a folder id or folder URL walks into the folder
+(`<folderId>/Contract/Ch.4`). A step can be a tabId instead of a title.
 
 The file prior holds where the path is ambiguous, because the tool refuses
 rather than picks:

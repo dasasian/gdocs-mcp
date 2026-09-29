@@ -146,6 +146,18 @@ describe('write_doc creates without asking (#55)', () => {
     expect(world.requests[0]).toEqual([{ addDocumentTab: { tabProperties: { title: 'Ch.5', parentTabId: 't.b' } } }]);
   });
 
+  it('a folder id followed by a new name creates a doc in that folder, and a folder URL does too', async () => {
+    const world = newWorld();
+    const byId = await writeDoc(worldClients(world), 'work/Brief', 'hello');
+    const byUrl = await writeDoc(worldClients(world), 'https://drive.google.com/drive/folders/work/Brief2', 'hello');
+    expect(byId).toMatchObject({ status: 'created', kind: 'doc', path: 'work/Brief' });
+    expect(byUrl).toMatchObject({ status: 'created', kind: 'doc' });
+    expect(world.created).toEqual([
+      { name: 'Brief', mimeType: DOC, parents: ['work'] },
+      { name: 'Brief2', mimeType: DOC, parents: ['work'] },
+    ]);
+  });
+
   it('an id followed by a new tab step also creates a tab', async () => {
     const world = newWorld();
     const r = await writeDoc(worldClients(world), 'contract/Notes', 'hello');

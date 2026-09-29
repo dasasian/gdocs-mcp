@@ -215,6 +215,8 @@ export function parseDriveId(input: string): string {
 
 function splitIdAndSteps(input: string): { id: string; steps: string[] } {
   const trimmed = input.trim();
+  const folderUrl = /^https?:\/\/[^/]+\/drive\/(?:u\/\d+\/)?folders\/([\w-]+)((?:\/[^?#]*)?)/.exec(trimmed);
+  if (folderUrl) return { id: folderUrl[1], steps: splitPath(decodeURIComponent(folderUrl[2])) };
   if (/^https?:\/\//.test(trimmed)) {
     const tab = /[?&]tab=([^&#]+)/.exec(trimmed)?.[1];
     return { id: parseDriveId(trimmed), steps: tab ? [decodeURIComponent(tab)] : [] };
@@ -223,41 +225,16 @@ function splitIdAndSteps(input: string): { id: string; steps: string[] } {
   return { id: parseDriveId(id ?? ''), steps };
 }
 
-/**
- * The one path walker. Folders are walked against Drive; the first step that is
- * a Google Doc switches the walk to that doc's tabs, and a nested tab is one more
- * step. Refuses rather than guessing when a step matches more than one thing.
- */
-export async function resolvePath(clients: GoogleClients, path: string): Promise<Resolution> {
-  const rooted = await resolveRoot(clients, path);
-  if ('error' in rooted) return { ok: false, status: 'not_found', message: rooted.error };
-  const { root, segments } = rooted;
-
-  if (root.kind === 'lost+found' || root.kind === 'shared-with-me') {
-    const where = root.kind === 'lost+found' ? LOST_FOUND : SHARED_WITH_ME;
-    if (segments.length) {
-      return { ok: false, status: 'not_found', message: `${where} is a flat collection, not a tree — list it with \`ls ${where}\` and address an entry by id.` };
-    }
-    return { ok: false, status: 'not_found', message: `${where} is a collection, not a folder; it cannot be a target.` };
-  }
-
-  const rootPath = root.kind === 'shared-drive' ? `${SHARED_ROOT}/${root.name}` : '';
-  const start: Resolved = {
-    id: root.id,
-    name: root.kind === 'shared-drive' ? root.name : 'My Drive',
-    isFolder: true,
-    isDoc: false,
-    path: rootPath || '/',
-  };
+async function walkFolders(clients: GoogleClients, start: Resolved, segments: string[], driveId?: string): Promise<Resolution> {
   if (!segments.length) return { ok: true, entry: start };
-
-  const pool = await candidatesFor(clients, segments, root.kind === 'shared-drive' ? root.id : undefined);
+  const pool = await candidatesFor(clients, segments, driveId);
+  const prefix = start.path === '/' ? '' : start.path;
 
   let current = start;
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i];
     const last = i === segments.length - 1;
-    const walked = `${rootPath}/${segments.slice(0, i + 1).join('/')}`;
+    const walked = `${prefix}/${segments.slice(0, i + 1).join('/')}`;
     const here = pool.filter(
       (c) => fold(c.name) === fold(segment) && c.parents.includes(current.id) && (last || c.isFolder || c.isDoc),
     );
@@ -283,7 +260,35 @@ export async function resolvePath(clients: GoogleClients, path: string): Promise
   return { ok: true, entry: current };
 }
 
-/** A path, or a Drive id or URL optionally followed by tab steps (`<id>/Ch.4`, or a URL with `?tab=`). */
+/**
+ * The one path walker. Folders are walked against Drive; the first step that is
+ * a Google Doc switches the walk to that doc's tabs, and a nested tab is one more
+ * step. Refuses rather than guessing when a step matches more than one thing.
+ */
+export async function resolvePath(clients: GoogleClients, path: string): Promise<Resolution> {
+  const rooted = await resolveRoot(clients, path);
+  if ('error' in rooted) return { ok: false, status: 'not_found', message: rooted.error };
+  const { root, segments } = rooted;
+
+  if (root.kind === 'lost+found' || root.kind === 'shared-with-me') {
+    const where = root.kind === 'lost+found' ? LOST_FOUND : SHARED_WITH_ME;
+    if (segments.length) {
+      return { ok: false, status: 'not_found', message: `${where} is a flat collection, not a tree — list it with \`ls ${where}\` and address an entry by id.` };
+    }
+    return { ok: false, status: 'not_found', message: `${where} is a collection, not a folder; it cannot be a target.` };
+  }
+
+  const start: Resolved = {
+    id: root.id,
+    name: root.kind === 'shared-drive' ? root.name : 'My Drive',
+    isFolder: true,
+    isDoc: false,
+    path: root.kind === 'shared-drive' ? `${SHARED_ROOT}/${root.name}` : '/',
+  };
+  return walkFolders(clients, start, segments, root.kind === 'shared-drive' ? root.id : undefined);
+}
+
+/** A path, or a Drive id or URL optionally followed by more steps (`<folderId>/Doc/Ch.4`, `<docId>/Ch.4`, or a URL with `?tab=`); the id decides whether the walk starts in a folder or in a doc's tabs. */
 export async function resolveEntry(clients: GoogleClients, input: string): Promise<Resolution> {
   if (looksLikePath(input)) return resolvePath(clients, input);
   const { id, steps } = splitIdAndSteps(input);
@@ -301,7 +306,8 @@ export async function resolveEntry(clients: GoogleClients, input: string): Promi
     path: id,
   };
   if (!steps.length) return { ok: true, entry };
-  if (!entry.isDoc) return { ok: false, status: 'not_found', message: `"${entry.name}" is not a Google Doc, so it has no tabs to walk into.` };
+  if (entry.isFolder) return walkFolders(clients, entry, steps);
+  if (!entry.isDoc) return { ok: false, status: 'not_found', message: `"${entry.name}" is neither a folder nor a Google Doc, so there is nothing to walk into.` };
   return descendIntoDoc(clients, entry, steps);
 }
 
