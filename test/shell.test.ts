@@ -508,6 +508,36 @@ describe('a doc is a folder of tabs (#55)', () => {
     expect(r.status).toBe('exists');
   });
 
+  it('mv of a tab onto itself with an index reorders it in place, under the same parent', async () => {
+    const { clients, tabUpdates } = driveWith([...CONTRACT], [], CONTRACT_TABS);
+    const top = await driveShell(clients, 'mv', ['/Work/Contract/Notes', '/Work/Contract/Notes'], { index: 0 });
+    const nested = await driveShell(clients, 'mv', ['/Work/Contract/Part 2/Ch.4', '/Work/Contract/Part 2/Ch.4'], { index: 0 });
+    expect([top.status, nested.status]).toEqual(['ok', 'ok']);
+    expect(tabUpdates).toEqual([
+      { updateDocumentTabProperties: { tabProperties: { tabId: 't.d', index: 0 }, fields: 'index' } },
+      { updateDocumentTabProperties: { tabProperties: { tabId: 't.c', index: 0 }, fields: 'index' } },
+    ]);
+  });
+
+  it('mv of a tab onto itself with no index changes nothing and says so', async () => {
+    const { clients, tabUpdates } = driveWith([...CONTRACT], [], CONTRACT_TABS);
+    const r = await driveShell(clients, 'mv', ['/Work/Contract/Notes', '/Work/Contract/Notes']);
+    expect(r).toMatchObject({ status: 'ok', unchanged: true });
+    expect(tabUpdates).toEqual([]);
+  });
+
+  it('mv of a tab under itself or its own descendant is refused', async () => {
+    const { clients, tabUpdates } = driveWith([...CONTRACT], [], CONTRACT_TABS);
+    const underItself = await driveShell(clients, 'mv', ['/Work/Contract/Part 2', '/Work/Contract/Part 2/Part 2']);
+    const underChild = await driveShell(clients, 'mv', ['/Work/Contract/Part 2', '/Work/Contract/Part 2/Ch.4']);
+    const underChildByName = await driveShell(clients, 'mv', ['/Work/Contract/Part 2', '/Work/Contract/Part 2/Ch.4/Deeper']);
+    for (const r of [underItself, underChild, underChildByName]) {
+      expect(r.status).not.toBe('ok');
+      expect(r.message).toMatch(/itself|its own/);
+    }
+    expect(tabUpdates).toEqual([]);
+  });
+
   it('cp of a tab is refused', async () => {
     const { clients } = driveWith([...CONTRACT], [], CONTRACT_TABS);
     const r = await driveShell(clients, 'cp', ['/Work/Contract/Notes', '/Archive']);

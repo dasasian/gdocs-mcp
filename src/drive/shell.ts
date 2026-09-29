@@ -275,6 +275,13 @@ async function cp(clients: GoogleClients, args: string[]): Promise<ShellResult> 
   };
 }
 
+function isSelfOrDescendant(tabs: TabRef[], tabId: string, candidateId: string | null): boolean {
+  for (let id = candidateId; id; id = tabs.find((t) => t.tabId === id)?.parentTabId ?? null) {
+    if (id === tabId) return true;
+  }
+  return false;
+}
+
 async function mvTab(clients: GoogleClients, tab: TabRef, dst: string, index: number | undefined): Promise<ShellResult> {
   const destination = await resolveEntry(clients, dst);
   let parent: Resolved;
@@ -293,10 +300,13 @@ async function mvTab(clients: GoogleClients, tab: TabRef, dst: string, index: nu
       { status: 'unsupported', id: tab.documentId },
     );
   }
-  const parentTabId = parent.tab?.tabId ?? null;
-  if (parentTabId === tab.tabId) return fail(`A tab cannot be moved into itself: "${dst}".`);
-
   const tabs = await listTabs(clients, tab.documentId, tab.documentPath);
+  const stayingPut = destination.ok && destination.entry.tab?.tabId === tab.tabId;
+  const parentTabId = stayingPut ? tab.parentTabId : (parent.tab?.tabId ?? null);
+  if (!stayingPut && isSelfOrDescendant(tabs, tab.tabId, parentTabId)) {
+    return fail(`A tab cannot be moved under itself or its own descendant: "${dst}".`, { status: 'unsupported', tabId: tab.tabId });
+  }
+
   const clash = tabs.find((t) => t.parentTabId === parentTabId && t.tabId !== tab.tabId && t.title.toLowerCase() === title.toLowerCase());
   if (clash) {
     return fail(
@@ -310,7 +320,9 @@ async function mvTab(clients: GoogleClients, tab: TabRef, dst: string, index: nu
     ...(parentTabId !== tab.parentTabId ? { parentTabId: parentTabId ?? '' } : {}),
     ...(index !== undefined ? { index } : {}),
   };
-  if (!Object.keys(change).length) return { status: 'ok', tabId: tab.tabId, name: tab.title, unchanged: true };
+  if (!Object.keys(change).length) {
+    return { status: 'ok', tabId: tab.tabId, name: tab.title, unchanged: true, message: 'Nothing to change: the tab is already there. Pass index to reorder it.' };
+  }
   try {
     await updateTab(clients, tab.documentId, tab.tabId, change);
   } catch (e) {
