@@ -185,6 +185,7 @@ describe('write_doc replaces only when the loss summary is passed back (#55)', (
     const r = await writeDoc(worldClients(world), '/Work/Memo', 'new text');
     expect(r.status).toBe('confirm_required');
     if (r.status !== 'confirm_required') return;
+    expect(r.message.startsWith('Ask the user before doing anything else')).toBe(true);
     expect(r.message).toContain('Replacing "/Work/Memo" removes 6 paragraphs, 2 comments, 1 suggestion, 2 tab stops');
     expect(r.confirmLoss).toBe(confirmLossToken(measureLoss(lossDoc, 't.0', 2), 'rev-1'));
     expect(world.requests).toEqual([]);
@@ -211,6 +212,7 @@ describe('write_doc replaces only when the loss summary is passed back (#55)', (
     expect(second.status).toBe('confirm_required');
     expect(world.requests).toEqual([]);
     if (second.status === 'confirm_required') {
+      expect(second.message.startsWith('Ask the user before doing anything else')).toBe(true);
       expect(second.message).toContain('changed since');
       expect(second.confirmLoss).not.toBe(first.confirmLoss);
     }

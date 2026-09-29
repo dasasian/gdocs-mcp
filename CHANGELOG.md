@@ -50,6 +50,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The `write_doc` refusal leads with the instruction to ask the user (#55).** It opens "Ask the user before doing anything else: nothing has been changed, and the user has not agreed to this yet", then the loss list, then how to confirm. Headless Haiku had confirmed its own loss without asking in 2 of 3 runs, so the text now says the thing that mattered first; it is wording only, not a guard.
 - `overwrite_doc` clears the paragraph style the new text would inherit from the paragraph it lands in; an indent on the old last paragraph no longer leaks into the first new one (#49).
 - Title and Subtitle paragraphs read as `<p class="title">` / `<p class="subtitle">` instead of `# …` (#49).
 

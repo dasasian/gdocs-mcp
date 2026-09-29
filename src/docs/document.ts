@@ -259,7 +259,7 @@ async function replaceTab(
     const changed = opts.confirmLoss !== undefined;
     return {
       status: 'confirm_required',
-      message: `${changed ? 'The doc changed since that summary, or the summary was not passed back as given. ' : ''}Replacing "${asNamed}" removes ${lossSummary(loss)}. Tell the user; if they agree, call write_doc again with the same content and confirmLoss set to the string below.`,
+      message: `Ask the user before doing anything else: nothing has been changed, and the user has not agreed to this yet. ${changed ? 'The doc changed since the earlier summary, or the summary was not passed back as given, so this is a fresh one. ' : ''}Replacing "${asNamed}" removes ${lossSummary(loss)}. Show the user that list and wait for a yes. Only after a yes, call write_doc again with the same content and confirmLoss set to the string below, exactly.`,
       lost: loss,
       details: lossDetails(loss, flattenTabs(doc).length > 1),
       confirmLoss,
