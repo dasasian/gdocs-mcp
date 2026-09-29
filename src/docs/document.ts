@@ -280,15 +280,51 @@ async function replaceTab(
   return { status: 'replaced', path: tab.path, documentId: tab.documentId, tabId: tab.tabId, ...(warnings.length ? { warnings } : {}), ...(images.length ? { images } : {}) };
 }
 
-async function refuseBareName(clients: GoogleClients, name: string, defaultFolder: string | undefined): Promise<WriteDocResult> {
-  if (!defaultFolder) return { status: 'not_created', message: `Not created: no folder was given. Name a folder, e.g. ~/${name}.` };
-  const folder = (await folderPathOf(clients, defaultFolder)) ?? parseDriveId(defaultFolder);
-  const suggestedPath = `${folder === '/' ? '' : folder}/${name}`;
+function topOfMyDriveKey(clients: GoogleClients, name: string): string {
+  return `${clients.account}:${name.toLowerCase()}`;
+}
+
+async function defaultFolderIn(clients: GoogleClients, defaultFolder: string): Promise<string> {
+  return (await folderPathOf(clients, defaultFolder)) ?? parseDriveId(defaultFolder);
+}
+
+function inFolder(folder: string, name: string): string {
+  return `${folder === '/' ? '' : folder}/${name}`;
+}
+
+async function refuseBareName(
+  clients: GoogleClients,
+  name: string,
+  opts: { defaultFolder?: string; rootCreates: Set<string> },
+): Promise<WriteDocResult> {
+  if (!opts.defaultFolder) return { status: 'not_created', message: `Not created: no folder was given. Name a folder, e.g. ~/${name}.` };
+  const folder = await defaultFolderIn(clients, opts.defaultFolder);
+  const suggestedPath = inFolder(folder, name);
+  opts.rootCreates.add(topOfMyDriveKey(clients, name));
   return {
     status: 'not_created',
     suggestedPath,
-    message: `Not created: no folder was given. Tell the user it will go in the default folder ${folder}, then call write_doc(${JSON.stringify(suggestedPath)}, …) with the same content.`,
+    message: `Not created: no folder was given. This project's default folder for new docs is ${folder}. Tell the user, then call write_doc(${JSON.stringify(suggestedPath)}, …) — or, if the user wants it at the top of My Drive, call write_doc(${JSON.stringify(`/${name}`)}, …).`,
   };
+}
+
+async function refuseTopOfMyDrive(
+  clients: GoogleClients,
+  name: string,
+  opts: { defaultFolder: string; rootCreates: Set<string> },
+): Promise<WriteDocResult> {
+  const folder = await defaultFolderIn(clients, opts.defaultFolder);
+  const suggestedPath = inFolder(folder, name);
+  opts.rootCreates.add(topOfMyDriveKey(clients, name));
+  return {
+    status: 'not_created',
+    suggestedPath,
+    message: `Not created: this project's default folder for new docs is ${folder}. Tell the user, then call write_doc(${JSON.stringify(suggestedPath)}, …) — or, if the user wants it at the top of My Drive, repeat this same call.`,
+  };
+}
+
+function isTopOfMyDrive(parent: Resolved): boolean {
+  return parent.isFolder && parent.path === '/';
 }
 
 /**
@@ -297,21 +333,28 @@ async function refuseBareName(clients: GoogleClients, name: string, defaultFolde
  * names something is refused with a loss summary until the caller passes it back
  * as `confirmLoss`. A bare name (not a path, URL or Drive id) is never created: it
  * is refused with the path to call, built from `defaultFolder` (an id or URL) when
- * there is one. Throws for a path that is ambiguous, a folder, or a multi-tab doc
+ * there is one. With a `defaultFolder`, a new doc at the top of My Drive is refused
+ * once too; `rootCreates` remembers what was refused, so the same call repeated
+ * (the caller owns the set, for the life of a session) goes through. Throws for a path that is ambiguous, a folder, or a multi-tab doc
  * with no tab step.
  */
 export async function writeDoc(
   clients: GoogleClients,
   path: string,
   content: string,
-  opts: { confirmLoss?: string; baseDir?: string; defaultFolder?: string } = {},
+  opts: { confirmLoss?: string; baseDir?: string; defaultFolder?: string; rootCreates?: Set<string> } = {},
 ): Promise<WriteDocResult> {
   parseBlocks(content);
+  const rootCreates = opts.rootCreates ?? new Set<string>();
   const resolution = await resolveEntry(clients, path);
   if (resolution.ok) return replaceTab(clients, await tabOfEntry(clients, resolution.entry, path), content, opts, path);
   if (resolution.status === 'not_found' && resolution.missing) {
+    const { parent, name } = resolution.missing;
+    if (opts.defaultFolder && isTopOfMyDrive(parent) && !rootCreates.has(topOfMyDriveKey(clients, name))) {
+      return refuseTopOfMyDrive(clients, name, { defaultFolder: opts.defaultFolder, rootCreates });
+    }
     return createAt(clients, resolution.missing.parent, resolution.missing.name, content, opts.baseDir);
   }
-  if (resolution.status === 'not_found' && resolution.notAnId) return refuseBareName(clients, path, opts.defaultFolder);
+  if (resolution.status === 'not_found' && resolution.notAnId) return refuseBareName(clients, path, { defaultFolder: opts.defaultFolder, rootCreates });
   throw refusal(resolution);
 }

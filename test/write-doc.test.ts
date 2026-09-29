@@ -117,7 +117,7 @@ function worldClients(world: World): GoogleClients {
     docs: { documents: { get: docsGet, batchUpdate } } as unknown as GoogleClients['docs'],
     drive: {
       files: { list, get, create },
-      drives: { list: vi.fn() },
+      drives: { list: vi.fn().mockResolvedValue({ data: { drives: [{ id: 'sd1', name: 'Team' }] } }) },
       comments: { list: vi.fn().mockImplementation(async () => ({ data: { comments: Array.from({ length: world.comments }, (_, i) => ({ id: `c${i}` })) } })) },
     } as unknown as GoogleClients['drive'],
   };
@@ -251,8 +251,9 @@ describe('write_doc does not create from a bare name (#55)', () => {
     const r = await writeDoc(worldClients(world), 'Meeting notes', 'Agenda TBD', { defaultFolder: 'clients' });
     expect(r.status).toBe('not_created');
     if (r.status !== 'not_created') return;
-    expect(r.message.startsWith('Not created: no folder was given. Tell the user it will go in the default folder /Work/Clients')).toBe(true);
+    expect(r.message.startsWith("Not created: no folder was given. This project's default folder for new docs is /Work/Clients. Tell the user, then call write_doc(")).toBe(true);
     expect(r.message).toContain('write_doc("/Work/Clients/Meeting notes", …)');
+    expect(r.message).toContain('write_doc("/Meeting notes", …)');
     expect(r.suggestedPath).toBe('/Work/Clients/Meeting notes');
     expect(world.created).toEqual([]);
     expect(world.requests).toEqual([]);
@@ -287,11 +288,82 @@ describe('write_doc does not create from a bare name (#55)', () => {
     expect(r.status).toBe('confirm_required');
   });
 
-  it('absolute paths and ~ paths are unaffected by a default folder', async () => {
+  it('a bare name that the user then wants at the top of My Drive goes through as /Name without a second refusal', async () => {
     const world = newWorld();
     const clients = worldClients(world);
-    await writeDoc(clients, '/Work/Brief', 'x', { defaultFolder: 'clients' });
-    await writeDoc(clients, '~/Loose', 'x', { defaultFolder: 'clients' });
-    expect(world.created.map((c) => [c.name, c.parents])).toEqual([['Brief', ['work']], ['Loose', ['ROOT']]]);
+    const rootCreates = new Set<string>();
+    await writeDoc(clients, 'Meeting notes', 'x', { defaultFolder: 'clients', rootCreates });
+    const r = await writeDoc(clients, '/Meeting notes', 'x', { defaultFolder: 'clients', rootCreates });
+    expect(r).toMatchObject({ status: 'created', path: '/Meeting notes' });
+    expect(world.created).toEqual([{ name: 'Meeting notes', mimeType: DOC, parents: ['ROOT'] }]);
+  });
+
+});
+
+describe('write_doc asks once before creating at the top of My Drive when a default folder is set (#55)', () => {
+  const withDefault = (rootCreates: Set<string>) => ({ defaultFolder: 'clients', rootCreates });
+
+  it('refuses the first create, opens with the default folder, and suggests the full path', async () => {
+    const world = newWorld();
+    const r = await writeDoc(worldClients(world), '/Meeting notes', 'x', withDefault(new Set()));
+    expect(r.status).toBe('not_created');
+    if (r.status !== 'not_created') return;
+    expect(r.message.startsWith("Not created: this project's default folder for new docs is /Work/Clients. Tell the user, then call write_doc(\"/Work/Clients/Meeting notes\", …)")).toBe(true);
+    expect(r.message).toContain('repeat this same call');
+    expect(r.suggestedPath).toBe('/Work/Clients/Meeting notes');
+    expect(world.created).toEqual([]);
+  });
+
+  it('the identical second call creates it, and ~/Name is the same place as /Name', async () => {
+    const world = newWorld();
+    const clients = worldClients(world);
+    const rootCreates = new Set<string>();
+    await writeDoc(clients, '/Meeting notes', 'x', withDefault(rootCreates));
+    const second = await writeDoc(clients, '~/meeting NOTES', 'x', withDefault(rootCreates));
+    expect(second).toMatchObject({ status: 'created', kind: 'doc' });
+    expect(world.created).toEqual([{ name: 'meeting NOTES', mimeType: DOC, parents: ['ROOT'] }]);
+  });
+
+  it('a different root path is still refused once', async () => {
+    const world = newWorld();
+    const clients = worldClients(world);
+    const rootCreates = new Set<string>();
+    await writeDoc(clients, '/Meeting notes', 'x', withDefault(rootCreates));
+    const other = await writeDoc(clients, '/Other', 'x', withDefault(rootCreates));
+    expect(other.status).toBe('not_created');
+    expect(world.created).toEqual([]);
+  });
+
+  it('with no default folder it creates at once', async () => {
+    const world = newWorld();
+    const r = await writeDoc(worldClients(world), '/Meeting notes', 'x', { rootCreates: new Set() });
+    expect(r.status).toBe('created');
+  });
+
+  it('a deeper path, a tab and a create in a named folder are not asked about', async () => {
+    const world = newWorld();
+    const clients = worldClients(world);
+    const opts = withDefault(new Set());
+    const inFolder = await writeDoc(clients, '/Work/Brief', 'x', opts);
+    const tab = await writeDoc(clients, '/Work/Contract/Notes', 'x', opts);
+    const byId = await writeDoc(clients, 'work/Brief2', 'x', opts);
+    expect([inFolder.status, tab.status, byId.status]).toEqual(['created', 'created', 'created']);
+  });
+
+  it('the root of a shared drive is not the top of My Drive, and the reserved first steps are never a My Drive doc', async () => {
+    const world = newWorld();
+    const clients = worldClients(world);
+    const opts = withDefault(new Set());
+    const inShared = await writeDoc(clients, '/shared/Team/Brief', 'x', opts);
+    expect(inShared).toMatchObject({ status: 'created', kind: 'doc' });
+    expect(world.created).toEqual([{ name: 'Brief', mimeType: DOC, parents: ['sd1'] }]);
+    await expect(writeDoc(clients, '/shared', 'x', opts)).rejects.toThrow(/not a folder/);
+    await expect(writeDoc(clients, '/lost+found', 'x', opts)).rejects.toThrow(/collection/);
+  });
+
+  it('a replace of an existing doc is not a create, so it is not asked about here', async () => {
+    const world = newWorld();
+    const r = await writeDoc(worldClients(world), '/Work/Memo', 'x', withDefault(new Set()));
+    expect(r.status).toBe('confirm_required');
   });
 });

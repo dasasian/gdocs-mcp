@@ -229,18 +229,40 @@ last step names nothing yet, exactly as a new doc is — there is no `touch` and
 tab `mkdir`. A path that creates is always absolute (`/`, `~`, a URL or a Drive id start); there
 is no working directory to resolve a bare name against, so a bare name is never
 created. `write_doc("Meeting notes", …)` is refused, and the refusal opens with
-where the doc will go, so the user hears it before anything exists: with a
+where the doc would go, so the user hears it before anything exists: with a
 project default folder (`set_project_default`), "Not created: no folder was
-given. Tell the user it will go in the default folder /Work/Clients, then call
-write_doc("/Work/Clients/Meeting notes", …)"; with none, "Not created: no
-folder was given. Name a folder, e.g. ~/Meeting notes." A bare string that
-Drive knows as an id keeps its meaning (it names that doc). The default folder
-is resolved to a path when the server starts and written into `write_doc`'s
-description, since the config is known then (the server's working directory is
-the project); the refusal reads the config fresh, so it stays right after a
-`set_project_default` mid-session while the description waits for a restart. A
-folder no path reaches (an orphan, shared only with you) is named by its id,
-which starts a path too.
+given. This project's default folder for new docs is /Work/Clients. Tell the
+user, then call write_doc("/Work/Clients/Meeting notes", …) — or, if the user
+wants it at the top of My Drive, call write_doc("/Meeting notes", …)"; with none,
+"Not created: no folder was given. Name a folder, e.g. ~/Meeting notes." A bare
+string that Drive knows as an id keeps its meaning (it names that doc).
+
+With a default folder set, `/Meeting notes` is a bare name in all but syntax —
+no folder was given — and models reached for it (Haiku and Sonnet, 2 of 2 headless
+runs, wrote `/Meeting notes` and put the doc at the top of My Drive without
+mentioning the default). So a create of a new doc at the top of My Drive (`/Name`
+or `~/Name`, one step that resolves to nothing) is refused once: "Not created:
+this project's default folder for new docs is /Work/Clients. Tell the user, then
+call write_doc("/Work/Clients/Name", …) — or, if the user wants it at the top of
+My Drive, repeat this same call." The server remembers the refused path (folded
+to case, per account) for the life of the process — one stdio process is one
+session — and the identical call, or `~/Name` for `/Name`, then proceeds. A bare
+name that was refused is remembered the same way, so the `/Name` its refusal
+offers goes straight through. Scope is narrow on purpose: only a new doc at the
+top of My Drive, only when a default is set — not a tab, not a replace, not
+`/Personal/Notes` (the user named a folder there), not the root of a shared
+drive (`/shared/Team/Name`), and nothing changes without a default. `/Name` is
+not ambiguous with another root: `/shared`, `/shared-with-me` and `/lost+found`
+are peeled off as reserved first steps before the walk, so as a single step they
+can never be a My Drive doc (they are refused as "not a folder"), which is the
+existing limit that a doc named one of those is reachable by id only.
+
+The default folder is resolved to a path when the server starts and written into
+`write_doc`'s description, since the config is known then (the server's working
+directory is the project); the refusals read the config fresh, so they stay right
+after a `set_project_default` mid-session while the description waits for a
+restart. A folder no path reaches (an orphan, shared only with you) is named by
+its id, which starts a path too.
 
 `segment` (header/footer) stays a parameter, not a path step: a
 header is part of a tab, not a child of it, and a path step would collide with a
@@ -341,7 +363,7 @@ string is the counts **and the doc's revision id**. The counts alone are not
 enough: an edit that changes words but no count would still match, so the
 revision is in the string, and the counts stay in it because a comment added
 in Drive changes no revision. Either changing makes the second call refuse
-again with a fresh summary. Creating asks nothing, but only an absolute path creates (§3d). Only the last step of the path may be new; a path
+again with a fresh summary. Creating asks nothing, but only an absolute path creates, and with a project default folder a new doc at the top of My Drive is asked about once (§3d). Only the last step of the path may be new; a path
 two levels short is refused, since there is no `mkdir -p` for tabs. A path with
 one tab means that tab, so replacing a one-tab doc asks like any other.
 

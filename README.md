@@ -103,7 +103,7 @@ Prefer it available in **every** project? Register once at user scope: `claude m
 { "account": "work@company.com", "folder": "https://drive.google.com/drive/folders/…" }
 ```
 
-`write_doc` creates only from a path (`/Reports/Q3 Report`). Given a bare name (`Q3 Report`) it creates nothing: it refuses, tells the agent to tell you the doc will go in the default folder, and hands back the full path to call. The default folder's path is also in `write_doc`'s description, read when the server starts. With no default it says to name a folder (`~/Q3 Report`). See [docs/setup.md](docs/setup.md) for the full resolution order.
+`write_doc` creates only from a path (`/Reports/Q3 Report`). Given a bare name (`Q3 Report`) it creates nothing: it refuses, tells the agent to tell you the doc will go in the default folder, and hands back the full path to call. A new doc at the top of My Drive (`/Q3 Report`) is refused once the same way, and the identical call repeated goes through if you want it there. The default folder's path is also in `write_doc`'s description, read when the server starts. With no default it says to name a folder (`~/Q3 Report`). See [docs/setup.md](docs/setup.md) for the full resolution order.
 
 You don't have to edit that file by hand — just tell the agent *"make damithsc@gmail.com my default account for this project"* or *"make my Manuscripts folder the default here,"* and it writes the `.gdocs-mcp.json` for you via `set_project_default` (searching for the folder by name if needed).
 
