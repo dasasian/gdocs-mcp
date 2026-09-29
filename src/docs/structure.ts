@@ -1,6 +1,6 @@
 import type { docs_v1 } from 'googleapis';
 
-// Flatten the tab tree (depth-first), including nested child tabs.
+/** Every tab, nested ones included, depth-first. */
 export function flattenTabs(doc: docs_v1.Schema$Document): docs_v1.Schema$Tab[] {
   const out: docs_v1.Schema$Tab[] = [];
   const walk = (tabs: docs_v1.Schema$Tab[] | undefined): void => {
@@ -13,11 +13,7 @@ export function flattenTabs(doc: docs_v1.Schema$Document): docs_v1.Schema$Tab[] 
   return out;
 }
 
-// Partial-response masks for reads that never touch body content. The Docs API
-// refuses a mask that mixes legacy top-level fields with tabs content ("Field
-// mask may not contain legacy text-level Document resource fields while
-// requesting tabs content"), so these are tabs-only — see TAB_METADATA_FIELDS'
-// callers for how the legacy (untabbed) shape is still handled.
+/** Partial-response masks are tabs-only: the Docs API refuses one that mixes legacy top-level fields with tabs content. */
 export const TAB_METADATA_FIELDS = 'tabs.tabProperties,tabs.childTabs';
 export const PAGE_SETUP_FIELDS = 'revisionId,tabs.tabProperties,tabs.childTabs,tabs.documentTab.documentStyle';
 
@@ -44,8 +40,7 @@ export function tableInsertedAt(
     .sort((a, b) => (a.startIndex ?? 0) - (b.startIndex ?? 0))[0];
 }
 
-// Resolve a user-supplied tab selector (tabId OR title) to a concrete tabId.
-// undefined selector => undefined (caller uses the first tab / legacy body).
+/** A tabId checked against the doc; undefined stays undefined and means the first tab. */
 export function resolveTabId(doc: docs_v1.Schema$Document, tab?: string): string | undefined {
   if (!tab) return undefined;
   const tabs = flattenTabs(doc);

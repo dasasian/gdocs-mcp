@@ -18,8 +18,6 @@ function json(data: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
 }
 
-// The Docs API cannot create tracked suggestions or anchor comments to text — every write is direct.
-// Surfaced in the tool result (not just the schema description) so a calling agent sees it in the moment.
 const DIRECT_EDIT_NOTE = 'Direct edit — applied as live text, not a tracked suggestion (the Docs API cannot create suggestions).';
 const UNANCHORED_COMMENT_NOTE = 'Comment added, but not anchored to specific text (the Docs/Drive API cannot anchor programmatically-created comments).';
 

@@ -1,26 +1,5 @@
 import type { GoogleClients } from '../google/clients.js';
 
-// Resolving a Drive path (#44).
-//
-// The filesystem vocabulary is borrowed because the model already knows it. The
-// borrowing is honest only where Drive actually behaves like a filesystem, and
-// there are three places it does not:
-//
-//   1. Two files may share a name in one parent. No filesystem the model learned
-//      from allows this, so it will not defensively check — it will assume the
-//      path resolved. A wrong prior is worse than none, so a collision refuses
-//      and lists the candidates rather than guessing.
-//   2. Matching folds case. Linux is case-sensitive and macOS is not, so
-//      whichever the model recalls is wrong here; `Reports` and `reports` in one
-//      folder are two files that both answer either query. Collision detection
-//      therefore folds case too.
-//   3. Drive names may contain `/`. A file called "Q1/Q2" cannot be addressed by
-//      path at all — see docs/limitations.md. Ids always work.
-//
-// Paths also see less than `find` does: a file with no parent is reachable by
-// search and by id, but by no path (#46). That is a property to state, not a bug
-// — `/lost+found` is the one place those surface.
-
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 
 export const SHARED_ROOT = '/shared';
@@ -45,9 +24,7 @@ export type Resolution =
   | { ok: false; status: 'not_found'; message: string }
   | { ok: false; status: 'ambiguous'; message: string; candidates: { id: string; name: string; isFolder: boolean }[] };
 
-// A path is anything that starts with / or ~; everything else is treated as a
-// Drive id or URL, because that is what every other tool in this server returns
-// and callers paste them back.
+/** A path starts with / or ~; anything else is a Drive id or URL, which is what every other tool returns. */
 export function looksLikePath(s: string): boolean {
   return s.startsWith('/') || s === '~' || s.startsWith('~/');
 }
@@ -64,7 +41,6 @@ function fold(s: string): string {
   return s.toLowerCase();
 }
 
-// `files.get('root')` is one call per account and the answer never changes.
 const rootIdCache = new Map<GoogleClients, string>();
 
 export async function myDriveRootId(clients: GoogleClients): Promise<string> {
@@ -76,7 +52,7 @@ export async function myDriveRootId(clients: GoogleClients): Promise<string> {
   return id;
 }
 
-// Peel the rooting prefix off a path and say where the remaining segments start.
+/** Peel the rooting prefix off a path and say where the remaining segments start. */
 export async function resolveRoot(
   clients: GoogleClients,
   path: string,
@@ -114,10 +90,6 @@ interface Candidate {
   parents: string[];
 }
 
-// Ask for every segment name in ONE query, then walk the parent graph locally.
-// The naive walk is a round trip per segment; this is a round trip per path, and
-// in the common case fewer than today, since finding a doc by name already costs
-// a search before the operation.
 async function candidatesFor(clients: GoogleClients, names: string[], driveId?: string): Promise<Candidate[]> {
   const distinct = [...new Set(names.map(fold))];
   const clause = distinct.map((n) => `name = '${quote(n)}'`).join(' or ');

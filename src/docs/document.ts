@@ -10,9 +10,6 @@ import { findProjectConfig } from '../auth/accounts.js';
 import { uploadImageForInsert, resolveImageSource } from '../drive/images.js';
 import { resolveIndex, fillCellRequests, columnAlignRequests } from './objects.js';
 
-// Insert a markdown image at `index`. Remote URLs embed directly; a local path is
-// resolved against baseDir, uploaded, embedded, and the temp upload deleted.
-// Returns a warning string if it couldn't be resolved (never throws mid-render).
 async function insertImagePlacement(
   clients: GoogleClients,
   documentId: string,
@@ -23,7 +20,6 @@ async function insertImagePlacement(
   segmentId?: string,
   size?: { width?: number; height?: number },
 ): Promise<{ objectId?: string; warning?: string }> {
-  // Docs preserves aspect ratio, so it may adjust whichever dimension it must.
   const objectSize =
     size?.width || size?.height
       ? {
@@ -52,9 +48,6 @@ async function insertImagePlacement(
   }
 }
 
-// Insert a table at `index` and fill its cells (descending so inserts don't shift
-// later cells). Cell text is plain in this narrow first cut.
-
 async function insertTableAt(
   clients: GoogleClients,
   documentId: string,
@@ -78,7 +71,6 @@ async function insertTableAt(
   const requests = fillCellRequests(tableEl, rows, { tabId, segmentId });
   if (requests.length) await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests } });
 
-  // Column alignment needs the post-fill indices, so re-fetch first.
   if (aligns.some((a) => a && a !== 'left')) {
     const aligned = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
     const alignReqs = columnAlignRequests(tableInsertedAt(aligned, index, tabId, segmentId), aligns, { tabId, segmentId });
@@ -86,8 +78,6 @@ async function insertTableAt(
   }
 }
 
-// Render markdown into a doc/tab: insert the text (with table placeholders), then
-// insert each table at its placeholder position (descending so indices stay valid).
 async function renderMarkdownInto(
   clients: GoogleClients,
   documentId: string,
@@ -102,7 +92,6 @@ async function renderMarkdownInto(
       requestBody: { requests: all, writeControl: writeControlFor(opts.requiredRevisionId) },
     });
   }
-  // Structural inserts (tables + images) descending by index so earlier indices stay valid.
   const warnings: string[] = [];
   const imageMap: { src: string; objectId: string }[] = [];
   const placements: { index: number; run: () => Promise<void> }[] = [
@@ -120,12 +109,11 @@ async function renderMarkdownInto(
   return { warnings, images: imageMap };
 }
 
-// Insert new markdown-rendered content at a STRUCTURAL position (#20), rather
-// than by replacing anchor text the way edit_doc does. This is the only path to
-// "add a paragraph after the table that ends the doc": a table's last cell can't
-// anchor an insert outside the table (the Docs API forbids ranges crossing a cell
-// boundary), and Docs' mandatory trailing empty paragraph has no text to match on.
-// `at`: 'end' (default) · 'top' · a unique text anchor to insert right after.
+/**
+ * Insert new markdown at a structural position instead of replacing anchor text.
+ * `at`: 'end' (default) · 'top' · a unique text anchor to insert right after.
+ * The only way to add a paragraph after a table that ends the doc.
+ */
 export async function insertContent(
   clients: GoogleClients,
   documentId: string,
@@ -143,8 +131,6 @@ export async function insertContent(
 }> {
   const first = await clients.docs.documents.get({ documentId, includeTabsContent: true });
   const tabId = resolveTabId(first.data, opts.tab);
-  // Same position vocabulary inside a header/footer — e.g. a letterhead address
-  // line under the logo (#23).
   const seg = await resolveSegmentTarget(clients, documentId, first.data, {
     segment: opts.segment,
     page: opts.page,
@@ -173,19 +159,18 @@ export async function insertContent(
   };
 }
 
-// Extract a Drive file/folder id from a URL (…/folders/ID, …/d/ID) or a raw id.
+/** A Drive id from a folder/doc URL, or the raw id. */
 export function parseDriveId(input: string): string {
   const m = /\/(?:folders|d)\/([a-zA-Z0-9_-]+)/.exec(input);
   if (m) return m[1];
   return input.trim().replace(/[?#].*$/, '');
 }
 
-// Resolve the document body from either an inline `content` string or a
-// `contentFile` path read server-side. contentFile lets the caller pass a long
-// document through mechanically instead of retyping it inline — a step that can
-// silently drop/fuse text (#14). Exactly one of the two may be given. When
-// contentFile is used and baseDir is unset, baseDir defaults to the file's own
-// folder, so relative image paths inside that markdown still resolve.
+/**
+ * Body from either `content` or a `contentFile` read server-side (so a long
+ * document passes through mechanically, #14). With contentFile and no baseDir,
+ * baseDir is the file's own folder, so relative image paths still resolve.
+ */
 export async function resolveContentSource(args: {
   content?: string;
   contentFile?: string;
@@ -210,11 +195,9 @@ export async function createDoc(
   let documentId: string;
   let folderId: string | undefined;
 
-  // Explicit folder arg wins; else fall back to the project's default folder.
   const folder = opts.folder ?? findProjectConfig().folder;
 
   if (folder) {
-    // Create the doc directly in the folder via the Drive API.
     folderId = parseDriveId(folder);
     const created = await clients.drive.files.create({
       requestBody: { name: title, mimeType: 'application/vnd.google-apps.document', parents: [folderId] },
@@ -239,9 +222,6 @@ export async function createDoc(
   };
 }
 
-// Wholesale replace of a doc body (or one tab) with rendered markdown — GUARDED.
-// Refuses if comments/suggestions are present (a full replace would orphan/wipe
-// them) unless force=true.
 export async function overwriteDoc(
   clients: GoogleClients,
   documentId: string,
@@ -251,7 +231,6 @@ export async function overwriteDoc(
   const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
   const tabId = resolveTabId(doc, opts.tab);
 
-  // Name the doc being wholesale-replaced (#10): verify the caller-echoed title.
   if (opts.expectTitle !== undefined && opts.expectTitle !== (doc.title ?? '')) {
     return { status: 'mismatch', message: `expectTitle "${opts.expectTitle}" != live doc title "${doc.title ?? ''}". Refusing to overwrite a different doc than intended.` };
   }
@@ -286,10 +265,6 @@ export async function overwriteDoc(
   return { status: 'ok', ...(warnings.length ? { warnings } : {}), ...(images.length ? { images } : {}) };
 }
 
-// Tab CRUD. The live Docs API supports these (verified), but googleapis@144's
-// generated types lag — addDocumentTab/updateDocumentTabProperties/deleteTab are
-// not yet on Schema$Request — so we construct the request shapes and cast.
-// A future googleapis bump should remove the casts.
 type RawRequest = docs_v1.Schema$Request;
 
 export async function addTab(
@@ -327,9 +302,6 @@ export async function deleteTab(
   tabId: string,
   opts: { expectTitle?: string } = {},
 ): Promise<{ status: 'ok' | 'not_found' | 'mismatch'; deleted?: string; title?: string; message?: string }> {
-  // Verify the tab's live title before deleting — tabId is opaque, so a stale/wrong
-  // id would otherwise silently delete the wrong tab (#10). Tab metadata only:
-  // this never looks at body content.
   const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true, fields: TAB_METADATA_FIELDS })).data;
   const tab = findTab(doc, tabId);
   if (!tab) return { status: 'not_found', message: `tab "${tabId}" not found` };
@@ -354,7 +326,6 @@ export interface TabInfo {
   parentTabId: string | null;
 }
 
-// Read tab structure (flattened, depth-first). Tabs are read-only via the API.
 export async function listTabs(clients: GoogleClients, documentId: string): Promise<TabInfo[]> {
   const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true, fields: TAB_METADATA_FIELDS })).data;
   return flattenTabs(doc).flatMap((t) => {
