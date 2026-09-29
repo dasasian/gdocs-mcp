@@ -20,6 +20,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `read_doc` shows what `get_style` returned — and for the whole doc, not one anchor. `edit_doc` does what `set_style` did: same words with new markup restyles without retyping, and a `<style>` rule edit restyles the whole document (#49).
 
+### Fixed
+
+- **A read written back gives back the same document (#52).** Document text that spells markup used to become markup on the next `overwrite_doc`: `4. Term` turned into a list item, `5 * 3 * 2` lost its asterisks, `[Name](the Company)` became a link, `~~draft~~` was struck through, a literal `<b>` bolded. `read_doc` now marks such text as literal: a line that would parse as a block reads as `<p>4. Term</p>`, and a character that would open inline markup reads with a backslash (`5 \* 3 \* 2`); a real backslash before punctuation reads as `\\`. What needs marking is decided by asking the writer's own parser, so only text that would really change is marked — `file_name_here`, `____`, `<Client Name>` and `---` read unchanged. The same holds in table cells and in headers and footers. `edit_doc` ignores the markers when it locates text: `5 * 3`, `5 \* 3` and `<p>4. Term` all find the same words. An escaped `<span style="…">` is text, not a style error.
+
 ### Changed
 
 - `overwrite_doc` clears the paragraph style the new text would inherit from the paragraph it lands in; an indent on the old last paragraph no longer leaks into the first new one (#49).

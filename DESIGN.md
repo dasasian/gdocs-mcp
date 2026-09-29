@@ -97,19 +97,28 @@ whenever the document's own text happens to spell markup: a clause typed as
 an ordered list, and the next `overwrite_doc` makes it one (#52). The reader
 therefore marks such text as literal, in one of two ways:
 
-- **A line start that would parse as a block** — `4.`, `4)`, `-`, `*`, `+`, `#`,
-  `>`, `- [ ]` — reads as `<p>4. Term…</p>`. The same `<p>` that carries a
-  paragraph's style in §2a, so there is one rule: `<p>` is a plain paragraph.
+- **A line start that would parse as a block** — `4.`, `4)`, `-`, `*`, `+`,
+  `#`, `- [ ]`, and lines the writer treats as structure (`![alt](src)`,
+  `<!--`, `<style>`) — reads as `<p>4. Term…</p>`. The same `<p>` that carries a
+  paragraph's style in §2a, so there is one rule: `<p>` is a plain paragraph, and
+  a paragraph that also has a style is one tag (`<p style="…">4. Term…</p>`).
   Wrapping beats the CommonMark escape `4\.` because the agent copies what it
   sees: asked to add clause 5 in the same format, Haiku reproduced `<p>` 10/10
   and `4\.` 6/15 — the misses wrote a bare `5.`, which is the bug again.
 - **Mid-line text that would parse as inline markup** — `5 * 3 * 2`,
   `[Name](the Company)`, `~~draft~~`, a literal `<b>` — reads with a CommonMark
   backslash (`5 \* 3 \* 2`). A single character can't be wrapped, so this is the
-  only form available. Only characters that would actually open markup are
-  escaped: `file_name_here`, a signature line of underscores and `<Client Name>`
-  already round-trip and stay clean. A real backslash before punctuation reads
-  as `\\`.
+  only form available. A real backslash before punctuation reads as `\\`.
+
+**The writer's parser decides.** The reader keeps no list of what counts as
+markup. It renders the line, parses it the way the writer will (`parseBlocks`,
+`parseInline`), and marks only if the result is not one plain paragraph of the
+same words; the escape set is then the smallest set of punctuation kinds that
+restores the same parse. So `file_name_here`, a signature line of underscores,
+`<Client Name>`, `---`, and a lone `>` (the writer has no blockquote) already
+round-trip and stay clean, and a new construct taught to the writer is marked
+by the reader with no second edit. Table cells and header/footer segments use the
+same path; a cell also accounts for the `\|` pipe step its row goes through.
 
 The writer accepts both forms, and CommonMark escapes anywhere, so an agent that
 writes Google's own export style (`4\. Term`) gets a plain paragraph too. Either

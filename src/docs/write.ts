@@ -55,11 +55,13 @@ const isTableRow = (l: string): boolean => l.trim().startsWith('|');
 // A separator line is only dashes/colons/pipes/spaces, with at least one dash.
 const isTableSep = (l: string): boolean => l.includes('-') && /^[\s|:-]+$/.test(l.trim());
 
+export const unescapePipes = (cell: string): string => cell.replace(/\\\|/g, '|');
+
 function splitRow(line: string): string[] {
   let t = line.trim();
   if (t.startsWith('|')) t = t.slice(1);
   if (t.endsWith('|')) t = t.slice(0, -1);
-  return t.split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'));
+  return t.split(/(?<!\\)\|/).map((c) => unescapePipes(c.trim()));
 }
 
 // Per-column alignment from a separator row: :--- left, :---: center, ---: right.

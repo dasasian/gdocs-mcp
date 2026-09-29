@@ -4,6 +4,8 @@ import { LEVEL_BY_HEADING, CLASS_BY_NAMED_STYLE, CODE_FONT } from './markdown-sp
 import { declarationsFor, styleAttribute } from './css.js';
 import { paragraphCssOf, effectiveStylesFor } from './style-block.js';
 import { rgbToHex } from './color.js';
+import { literalTextEscaper, needsParagraphTag, type Escaper } from './literal-text.js';
+import { unescapePipes } from './write.js';
 
 const ORDERED_GLYPHS = new Set(['DECIMAL', 'ZERO_DECIMAL', 'UPPER_ALPHA', 'ALPHA', 'UPPER_ROMAN', 'ROMAN']);
 
@@ -155,14 +157,18 @@ function renderParagraph(
   const named = para.paragraphStyle?.namedStyleType ?? 'NORMAL_TEXT';
   const eff = effectiveStylesFor(doc, named, opts.tabId);
   const paragraphFamily = eff.named?.textStyle?.weightedFontFamily?.fontFamily ?? eff.normal?.textStyle?.weightedFontFamily?.fontFamily ?? undefined;
-  let inline = '';
-  for (const pe of para.elements ?? []) {
-    if (pe.textRun) inline += renderRun(pe.textRun, opts, paragraphFamily);
-    else if (pe.inlineObjectElement?.inlineObjectId) {
-      inline += renderImage(pe.inlineObjectElement.inlineObjectId, objects);
+  const inlineWith = (escape: Escaper): string => {
+    let joined = '';
+    for (const pe of para.elements ?? []) {
+      if (pe.textRun) joined += renderRun(pe.textRun, opts, paragraphFamily, escape);
+      else if (pe.inlineObjectElement?.inlineObjectId) {
+        joined += renderImage(pe.inlineObjectElement.inlineObjectId, objects);
+      }
     }
-  }
-  inline = lineBreaksAsBr(withoutParagraphMark(inline));
+    return lineBreaksAsBr(withoutParagraphMark(joined));
+  };
+  const literalText = (para.elements ?? []).map((pe) => pe.textRun?.content ?? '').join('');
+  const inline = inlineWith(literalTextEscaper(literalText, inlineWith));
   if (para.bullet) return inline;
   const level = LEVEL_BY_HEADING[para.paragraphStyle?.namedStyleType ?? 'NORMAL_TEXT'];
   if (inline === '') return level ? `${'#'.repeat(level)} ` : '';
@@ -173,19 +179,21 @@ function renderParagraph(
   if (level) return style ? `<h${level}${styleAttr}>${inline}</h${level}>` : `${'#'.repeat(level)} ${inline}`;
   const className = CLASS_BY_NAMED_STYLE[named as keyof typeof CLASS_BY_NAMED_STYLE];
   if (className) return `<p class="${className}"${styleAttr}>${inline}</p>`;
-  return style ? `<p${styleAttr}>${inline}</p>` : inline;
+  const holdsImage = (para.elements ?? []).some((pe) => pe.inlineObjectElement);
+  if (style || (!holdsImage && needsParagraphTag(inline))) return `<p${styleAttr}>${inline}</p>`;
+  return inline;
 }
 
 // A table cell's text (plain, single line), pipes escaped. Multi-paragraph cells
 // are joined with a space (narrow scope — plain tables).
 function renderCell(cell: docs_v1.Schema$TableCell, opts: RenderOpts): string {
-  let s = '';
-  for (const el of cell.content ?? []) {
-    for (const pe of el.paragraph?.elements ?? []) {
-      if (pe.textRun) s += renderRun(pe.textRun, opts);
-    }
-  }
-  return s.replace(/\n/g, ' ').replace(/\|/g, '\\|').trim();
+  const runs = (cell.content ?? []).flatMap((el) => el.paragraph?.elements ?? []).flatMap((pe) => (pe.textRun ? [pe.textRun] : []));
+  const inlineWith = (escape: Escaper): string => {
+    const escapeWithPipes: Escaper = (text) => escape(text).replace(/\|/g, '\\|');
+    return runs.map((run) => renderRun(run, opts, undefined, escapeWithPipes)).join('').replace(/\n/g, ' ').trim();
+  };
+  const literalText = runs.map((run) => run.content ?? '').join('').replace(/\|/g, '');
+  return inlineWith(literalTextEscaper(literalText, inlineWith, unescapePipes));
 }
 
 function cellAlign(cell: docs_v1.Schema$TableCell): 'center' | 'right' | null {
@@ -249,7 +257,7 @@ function wrapEmphasis(text: string, s: docs_v1.Schema$TextStyle, isCode: boolean
   return out;
 }
 
-function renderRun(run: docs_v1.Schema$TextRun, opts: RenderOpts, paragraphFamily?: string): string {
+function renderRun(run: docs_v1.Schema$TextRun, opts: RenderOpts, paragraphFamily: string | undefined, escape: Escaper): string {
   let text = run.content ?? '';
   const trailingNl = text.endsWith('\n');
   if (trailingNl) text = text.slice(0, -1);
@@ -257,7 +265,7 @@ function renderRun(run: docs_v1.Schema$TextRun, opts: RenderOpts, paragraphFamil
 
   const s = run.textStyle ?? {};
   const isCode = s.weightedFontFamily?.fontFamily === CODE_FONT;
-  text = wrapEmphasis(text, s, isCode);
+  text = wrapEmphasis(escape(text), s, isCode);
   const css = spanCssFor(s, isCode, paragraphFamily);
   if (css.length) text = `<span style="${css.join(';')}">${text}</span>`;
 
