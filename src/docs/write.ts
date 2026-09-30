@@ -6,13 +6,6 @@ import { splitWrappedLine } from './paragraph-markup.js';
 import { parsePageBreakLine } from './page-break.js';
 import { parseStyleBlock, namedStyleRequests, type StyleRule } from './style-block.js';
 
-// markdown -> Docs block requests (the inverse of transformer.ts's reader, sharing
-// markdown-spec constants). The hard part is sequencing: the Docs API is
-// imperative for writes, so we assemble the full plain text, then apply paragraph
-// styles + inline styles by absolute index, and createParagraphBullets LAST in
-// descending order (it consumes the leading \t used for nesting, which shifts
-// indices after it). Tier 1: headings, paragraphs, inline, bullet/ordered lists.
-
 export type CellAlign = 'left' | 'center' | 'right';
 
 type Block =

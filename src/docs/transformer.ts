@@ -18,16 +18,6 @@ function isOrderedBullet(
   return glyph ? ORDERED_GLYPHS.has(glyph) : false;
 }
 
-// Two outputs from the Docs JSON:
-//   1. project()        -> plain text + an index map (plain offset -> Docs index),
-//                          the foundation of string-anchored editing (bet #3).
-//   2. renderMarkdown() -> markdown + inline HTML for reading (bet #2).
-//
-// They are intentionally separate: editing matches against clean plain text;
-// rendering is for the agent's eyes. Coverage of renderMarkdown is incremental —
-// the common cases are handled correctly; tables/images/ordered-lists/color are
-// noted TODOs rather than wrong output.
-
 export interface Projection {
   text: string;
   /** map[i] = Docs index (UTF-16 units) of plain-text char i. */
@@ -40,34 +30,34 @@ export interface Projection {
 export function project(doc: docs_v1.Schema$Document, tabId?: string, segmentId?: string): Projection {
   const chars: string[] = [];
   const map: number[] = [];
+  const pushText = (text: string, indexOfChar: (i: number) => number): void => {
+    for (let i = 0; i < text.length; i++) {
+      chars.push(text[i]);
+      map.push(indexOfChar(i));
+    }
+  };
+  const endsLine = (): boolean => chars.length === 0 || chars[chars.length - 1] === '\n';
+  const projectParagraph = (paragraph: docs_v1.Schema$Paragraph): void => {
+    let afterBreak = false;
+    for (const pe of paragraph.elements ?? []) {
+      const start = pe.startIndex ?? 0;
+      if (pe.pageBreak) {
+        if (!endsLine()) pushText('\n', () => start);
+        pushText(PAGE_BREAK_LINE, () => start);
+        afterBreak = true;
+        continue;
+      }
+      const content = pe.textRun?.content;
+      if (!content) continue;
+      if (afterBreak && content !== '\n') pushText('\n', () => start - 1);
+      afterBreak = false;
+      pushText(content, (i) => start + i);
+    }
+  };
   const walk = (content: docs_v1.Schema$StructuralElement[] | undefined): void => {
     for (const el of content ?? []) {
       if (el.paragraph) {
-        let afterBreak = false;
-        const pushLine = (text: string, at: number): void => {
-          for (const char of text) {
-            chars.push(char);
-            map.push(at);
-          }
-        };
-        for (const pe of el.paragraph.elements ?? []) {
-          if (pe.pageBreak) {
-            const at = pe.startIndex ?? 0;
-            if (chars.length > 0 && chars[chars.length - 1] !== '\n') pushLine('\n', at);
-            pushLine(PAGE_BREAK_LINE, at);
-            afterBreak = true;
-            continue;
-          }
-          const c = pe.textRun?.content;
-          if (!c) continue;
-          const start = pe.startIndex ?? 0;
-          if (afterBreak && c !== '\n') pushLine('\n', (pe.startIndex ?? 0) - 1);
-          afterBreak = false;
-          for (let i = 0; i < c.length; i++) {
-            chars.push(c[i]);
-            map.push(start + i);
-          }
-        }
+        projectParagraph(el.paragraph);
       } else if (el.table) {
         for (const row of el.table.tableRows ?? []) {
           for (const cell of row.tableCells ?? []) {

@@ -79,11 +79,22 @@ async function insertTableAt(
   }
 }
 
+interface RenderIntoOptions {
+  tabId?: string;
+  segmentId?: string;
+  preRequests?: docs_v1.Schema$Request[];
+  requiredRevisionId?: string;
+  baseDir?: string;
+  startIndex?: number;
+  resetParagraphStyles?: boolean;
+  startsParagraph?: boolean;
+}
+
 async function renderMarkdownInto(
   clients: GoogleClients,
   documentId: string,
   markdown: string,
-  opts: { tabId?: string; segmentId?: string; preRequests?: docs_v1.Schema$Request[]; requiredRevisionId?: string; baseDir?: string; startIndex?: number; resetParagraphStyles?: boolean; startsParagraph?: boolean } = {},
+  opts: RenderIntoOptions = {},
 ): Promise<{ warnings: string[]; images: { src: string; objectId: string }[] }> {
   const { requests, tables, images } = markdownToRequests(markdown, opts.startIndex ?? 1, opts.tabId, opts.segmentId, { resetParagraphStyles: opts.resetParagraphStyles, startsParagraph: opts.startsParagraph });
   const all = [...(opts.preRequests ?? []), ...requests];

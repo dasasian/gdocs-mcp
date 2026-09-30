@@ -11,14 +11,6 @@ import { parseStyleBlock, namedStyleRequests, styleRulesOf, renderStyleBlock } f
 import { clearDirectRunStyling, pageBreakRequests } from './write.js';
 import { parsePageBreakLine } from './page-break.js';
 
-// String-anchored editing (bet #3). The agent quotes a unique slice of text;
-// we locate it in the plain-text projection, map to Docs indices, and emit a
-// delete+insert batchUpdate. Indices are never exposed.
-//
-// v1 scope: new_string is inserted as PLAIN text (markdown/HTML interpretation of
-// new_string is the next increment). Matching is exact, with a markup-tolerant
-// fallback (so "# Title" or "**x**" copied from a read still resolves).
-
 export interface EditResult {
   status: 'ok' | 'not_found' | 'ambiguous' | 'no_segment';
   replaced?: number;
@@ -266,6 +258,51 @@ function pageBreakOffsets(breaksAfterLines: number[], lineTexts: string[]): numb
   return breaksAfterLines.map((count) => (count < lineTexts.length ? lengthOfFirst(count) : Math.max(0, lengthOfFirst(count) - 1)));
 }
 
+interface Replacement {
+  newLines: ParagraphLine[];
+  lineTexts: string[];
+  segments: Segment[];
+  plain: string;
+  breakOffsets: number[];
+}
+
+function styleOnlyRequestsFor(
+  proj: Projection,
+  from: number,
+  length: number,
+  oldString: string,
+  { newLines, lineTexts, segments }: Replacement,
+  tabId?: string,
+  segmentId?: string,
+): docs_v1.Schema$Request[] {
+  const oldLines = oldString.split('\n').map(splitEditLine);
+  const lines = newLines.map((now, k) => ({ now, before: oldLines[k] }));
+  const before = parseInline(oldLines.map((l) => l.inner).join('\n'));
+  const inlineChanged = styleSignature(before) !== styleSignature(segments);
+  return styleOnlyRequests(proj, from, length, lines, lineTexts, segments, inlineChanged, tabId, segmentId);
+}
+
+function replacementRequestsFor(
+  doc: docs_v1.Schema$Document,
+  proj: Projection,
+  from: number,
+  length: number,
+  { newLines, lineTexts, segments, plain, breakOffsets }: Replacement,
+  tabId?: string,
+  segmentId?: string,
+): docs_v1.Schema$Request[] {
+  const { startIndex, endIndex } = rangeFor(proj, from, from + length);
+  const breaks = breakOffsets.map((offset) => ({
+    index: startIndex + offset,
+    ownParagraph: offset === 0 ? startsParagraph(doc, tabId, segmentId, startIndex) : plain[offset - 1] === '\n',
+  }));
+  return [
+    { deleteContentRange: { range: { startIndex, endIndex, tabId, segmentId } } },
+    ...(plain ? [...insertedTextRequests(segments, plain, startIndex, tabId, segmentId), ...newParagraphRequests(newLines, lineTexts, startIndex, tabId, segmentId)] : []),
+    ...pageBreakRequests(breaks, tabId, segmentId),
+  ];
+}
+
 export async function editDoc(
   clients: GoogleClients,
   documentId: string,
@@ -303,30 +340,15 @@ export async function editDoc(
   const segments = parseInline(newLines.map((l) => l.inner).join('\n'));
   const plain = segments.map((s) => s.text).join('');
   const lineTexts = plain.split('\n');
-  const breakOffsets = pageBreakOffsets(breaksAfterLines, lineTexts);
+  const replacement: Replacement = { newLines, lineTexts, segments, plain, breakOffsets: pageBreakOffsets(breaksAfterLines, lineTexts) };
 
   const highestIndexFirst = (opts.replaceAll ? positions : [positions[0]]).sort((x, y) => y - x);
-  const requests: docs_v1.Schema$Request[] = [];
-  const sameWords = plain === needle && breakOffsets.length === 0;
-  if (sameWords) {
-    const oldLines = oldString.split('\n').map(splitEditLine);
-    const lines = newLines.map((now, k) => ({ now, before: oldLines[k] }));
-    const before = parseInline(oldLines.map((l) => l.inner).join('\n'));
-    const inlineChanged = styleSignature(before) !== styleSignature(segments);
-    for (const a of highestIndexFirst) {
-      requests.push(...styleOnlyRequests(proj, a, needle.length, lines, lineTexts, segments, inlineChanged, tabId, segmentId));
-    }
-  } else {
-    for (const a of highestIndexFirst) {
-      const { startIndex, endIndex } = rangeFor(proj, a, a + needle.length);
-      requests.push({ deleteContentRange: { range: { startIndex, endIndex, tabId, segmentId } } });
-      if (plain) {
-        requests.push(...insertedTextRequests(segments, plain, startIndex, tabId, segmentId));
-        requests.push(...newParagraphRequests(newLines, lineTexts, startIndex, tabId, segmentId));
-      }
-      requests.push(...pageBreakRequests(breakOffsets.map((offset) => ({ index: startIndex + offset, ownParagraph: offset === 0 ? startsParagraph(res.data, tabId, segmentId, startIndex) : plain[offset - 1] === '\n' })), tabId, segmentId));
-    }
-  }
+  const sameWords = plain === needle && replacement.breakOffsets.length === 0;
+  const requests = highestIndexFirst.flatMap((a) =>
+    sameWords
+      ? styleOnlyRequestsFor(proj, a, needle.length, oldString, replacement, tabId, segmentId)
+      : replacementRequestsFor(res.data, proj, a, needle.length, replacement, tabId, segmentId),
+  );
 
   if (requests.length) {
     await clients.docs.documents.batchUpdate({
