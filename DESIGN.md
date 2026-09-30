@@ -134,6 +134,30 @@ The writer accepts both forms, and CommonMark escapes anywhere, so an agent that
 writes Google's own export style (`4\. Term`) gets a plain paragraph too. Either
 way the document stores only the text; the next read shows the one canonical form.
 
+### 2c. A page break is a CSS break, on its own line
+
+A page break (Insert → Break → Page break; a `pageBreak` element in the Docs
+API) reads as
+
+```
+<div style="page-break-after:always"></div>
+```
+
+on its own line where the break is, and a read written back keeps it (#48). This
+is the spelling markdown-to-PDF tools already use, so a local `.md` holding a
+read renders the break when printed and shows nothing in a GitHub or VS Code
+preview. Google's own HTML export writes `<hr style="page-break-before:always">`
+instead; a bare `<hr>` is a visible rule wherever the style is stripped, so the
+read does not use it.
+
+The writer accepts the common spellings — that `<div>`, Google's `<hr>`, and the
+modern `break-before: page` / `break-after: page` — in `write_doc`, `edit_doc`
+and `insert_content`, and sends `insertPageBreak`. There is no page-break tool.
+
+Section breaks and column breaks are not carried: a section break holds its
+own page setup and headers, which is its own design (#57). The read does not
+show them, and `write_doc`'s loss summary counts them (§4).
+
 ---
 
 ## 3. Tool surface
@@ -347,7 +371,7 @@ folder, a tab in a doc), and a path that names something is replaced. Replacing
 is refused on the first call, and the refusal is a loss summary: the paragraphs
 of text, and everything a read cannot carry that the replace would take with it
 — comments, suggestions, tab stops (the Docs API cannot write them back),
-smart chips, bookmarks.
+smart chips, bookmarks, section and column breaks.
 
 ```
 write_doc("/Work/Contract", …)
