@@ -72,7 +72,7 @@ export function createServer(options: ServerOptions = {}): McpServer {
     {
       title: 'Set this project’s default account/folder',
       description:
-        'Write this project’s defaults to a .gdocs-mcp.json in the current working directory (or update an existing one up the tree). Set a default account and/or a default folder (URL or id). The folder is where write_doc is told new docs go when it is given a bare name instead of a path: it refuses, names the folder, and gives the full path to call. It is read when the server starts, so write_doc\u2019s description shows a change after a restart; the refusal reads it fresh. To set a folder by name, find it first with drive({ cmd: \'find\' }) and pass its id.',
+        'Write this project’s defaults to a .gdocs-mcp.json in the current working directory (or update an existing one up the tree). Set a default account and/or a default folder (URL or id). The folder is where write_doc is told new docs go: a new doc given as a bare name or at the top of My Drive is refused once, naming the folder and the full path to call. It is read when the server starts, so write_doc\u2019s description shows a change after a restart; the refusal reads it fresh. To set a folder by name, find it first with drive({ cmd: \'find\' }) and pass its id.',
       inputSchema: {
         account: z.string().optional().describe('default Google account email (must be authorized)'),
         folder: z.string().optional().describe('default Drive folder (URL or id): where write_doc says a bare-named new doc will go'),
