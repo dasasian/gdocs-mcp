@@ -195,3 +195,8 @@ export function inlineObjectsOf(
 ): Record<string, docs_v1.Schema$InlineObject> {
   return tabContainer(doc, tabId)?.inlineObjects ?? {};
 }
+
+/** True when a paragraph of this tab or segment begins at `index`. */
+export function startsParagraph(doc: docs_v1.Schema$Document, tabId: string | undefined, segmentId: string | undefined, index: number): boolean {
+  return contentOf(doc, tabId, segmentId).some((el) => el.paragraph && el.startIndex === index);
+}

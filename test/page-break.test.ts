@@ -89,6 +89,11 @@ describe('a page break writes as insertPageBreak (#48)', () => {
     expect(() => markdownToRequests(`A\n\n${BREAK}`, 1, undefined, 'kix.header')).toThrow(/header or footer/);
   });
 
+  it('a break that follows text in its paragraph leaves that paragraph alone', () => {
+    const { requests } = markdownToRequests(BREAK, 5, undefined, undefined, { startsParagraph: false });
+    expect(requests.map((r) => Object.keys(r)[0])).toEqual(['insertPageBreak']);
+  });
+
   it('a break alone still sends insertText only for the words', () => {
     const { requests, text } = markdownToRequests(BREAK, 1);
     expect(text).toBe('');
@@ -236,6 +241,27 @@ describe('edit_doc and page breaks (#48)', () => {
     const requests = sentBy(batch);
     expect(requests.find((r) => r.insertText)?.insertText?.text).toBe('Body starts');
     expect(requests.find((r) => r.insertPageBreak)?.insertPageBreak?.location?.index).toBe(12);
+  });
+
+  it('keeps the title style of the paragraph the break follows', async () => {
+    const batch = vi.fn().mockResolvedValue({});
+    await editDoc(clientsFor(plainDoc, batch), 'd', '<p class="title">Title page</p>', `<p class="title">Title page</p>\n${BREAK}`);
+    const requests = sentBy(batch);
+    expect(requests.filter((r) => r.updateParagraphStyle).map((r) => r.updateParagraphStyle!.paragraphStyle!.namedStyleType)).toEqual(['TITLE']);
+    expect(requests.filter((r) => r.deleteParagraphBullets)).toHaveLength(0);
+  });
+
+  it('resets the paragraph a break makes of its own, wherever the anchor starts a paragraph', async () => {
+    const batch = vi.fn().mockResolvedValue({});
+    await editDoc(clientsFor(plainDoc, batch), 'd', 'Body starts', `${BREAK}\nBody starts`);
+    expect(sentBy(batch).filter((r) => r.updateParagraphStyle?.paragraphStyle?.namedStyleType === 'NORMAL_TEXT')).toHaveLength(1);
+  });
+
+  it('leaves a paragraph alone when the anchor is in the middle of it', async () => {
+    const batch = vi.fn().mockResolvedValue({});
+    await editDoc(clientsFor(plainDoc, batch), 'd', 'starts here', `${BREAK}\nstarts here`);
+    expect(sentBy(batch).filter((r) => r.updateParagraphStyle)).toHaveLength(0);
+    expect(sentBy(batch).filter((r) => r.insertPageBreak)).toHaveLength(1);
   });
 
   it('takes any accepted spelling in new_string', async () => {

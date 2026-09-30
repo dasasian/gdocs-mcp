@@ -1,6 +1,6 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
-import { contentOf, resolveTabId, flattenTabs, tableInsertedAt, writeControlFor, TAB_TREE_FIELDS, type SegmentKind, type SegmentPage } from './structure.js';
+import { contentOf, startsParagraph, resolveTabId, flattenTabs, tableInsertedAt, writeControlFor, TAB_TREE_FIELDS, type SegmentKind, type SegmentPage } from './structure.js';
 import { resolveSegmentTarget } from './segments.js';
 import { getDocInline } from './suggestions.js';
 import { readFile } from 'node:fs/promises';
@@ -83,9 +83,9 @@ async function renderMarkdownInto(
   clients: GoogleClients,
   documentId: string,
   markdown: string,
-  opts: { tabId?: string; segmentId?: string; preRequests?: docs_v1.Schema$Request[]; requiredRevisionId?: string; baseDir?: string; startIndex?: number; resetParagraphStyles?: boolean } = {},
+  opts: { tabId?: string; segmentId?: string; preRequests?: docs_v1.Schema$Request[]; requiredRevisionId?: string; baseDir?: string; startIndex?: number; resetParagraphStyles?: boolean; startsParagraph?: boolean } = {},
 ): Promise<{ warnings: string[]; images: { src: string; objectId: string }[] }> {
-  const { requests, tables, images } = markdownToRequests(markdown, opts.startIndex ?? 1, opts.tabId, opts.segmentId, { resetParagraphStyles: opts.resetParagraphStyles });
+  const { requests, tables, images } = markdownToRequests(markdown, opts.startIndex ?? 1, opts.tabId, opts.segmentId, { resetParagraphStyles: opts.resetParagraphStyles, startsParagraph: opts.startsParagraph });
   const all = [...(opts.preRequests ?? []), ...requests];
   if (all.length) {
     await clients.docs.documents.batchUpdate({
@@ -149,6 +149,7 @@ export async function insertContent(
     segmentId: seg.segmentId,
     baseDir: opts.baseDir,
     startIndex: resolved.index,
+    startsParagraph: startsParagraph(seg.doc, tabId, seg.segmentId, resolved.index),
   });
   return {
     status: 'ok',

@@ -180,7 +180,9 @@ both shapes; an anchor across a break deletes it with the rest.
 Two things the design did not foresee. The break's new paragraph **inherits the
 heading style and bullet of the paragraph it lands in** (verified: a break at the
 start of a Heading 1 or a list item came out as a heading or list item), so the
-writer resets each one to Normal text with no bullet. And **a break in a header or
+writer resets each break that has a paragraph of its own to Normal text with no
+bullet. A break that follows text in its paragraph is not reset: that paragraph is
+the text's, and resetting it took a title's style away (found by the eval below). And **a break in a header or
 footer is refused by the API**, so the writer refuses it first, naming why.
 
 Section breaks and column breaks are not carried: a section break holds its

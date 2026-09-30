@@ -1,7 +1,7 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
 import { project, type Projection } from './transformer.js';
-import { resolveTabId, writeControlFor, type SegmentKind, type SegmentPage } from './structure.js';
+import { resolveTabId, writeControlFor, startsParagraph, type SegmentKind, type SegmentPage } from './structure.js';
 import { resolveSegmentTarget } from './segments.js';
 import { parseInline, segmentTextStyle, inlineStyleIssues, type Segment } from './inline.js';
 import { HEADING_BY_LEVEL, NAMED_STYLE_BY_CLASS } from './markdown-spec.js';
@@ -324,7 +324,7 @@ export async function editDoc(
         requests.push(...insertedTextRequests(segments, plain, startIndex, tabId, segmentId));
         requests.push(...newParagraphRequests(newLines, lineTexts, startIndex, tabId, segmentId));
       }
-      requests.push(...pageBreakRequests(breakOffsets.map((offset) => startIndex + offset), tabId, segmentId));
+      requests.push(...pageBreakRequests(breakOffsets.map((offset) => ({ index: startIndex + offset, ownParagraph: offset === 0 ? startsParagraph(res.data, tabId, segmentId, startIndex) : plain[offset - 1] === '\n' })), tabId, segmentId));
     }
   }
 

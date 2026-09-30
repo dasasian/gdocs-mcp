@@ -283,6 +283,8 @@ interface ParagraphOp {
 export interface BuildOptions {
   /** clear the paragraph style the inserted text inherits from where it lands; for a wholesale replace. */
   resetParagraphStyles?: boolean;
+  /** false when `startIndex` is inside a paragraph's text, so a page break first in the content follows that text instead of starting a paragraph. Default true. */
+  startsParagraph?: boolean;
 }
 
 const RESET_PARAGRAPH_FIELDS = [
@@ -306,21 +308,32 @@ const clearDirectParagraphStyling = (startIndex: number, length: number, tabId?:
 
 const PAGE_BREAK_PARAGRAPH_LENGTH = 2;
 
+export interface PageBreakAt {
+  /** position in the text as it is before any break is in it. */
+  index: number;
+  /** true when the break starts a paragraph, so the paragraph mark `insertPageBreak` adds makes a paragraph of its own. */
+  ownParagraph: boolean;
+}
+
 /**
- * The requests that put page breaks at `indices` (positions in the text as it
- * is before any break is in it). Highest first, so each index is still true when
- * it is used. `insertPageBreak` adds the break and a paragraph mark, and that
- * paragraph inherits the style and bullet of the paragraph it lands in, so each
- * one is reset to plain Normal text. Throws for a header or footer segment.
+ * The requests that put page breaks in. Highest index first, so each index is
+ * still true when it is used. A break with a paragraph of its own inherits the
+ * style and bullet of the paragraph it lands in, so that paragraph is reset to
+ * plain Normal text; a break that follows text in its paragraph leaves that
+ * paragraph's style alone. Throws for a header or footer segment.
  */
-export function pageBreakRequests(indices: number[], tabId?: string, segmentId?: string): docs_v1.Schema$Request[] {
-  if (segmentId && indices.length > 0) throw new StyleSyntaxError(['a page break cannot go in a header or footer: the Docs API refuses it']);
-  return [...indices]
-    .sort((a, b) => b - a)
-    .flatMap((index) => [
+export function pageBreakRequests(breaks: PageBreakAt[], tabId?: string, segmentId?: string): docs_v1.Schema$Request[] {
+  if (segmentId && breaks.length > 0) throw new StyleSyntaxError(['a page break cannot go in a header or footer: the Docs API refuses it']);
+  return [...breaks]
+    .sort((a, b) => b.index - a.index)
+    .flatMap(({ index, ownParagraph }) => [
       { insertPageBreak: { location: { index, tabId, segmentId } } },
-      clearDirectParagraphStyling(index, PAGE_BREAK_PARAGRAPH_LENGTH, tabId, segmentId),
-      { deleteParagraphBullets: { range: { startIndex: index, endIndex: index + PAGE_BREAK_PARAGRAPH_LENGTH, tabId, segmentId } } },
+      ...(ownParagraph
+        ? [
+            clearDirectParagraphStyling(index, PAGE_BREAK_PARAGRAPH_LENGTH, tabId, segmentId),
+            { deleteParagraphBullets: { range: { startIndex: index, endIndex: index + PAGE_BREAK_PARAGRAPH_LENGTH, tabId, segmentId } } },
+          ]
+        : []),
     ]);
 }
 
@@ -347,6 +360,7 @@ export function buildContentRequests(
   const tables: TablePlacement[] = [];
   const images: ImagePlacement[] = [];
   const breakOffsets: number[] = [];
+  const pageBreaks = (): PageBreakAt[] => breakOffsets.map((at) => ({ index: at, ownParagraph: at > startIndex || opts.startsParagraph !== false }));
   const abs = (off: number): number => startIndex + off;
 
   const addInline = (lineContentStart: number, content: string): string => {
@@ -404,7 +418,7 @@ export function buildContentRequests(
     tables: tables.map((t) => ({ ...t, index: afterBreaks(t.index) })),
     images: images.map((im) => ({ ...im, index: afterBreaks(im.index) })),
   };
-  if (!text) return { requests: [...requests, ...pageBreakRequests(breakOffsets, tabId, segmentId)], text, ...placed };
+  if (!text) return { requests: [...requests, ...pageBreakRequests(pageBreaks(), tabId, segmentId)], text, ...placed };
   requests.push({ insertText: { location: { index: startIndex, tabId, segmentId }, text } });
   requests.push(clearDirectRunStyling(startIndex, text.length, tabId, segmentId));
   if (opts.resetParagraphStyles) requests.push(clearDirectParagraphStyling(startIndex, text.length, tabId, segmentId));
@@ -432,7 +446,7 @@ export function buildContentRequests(
       },
     });
   }
-  requests.push(...pageBreakRequests(breakOffsets, tabId, segmentId));
+  requests.push(...pageBreakRequests(pageBreaks(), tabId, segmentId));
   return { requests, text, ...placed };
 }
 
