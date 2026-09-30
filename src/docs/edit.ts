@@ -8,7 +8,8 @@ import { HEADING_BY_LEVEL, NAMED_STYLE_BY_CLASS } from './markdown-spec.js';
 import { paragraphCssChange, paragraphStyleUpdate, StyleSyntaxError } from './css.js';
 import { splitEditLine, type ParagraphLine, type ParagraphMarkup } from './paragraph-markup.js';
 import { parseStyleBlock, namedStyleRequests, styleRulesOf, renderStyleBlock } from './style-block.js';
-import { clearDirectRunStyling } from './write.js';
+import { clearDirectRunStyling, pageBreakRequests } from './write.js';
+import { parsePageBreakLine } from './page-break.js';
 
 // String-anchored editing (bet #3). The agent quotes a unique slice of text;
 // we locate it in the plain-text projection, map to Docs indices, and emit a
@@ -234,11 +235,35 @@ async function editStyleBlock(
   return { status: 'ok', replaced: requests.length };
 }
 
-function issuesOf(lines: ParagraphLine[], newString: string): string[] {
-  return [
-    ...lines.flatMap((line, k) => line.issues.map((issue) => `line ${k + 1}: ${issue}`)),
-    ...newString.split('\n').flatMap((text, k) => inlineStyleIssues(text).map((issue) => `line ${k + 1}: ${issue}`)),
-  ];
+interface NewString {
+  /** the lines that are text, with their paragraph markup; page break lines are not among them. */
+  lines: ParagraphLine[];
+  /** for each page break line, how many text lines come before it. */
+  breaksAfterLines: number[];
+  issues: string[];
+}
+
+function partitionNewString(newString: string): NewString {
+  const lines: ParagraphLine[] = [];
+  const breaksAfterLines: number[] = [];
+  const issues: string[] = [];
+  newString.split('\n').forEach((text, k) => {
+    const pageBreak = parsePageBreakLine(text);
+    if (pageBreak) {
+      breaksAfterLines.push(lines.length);
+      issues.push(...pageBreak.issues.map((issue) => `line ${k + 1}: ${issue}`));
+      return;
+    }
+    const line = splitEditLine(text);
+    lines.push(line);
+    issues.push(...line.issues.map((issue) => `line ${k + 1}: ${issue}`), ...inlineStyleIssues(text).map((issue) => `line ${k + 1}: ${issue}`));
+  });
+  return { lines, breaksAfterLines, issues };
+}
+
+function pageBreakOffsets(breaksAfterLines: number[], lineTexts: string[]): number[] {
+  const lengthOfFirst = (count: number): number => lineTexts.slice(0, count).reduce((sum, text) => sum + text.length + 1, 0);
+  return breaksAfterLines.map((count) => (count < lineTexts.length ? lengthOfFirst(count) : Math.max(0, lengthOfFirst(count) - 1)));
 }
 
 export async function editDoc(
@@ -273,16 +298,16 @@ export async function editDoc(
     };
   }
 
-  const newLines = newString.split('\n').map(splitEditLine);
-  const problems = issuesOf(newLines, newString);
+  const { lines: newLines, breaksAfterLines, issues: problems } = partitionNewString(newString);
   if (problems.length) throw new StyleSyntaxError(problems);
   const segments = parseInline(newLines.map((l) => l.inner).join('\n'));
   const plain = segments.map((s) => s.text).join('');
   const lineTexts = plain.split('\n');
+  const breakOffsets = pageBreakOffsets(breaksAfterLines, lineTexts);
 
   const highestIndexFirst = (opts.replaceAll ? positions : [positions[0]]).sort((x, y) => y - x);
   const requests: docs_v1.Schema$Request[] = [];
-  const sameWords = plain === needle;
+  const sameWords = plain === needle && breakOffsets.length === 0;
   if (sameWords) {
     const oldLines = oldString.split('\n').map(splitEditLine);
     const lines = newLines.map((now, k) => ({ now, before: oldLines[k] }));
@@ -295,9 +320,11 @@ export async function editDoc(
     for (const a of highestIndexFirst) {
       const { startIndex, endIndex } = rangeFor(proj, a, a + needle.length);
       requests.push({ deleteContentRange: { range: { startIndex, endIndex, tabId, segmentId } } });
-      if (!plain) continue;
-      requests.push(...insertedTextRequests(segments, plain, startIndex, tabId, segmentId));
-      requests.push(...newParagraphRequests(newLines, lineTexts, startIndex, tabId, segmentId));
+      if (plain) {
+        requests.push(...insertedTextRequests(segments, plain, startIndex, tabId, segmentId));
+        requests.push(...newParagraphRequests(newLines, lineTexts, startIndex, tabId, segmentId));
+      }
+      requests.push(...pageBreakRequests(breakOffsets.map((offset) => startIndex + offset), tabId, segmentId));
     }
   }
 

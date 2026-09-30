@@ -153,10 +153,42 @@ read does not use it.
 The writer accepts the common spellings — that `<div>`, Google's `<hr>`, and the
 modern `break-before: page` / `break-after: page` — in `write_doc`, `edit_doc`
 and `insert_content`, and sends `insertPageBreak`. There is no page-break tool.
+A `<div>` or `<hr>` on its own line that is anything else is refused the way §2a
+refuses unsupported CSS: a bare `<hr>` or `<div style="color:red">` is an error,
+not text. Text that really spells the line reads as `<p>…</p>` (§2b), since the
+writer's own parser sees a break there, and stays text.
+
+**How a break sits in the Docs JSON** (checked live, #48). `pageBreak` is a
+one-index paragraph element. `insertPageBreak` at index *i* puts the break at *i*
+and adds a paragraph mark after it, so where the break lands decides the shape:
+
+- at the start of a paragraph: a paragraph of its own, `[pageBreak, "\n"]`, then
+  the paragraph that was there. This is what the writer produces.
+- at the end of a paragraph's text (`insertPageBreak` at the end of "Title page", the issue's probe):
+  `["Title page", pageBreak, "\n"]`, then an *empty* paragraph, then the body.
+- with text inserted after it: `["Third", pageBreak, "tail\n"]`. Made through
+  the API by inserting text after the break (not tried in the Docs UI); the reader handles it.
+
+The reader splits a paragraph at each `pageBreak` and emits the text before, the
+`<div>` line, and the text after; an empty piece is skipped, which is also why the
+empty paragraph Google adds never shows. All three shapes read the same, so read →
+write → read is identical, and the writer's shape (no empty paragraph) is what the
+second read finds. `edit_doc` projects a break as its line, with a newline on
+each side when text shares its paragraph, so `Title page\n<div …></div>` matches
+both shapes; an anchor across a break deletes it with the rest.
+
+Two things the design did not foresee. The break's new paragraph **inherits the
+heading style and bullet of the paragraph it lands in** (verified: a break at the
+start of a Heading 1 or a list item came out as a heading or list item), so the
+writer resets each one to Normal text with no bullet. And **a break in a header or
+footer is refused by the API**, so the writer refuses it first, naming why.
 
 Section breaks and column breaks are not carried: a section break holds its
 own page setup and headers, which is its own design (#57). The read does not
-show them, and `write_doc`'s loss summary counts them (§4).
+show them, and `write_doc`'s loss summary counts them (§4). A column break cannot
+be made through the API at all (`insertText` strips the control character and
+there is no `insertColumnBreak`); it is counted from the documented
+`columnBreak` paragraph element.
 
 ---
 

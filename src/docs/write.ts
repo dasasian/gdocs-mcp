@@ -3,6 +3,7 @@ import { parseInline, segmentTextStyle, inlineStyleIssues } from './inline.js';
 import { HEADING_BY_LEVEL, NAMED_STYLE_BY_CLASS, type ParagraphClass } from './markdown-spec.js';
 import { paragraphStyleUpdate, StyleSyntaxError, type ParagraphCss } from './css.js';
 import { splitWrappedLine } from './paragraph-markup.js';
+import { parsePageBreakLine } from './page-break.js';
 import { parseStyleBlock, namedStyleRequests, type StyleRule } from './style-block.js';
 
 // markdown -> Docs block requests (the inverse of transformer.ts's reader, sharing
@@ -20,7 +21,8 @@ type Block =
   | { type: 'style'; rules: StyleRule[] }
   | { type: 'list'; ordered: boolean; items: { level: number; text: string }[] }
   | { type: 'table'; rows: string[][]; aligns: (CellAlign | null)[] }
-  | { type: 'image'; alt: string; src: string; width?: number; height?: number };
+  | { type: 'image'; alt: string; src: string; width?: number; height?: number }
+  | { type: 'pageBreak' };
 
 // Every direct character-formatting field, cleared by listing it in `fields`
 // while leaving it out of `textStyle`. Kept exhaustive on purpose: a field
@@ -138,7 +140,7 @@ function parseListAt(lines: string[], from: number): { block: Block; next: numbe
 function parseSoftJoinedParagraphAt(lines: string[], from: number): { block: Block; next: number } {
   const para: string[] = [];
   let i = from;
-  while (i < lines.length && lines[i].trim() !== '' && !HEADING_RE.test(lines[i]) && !LIST_RE.test(lines[i])) {
+  while (i < lines.length && lines[i].trim() !== '' && !HEADING_RE.test(lines[i]) && !LIST_RE.test(lines[i]) && !parsePageBreakLine(lines[i])) {
     para.push(lines[i].trim());
     i++;
   }
@@ -204,6 +206,13 @@ export function parseBlocks(md: string): Block[] {
     const imgTag = IMG_TAG_RE.test(line.trim()) ? parseImgTag(line.trim()) : undefined;
     if (imgTag) {
       blocks.push(imgTag);
+      i++;
+      continue;
+    }
+    const pageBreak = parsePageBreakLine(line);
+    if (pageBreak) {
+      report(i, pageBreak.issues);
+      blocks.push({ type: 'pageBreak' });
       i++;
       continue;
     }
@@ -295,6 +304,26 @@ const clearDirectParagraphStyling = (startIndex: number, length: number, tabId?:
   },
 });
 
+const PAGE_BREAK_PARAGRAPH_LENGTH = 2;
+
+/**
+ * The requests that put page breaks at `indices` (positions in the text as it
+ * is before any break is in it). Highest first, so each index is still true when
+ * it is used. `insertPageBreak` adds the break and a paragraph mark, and that
+ * paragraph inherits the style and bullet of the paragraph it lands in, so each
+ * one is reset to plain Normal text. Throws for a header or footer segment.
+ */
+export function pageBreakRequests(indices: number[], tabId?: string, segmentId?: string): docs_v1.Schema$Request[] {
+  if (segmentId && indices.length > 0) throw new StyleSyntaxError(['a page break cannot go in a header or footer: the Docs API refuses it']);
+  return [...indices]
+    .sort((a, b) => b - a)
+    .flatMap((index) => [
+      { insertPageBreak: { location: { index, tabId, segmentId } } },
+      clearDirectParagraphStyling(index, PAGE_BREAK_PARAGRAPH_LENGTH, tabId, segmentId),
+      { deleteParagraphBullets: { range: { startIndex: index, endIndex: index + PAGE_BREAK_PARAGRAPH_LENGTH, tabId, segmentId } } },
+    ]);
+}
+
 export const clearDirectRunStyling = (startIndex: number, length: number, tabId?: string, segmentId?: string): docs_v1.Schema$Request => ({
   updateTextStyle: {
     range: { startIndex, endIndex: startIndex + length, tabId, segmentId },
@@ -317,6 +346,7 @@ export function buildContentRequests(
   const listOps: { start: number; end: number; ordered: boolean }[] = [];
   const tables: TablePlacement[] = [];
   const images: ImagePlacement[] = [];
+  const breakOffsets: number[] = [];
   const abs = (off: number): number => startIndex + off;
 
   const addInline = (lineContentStart: number, content: string): string => {
@@ -348,6 +378,8 @@ export function buildContentRequests(
       if (namedStyleType || block.css) {
         paragraphOps.push({ start: abs(lineStart), end: abs(lineStart + plain.length + 1), namedStyleType: namedStyleType || undefined, css: block.css ?? {} });
       }
+    } else if (block.type === 'pageBreak') {
+      breakOffsets.push(abs(text.length));
     } else if (block.type === 'style') {
       styleRules.push(...block.rules);
     } else if (block.type === 'table') {
@@ -367,7 +399,12 @@ export function buildContentRequests(
   }
 
   const requests: docs_v1.Schema$Request[] = namedStyleRequests(styleRules, [], tabId);
-  if (!text) return { requests, text, tables, images };
+  const afterBreaks = (index: number): number => index + PAGE_BREAK_PARAGRAPH_LENGTH * breakOffsets.filter((at) => at <= index).length;
+  const placed = {
+    tables: tables.map((t) => ({ ...t, index: afterBreaks(t.index) })),
+    images: images.map((im) => ({ ...im, index: afterBreaks(im.index) })),
+  };
+  if (!text) return { requests: [...requests, ...pageBreakRequests(breakOffsets, tabId, segmentId)], text, ...placed };
   requests.push({ insertText: { location: { index: startIndex, tabId, segmentId }, text } });
   requests.push(clearDirectRunStyling(startIndex, text.length, tabId, segmentId));
   if (opts.resetParagraphStyles) requests.push(clearDirectParagraphStyling(startIndex, text.length, tabId, segmentId));
@@ -395,7 +432,8 @@ export function buildContentRequests(
       },
     });
   }
-  return { requests, text, tables, images };
+  requests.push(...pageBreakRequests(breakOffsets, tabId, segmentId));
+  return { requests, text, ...placed };
 }
 
 export function markdownToRequests(markdown: string, startIndex: number, tabId?: string, segmentId?: string, opts: BuildOptions = {}): BuiltContent {

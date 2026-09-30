@@ -100,3 +100,7 @@ export const CSS_BY_ALIGN: Record<string, CssAlign> = {
 // maps it back, which is what makes `` `x` `` survive a round-trip — keep the
 // two directions on this one constant.
 export const CODE_FONT = 'Courier New';
+
+// A page break, on its own line: what the reader emits and the writer accepts
+// first among its spellings (page-break.ts). Markdown-to-PDF tools already read it.
+export const PAGE_BREAK_LINE = '<div style="page-break-after:always"></div>';

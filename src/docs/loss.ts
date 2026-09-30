@@ -13,6 +13,8 @@ export interface Loss {
   dates: number;
   richLinks: number;
   bookmarkLinks: number;
+  sectionBreaks: number;
+  columnBreaks: number;
 }
 
 type ParagraphElementWithDate = docs_v1.Schema$ParagraphElement & { dateElement?: object };
@@ -28,6 +30,8 @@ const LABELS: { key: Counted; one: string; many: string }[] = [
   { key: 'dates', one: 'date chip', many: 'date chips' },
   { key: 'richLinks', one: 'link chip', many: 'link chips' },
   { key: 'bookmarkLinks', one: 'link to a bookmark or heading', many: 'links to a bookmark or heading' },
+  { key: 'sectionBreaks', one: 'section break', many: 'section breaks' },
+  { key: 'columnBreaks', one: 'column break', many: 'column breaks' },
 ];
 
 const TAB_STOP_LINES_SHOWN = 3;
@@ -56,8 +60,10 @@ function pointsAtBookmarkOrHeading(link: docs_v1.Schema$Link | null | undefined)
  * so a bookmark nothing links to is not counted.
  */
 export function measureLoss(doc: docs_v1.Schema$Document, tabId: string | undefined, comments: number): Loss {
-  const loss: Loss = { paragraphs: 0, comments, suggestions: parseSuggestions(doc, tabId).length, tabStops: 0, tabStopLines: [], people: 0, dates: 0, richLinks: 0, bookmarkLinks: 0 };
-  for (const paragraph of paragraphsIn(contentOf(doc, tabId))) {
+  const loss: Loss = { paragraphs: 0, comments, suggestions: parseSuggestions(doc, tabId).length, tabStops: 0, tabStopLines: [], people: 0, dates: 0, richLinks: 0, bookmarkLinks: 0, sectionBreaks: 0, columnBreaks: 0 };
+  const content = contentOf(doc, tabId);
+  loss.sectionBreaks = content.slice(1).filter((el) => el.sectionBreak).length;
+  for (const paragraph of paragraphsIn(content)) {
     const text = textOf(paragraph);
     if (text) loss.paragraphs += 1;
     const stops = paragraph.paragraphStyle?.tabStops?.length ?? 0;
@@ -69,6 +75,7 @@ export function measureLoss(doc: docs_v1.Schema$Document, tabId: string | undefi
       if (element.person) loss.people += 1;
       if (element.dateElement) loss.dates += 1;
       if (element.richLink) loss.richLinks += 1;
+      if (element.columnBreak) loss.columnBreaks += 1;
       if (pointsAtBookmarkOrHeading(element.textRun?.textStyle?.link)) loss.bookmarkLinks += 1;
     }
   }
@@ -97,6 +104,7 @@ export function lossDetails(loss: Loss, docHasSeveralTabs: boolean): string[] {
   return [
     ...(loss.tabStops ? [`tab stops on ${loss.tabStopLines.length} line(s): ${shown.join(', ')}${more > 0 ? `, and ${more} more` : ''}. The Docs API cannot write tab stops, so they cannot be put back.`] : []),
     ...(loss.comments && docHasSeveralTabs ? ['The comment count is for the whole doc: the Drive API does not say which tab a comment is anchored to.'] : []),
+    ...(loss.sectionBreaks || loss.columnBreaks ? ['Section breaks and column breaks are not carried: a read does not show them, so a replace drops them, and the page setup and headers a section break holds go with it.'] : []),
     ...(loss.bookmarkLinks ? ['A bookmark itself is invisible to the API; only links that point at one are counted, so a bookmark nothing links to is not in this list.'] : []),
   ];
 }

@@ -4,6 +4,7 @@ import {
   PARAGRAPH_CSS_PROPERTIES,
   TEXT_CSS_PROPERTIES,
   NAMED_STYLE_BY_SELECTOR,
+  PAGE_BREAK_LINE,
   type CssAlign,
 } from './markdown-spec.js';
 import { hexToRgb } from './color.js';
@@ -57,6 +58,7 @@ function styleSyntaxMessage(issues: string[]): string {
     `Supported in <span style>: ${TEXT_CSS_PROPERTIES.join(', ')}.`,
     `A <style> rule takes both, on the selectors ${Object.keys(NAMED_STYLE_BY_SELECTOR).join(', ')}.`,
     'Lengths are in pt; line-height is a plain number (1.15); colors are #rrggbb.',
+    `A <div> or <hr> on its own line is a page break, and only that: ${PAGE_BREAK_LINE}`,
   ].join('\n');
 }
 

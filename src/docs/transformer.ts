@@ -1,6 +1,6 @@
 import type { docs_v1 } from 'googleapis';
 import { contentOf, listsOf, inlineObjectsOf } from './structure.js';
-import { LEVEL_BY_HEADING, CLASS_BY_NAMED_STYLE, CODE_FONT } from './markdown-spec.js';
+import { LEVEL_BY_HEADING, CLASS_BY_NAMED_STYLE, CODE_FONT, PAGE_BREAK_LINE } from './markdown-spec.js';
 import { declarationsFor, styleAttribute } from './css.js';
 import { paragraphCssOf, effectiveStylesFor } from './style-block.js';
 import { rgbToHex } from './color.js';
@@ -43,10 +43,26 @@ export function project(doc: docs_v1.Schema$Document, tabId?: string, segmentId?
   const walk = (content: docs_v1.Schema$StructuralElement[] | undefined): void => {
     for (const el of content ?? []) {
       if (el.paragraph) {
+        let afterBreak = false;
+        const pushLine = (text: string, at: number): void => {
+          for (const char of text) {
+            chars.push(char);
+            map.push(at);
+          }
+        };
         for (const pe of el.paragraph.elements ?? []) {
+          if (pe.pageBreak) {
+            const at = pe.startIndex ?? 0;
+            if (chars.length > 0 && chars[chars.length - 1] !== '\n') pushLine('\n', at);
+            pushLine(PAGE_BREAK_LINE, at);
+            afterBreak = true;
+            continue;
+          }
           const c = pe.textRun?.content;
           if (!c) continue;
           const start = pe.startIndex ?? 0;
+          if (afterBreak && c !== '\n') pushLine('\n', (pe.startIndex ?? 0) - 1);
+          afterBreak = false;
           for (let i = 0; i < c.length; i++) {
             chars.push(c[i]);
             map.push(start + i);
@@ -90,13 +106,7 @@ export function renderMarkdown(doc: docs_v1.Schema$Document, opts: RenderOpts = 
     counters = {};
   };
 
-  for (const el of contentOf(doc, opts.tabId, opts.segmentId)) {
-    const para = el.paragraph;
-    if (!para) {
-      flushList();
-      if (el.table) blocks.push(renderTable(el.table, opts));
-      continue;
-    }
+  const addParagraph = (para: docs_v1.Schema$Paragraph): void => {
     const line = renderParagraph(para, opts, objects, doc);
     if (para.bullet) {
       const listId = para.bullet.listId ?? null;
@@ -117,9 +127,51 @@ export function renderMarkdown(doc: docs_v1.Schema$Document, opts: RenderOpts = 
       const isSeparatorOnly = line === '';
       if (!isSeparatorOnly) blocks.push(line);
     }
+  };
+
+  for (const el of contentOf(doc, opts.tabId, opts.segmentId)) {
+    if (!el.paragraph) {
+      flushList();
+      if (el.table) blocks.push(renderTable(el.table, opts));
+      continue;
+    }
+    for (const piece of splitAtPageBreaks(el.paragraph)) {
+      if (piece === PAGE_BREAK) {
+        flushList();
+        blocks.push(PAGE_BREAK_LINE);
+      } else {
+        addParagraph(piece);
+      }
+    }
   }
   flushList();
   return blocks.join('\n\n');
+}
+
+const PAGE_BREAK = Symbol('page break');
+
+const holdsContent = (elements: docs_v1.Schema$ParagraphElement[]): boolean =>
+  elements.some((pe) => (pe.textRun ? withoutParagraphMark(pe.textRun.content ?? '') !== '' : !pe.pageBreak));
+
+function splitAtPageBreaks(para: docs_v1.Schema$Paragraph): (docs_v1.Schema$Paragraph | typeof PAGE_BREAK)[] {
+  const elements = para.elements ?? [];
+  if (!elements.some((pe) => pe.pageBreak)) return [para];
+  const pieces: (docs_v1.Schema$Paragraph | typeof PAGE_BREAK)[] = [];
+  let run: docs_v1.Schema$ParagraphElement[] = [];
+  const closeRun = (): void => {
+    if (holdsContent(run)) pieces.push({ ...para, elements: run });
+    run = [];
+  };
+  for (const pe of elements) {
+    if (pe.pageBreak) {
+      closeRun();
+      pieces.push(PAGE_BREAK);
+    } else {
+      run.push(pe);
+    }
+  }
+  closeRun();
+  return pieces;
 }
 
 // Embedded image -> the <img> escape hatch (DESIGN.md §2). `src` stays the
