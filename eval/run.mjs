@@ -214,8 +214,9 @@ function printReport(results, tasks, models) {
     return `${passed}/${mine.length}${quotaCount ? ` (${quotaCount} quota)` : ''}${blockedCount ? ` (${blockedCount} could not run)` : ''}`;
   };
   const nameWidth = Math.max(...tasks.map((task) => task.name.length), 4);
-  console.log(`\n${'task'.padEnd(nameWidth)}  ${models.map((model) => model.padEnd(12)).join('')}`);
-  for (const task of tasks) console.log(`${task.name.padEnd(nameWidth)}  ${models.map((model) => cell(task, model).padEnd(12)).join('')}`);
+  const columnWidths = models.map((model) => Math.max(model.length, ...tasks.map((task) => cell(task, model).length)) + 2);
+  console.log(`\n${'task'.padEnd(nameWidth)}  ${models.map((model, i) => model.padEnd(columnWidths[i])).join('')}`);
+  for (const task of tasks) console.log(`${task.name.padEnd(nameWidth)}  ${models.map((model, i) => cell(task, model).padEnd(columnWidths[i])).join('')}`);
 
   const failed = results.filter((result) => outcomeOf(result) === 'fail');
   const blocked = results.filter((result) => result.blocked);
