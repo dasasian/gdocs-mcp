@@ -54,8 +54,6 @@ function findAll(haystack: string, needle: string): number[] {
   return out;
 }
 
-// A table's cells are paragraphs in the doc's text, one per line, so a markdown
-// row matches as its cells' text and the separator row matches nothing.
 function tableRowsAsCellText(s: string): string {
   return s
     .split('\n')
@@ -64,7 +62,7 @@ function tableRowsAsCellText(s: string): string {
     .join('\n');
 }
 
-// Resolve old_string to its match positions, trying exact then markup-tolerant.
+/** Resolves old_string to its match positions: exact first, then markup-tolerant, with a markdown table matching as its cells' text. */
 export function locate(text: string, oldString: string): { needle: string; positions: number[] } {
   let positions = findAll(text, oldString);
   if (positions.length) return { needle: oldString, positions };

@@ -1,32 +1,16 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
-import { contentOf, resolveTabId, tableInsertedAt, writeControlFor, type SegmentKind, type SegmentPage } from './structure.js';
+import { contentOf, resolveTabId, writeControlFor, type SegmentKind, type SegmentPage } from './structure.js';
 import { resolveSegmentTarget } from './segments.js';
-import { resolveImageSource, uploadImageForInsert } from '../drive/images.js';
 import { ALIGN_BY_CSS, type CssAlign } from './markdown-spec.js';
 import { parseInline, segmentTextStyle } from './inline.js';
-import { project } from './transformer.js';
-import { locate, rangeFor, contextAround } from './edit.js';
 import { hexToRgb, rgbToHex } from './color.js';
 
-// Objects markdown can't size/place: images (and tables). Position is `top`,
-// `end`, or a unique text anchor (insert right after the matched text).
-
-// Segment targeting is uniform across the table ops (#28): a table can live in a
-// header/footer just as easily as the body (a letterhead is the common case), so
-// they all take the same segment/page pair the text tools use.
+/** The segment/page pair every table op takes, so a letterhead table is reachable like a body one. */
 export interface SegmentOpts {
   segment?: SegmentKind;
   page?: SegmentPage;
 }
-
-// ---- Shared table-fill primitives -----------------------------------------
-//
-// Both entry points that create a table — the `insert_table` tool and the
-// markdown renderer — insert an empty table, re-fetch to learn the new cell
-// indices, then fill it. These are the parts that were duplicated with drifting
-// feature sets (#29): the tool inserted cell text raw, so `data: [["**x**"]]`
-// wrote literal asterisks into the document.
 
 export interface CellTarget {
   tabId?: string;
@@ -133,8 +117,6 @@ async function tableOp(
 ): Promise<StructureResult> {
   const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
   const tabId = resolveTabId(doc, opts.tabId);
-  // create:false — you can't restructure a table in a header that doesn't exist,
-  // so an absent segment is an error to report, not something to conjure up.
   const seg = resolveSegmentTarget(doc, { segment: opts.segment, page: opts.page, tabId });
   if (seg.error) return { status: 'no_segment', message: seg.error };
   const loc = locateTable(seg.doc, cellText, tabId, seg.segmentId);
@@ -226,10 +208,6 @@ export interface TableStyleResult {
   applied?: string[];
   table?: { rows: number; columns: number; matchedCell: { rowIndex: number; columnIndex: number } };
 }
-
-// Edit style/layout of an EXISTING table (#8): cell padding, background, column
-// widths — reusing the same request types insert_table builds, but against a
-// located table rather than a freshly-created one.
 
 // ---- Reading table style (#33) ---------------------------------------------
 
