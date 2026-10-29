@@ -225,8 +225,9 @@ describe('the lines shared at both ends are kept (#60)', () => {
     const { clients, batchUpdate } = clientsFor(docOf(scopeDoc()));
     await editDoc(clients, 'd', '## Scope\n\nThis project covers', '## Scope\n\n| Phase | Weeks |\n|---|---|\n| 1 | 4 |\n\nThis project covers');
     const allRequests = batchUpdate.mock.calls.flatMap((c) => c[0].requestBody.requests as docs_v1.Schema$Request[]);
-    expect(allRequests.some((r) => r.deleteContentRange)).toBe(false);
-    expect(allRequests.find((r) => r.insertTable)!.insertTable!.location!.index).toBe(bodyOf(scopeDoc())[1].startIndex);
+    const deletedLengths = allRequests.flatMap((r) => (r.deleteContentRange ? [r.deleteContentRange.range!.endIndex! - r.deleteContentRange.range!.startIndex!] : []));
+    expect(deletedLengths.every((length) => length === 1)).toBe(true);
+    expect(allRequests.find((r) => r.insertTable)!.insertTable!.location!.index).toBe(bodyOf(scopeDoc())[1].startIndex! - 1);
     expect(inserted(allRequests).some((i) => i.text!.includes('Scope') || i.text!.includes('This project'))).toBe(false);
   });
 

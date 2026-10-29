@@ -5,6 +5,8 @@ import { paragraphStyleUpdate, StyleSyntaxError, type ParagraphCss } from './css
 import { splitWrappedLine } from './paragraph-markup.js';
 import { parsePageBreakLine } from './page-break.js';
 import { parseStyleBlock, namedStyleRequests, type StyleRule } from './style-block.js';
+import { parseHtmlTable } from './table-html.js';
+import { placeCells, type LayoutCell, type TableLayout } from './table-layout.js';
 
 export type CellAlign = 'left' | 'center' | 'right';
 
@@ -13,7 +15,7 @@ type Block =
   | { type: 'paragraph'; text: string; css?: ParagraphCss; className?: ParagraphClass }
   | { type: 'style'; rules: StyleRule[] }
   | { type: 'list'; ordered: boolean; items: { level: number; text: string }[] }
-  | { type: 'table'; rows: string[][]; aligns: (CellAlign | null)[] }
+  | { type: 'table'; rows: string[][]; aligns: (CellAlign | null)[]; layout?: TableLayout }
   | { type: 'image'; alt: string; src: string; width?: number; height?: number; css?: ParagraphCss }
   | { type: 'pageBreak' };
 
@@ -98,6 +100,46 @@ function parseTableAt(lines: string[], from: number): { block: Block; next: numb
   return { block: { type: 'table', rows: [header, ...body], aligns }, next: i };
 }
 
+const HTML_TABLE_START_RE = /^<table\b/i;
+const HTML_TABLE_END_RE = /<\/table\s*>/i;
+
+export type CellBlock = Extract<Block, { type: 'heading' | 'paragraph' | 'list' }>;
+
+/** What a cell of an HTML table holds. Anything a cell cannot carry (an image, a page break, a table) is a problem, not a block. */
+export function cellBlocksOf(cell: LayoutCell): { blocks: CellBlock[]; issues: string[] } {
+  if (!cell.asBlocks) {
+    const inline = cell.markdown === '' ? [] : [{ type: 'paragraph' as const, text: cell.markdown }];
+    return { blocks: inline, issues: inlineStyleIssues(cell.markdown) };
+  }
+  try {
+    const parsed = parseBlocks(cell.markdown);
+    const blocks = parsed.filter((b): b is CellBlock => b.type === 'heading' || b.type === 'paragraph' || b.type === 'list');
+    const refused = parsed.filter((b) => !blocks.includes(b as CellBlock)).map((b) => `a table cell cannot hold a ${b.type}`);
+    return { blocks, issues: refused };
+  } catch (error) {
+    if (error instanceof StyleSyntaxError) return { blocks: [], issues: error.issues };
+    throw error;
+  }
+}
+
+function parseHtmlTableAt(lines: string[], from: number, report: (lineIndex: number, found: string[]) => void): { block: Block; next: number } {
+  let last = from;
+  while (last < lines.length && !HTML_TABLE_END_RE.test(lines[last])) last++;
+  if (last === lines.length) {
+    report(from, ['<table> is never closed']);
+    return { block: { type: 'table', rows: [], aligns: [] }, next: lines.length };
+  }
+  const { layout, issues } = parseHtmlTable(lines.slice(from, last + 1).join('\n'));
+  const placement = placeCells(layout);
+  report(from, [...issues, ...placement.issues]);
+  const rows = Array.from({ length: placement.rowCount }, () => Array.from({ length: placement.columnCount }, () => ''));
+  for (const { row, column, cell } of placement.cells) {
+    rows[row][column] = cell.markdown;
+    report(from, cellBlocksOf(cell).issues.map((issue) => `row ${row + 1}, column ${column + 1}: ${issue}`));
+  }
+  return { block: { type: 'table', rows, aligns: [], layout }, next: last + 1 };
+}
+
 function positiveNumber(v: string | undefined): number | undefined {
   const n = Number.parseFloat(v ?? '');
   return Number.isFinite(n) && n > 0 ? n : undefined;
@@ -156,7 +198,7 @@ const WRAPPED_IMAGE_LINE_RE = /^<p\b[^>]*>\s*<img\b/i;
 export function holdsBlockMarkdown(markdown: string): boolean {
   const hasBlockLine = markdown.split('\n').some((line) => {
     const trimmed = line.trim();
-    return HEADING_RE.test(line) || LIST_RE.test(line) || isTableRow(line) || IMAGE_RE.test(trimmed) || IMG_TAG_RE.test(trimmed) || WRAPPED_IMAGE_LINE_RE.test(trimmed) || STYLE_OPEN_RE.test(trimmed);
+    return HEADING_RE.test(line) || LIST_RE.test(line) || isTableRow(line) || HTML_TABLE_START_RE.test(trimmed) || IMAGE_RE.test(trimmed) || IMG_TAG_RE.test(trimmed) || WRAPPED_IMAGE_LINE_RE.test(trimmed) || STYLE_OPEN_RE.test(trimmed);
   });
   return hasBlockLine || /\n[ \t]*\n/.test(markdown);
 }
@@ -192,6 +234,12 @@ export function parseBlocks(md: string): Block[] {
       report(i, inlineStyleIssues(h[2]));
       blocks.push({ type: 'heading', level: h[1].length, text: h[2].trim() });
       i++;
+      continue;
+    }
+    if (HTML_TABLE_START_RE.test(line.trim())) {
+      const t = parseHtmlTableAt(lines, i, report);
+      blocks.push(t.block);
+      i = t.next;
       continue;
     }
     const startsTable = isTableRow(line) && i + 1 < lines.length && isTableSep(lines[i + 1]);
@@ -262,6 +310,7 @@ export interface TablePlacement {
   index: number;
   rows: string[][];
   aligns: (CellAlign | null)[];
+  layout?: TableLayout;
 }
 
 export interface ImagePlacement {
@@ -409,7 +458,7 @@ export function buildContentRequests(
     } else if (block.type === 'style') {
       styleRules.push(...block.rules);
     } else if (block.type === 'table') {
-      tables.push({ index: addPlaceholderParagraph(), rows: block.rows, aligns: block.aligns });
+      tables.push({ index: addPlaceholderParagraph(), rows: block.rows, aligns: block.aligns, layout: block.layout });
     } else if (block.type === 'image') {
       const lineStart = text.length;
       images.push({ index: addPlaceholderParagraph(), alt: block.alt, src: block.src, width: block.width, height: block.height });

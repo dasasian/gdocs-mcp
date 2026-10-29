@@ -1,7 +1,9 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
 import { tableInsertedAt, writeControlFor } from './structure.js';
-import { markdownToRequests } from './write.js';
+import { markdownToRequests, type TablePlacement } from './write.js';
+import { placeCells } from './table-layout.js';
+import { insertTableRequests, mergeRequests, lookRequests, lookOf, plainLook, rowsTouchedByMerges, fillLayoutRequests } from './table-write.js';
 import { uploadImageForInsert, resolveImageSource } from '../drive/images.js';
 import { fillCellRequests, columnAlignRequests } from './objects.js';
 
@@ -43,25 +45,28 @@ async function insertImagePlacement(
   }
 }
 
-async function insertTableAt(
-  clients: GoogleClients,
-  documentId: string,
-  index: number,
-  rows: string[][],
-  aligns: ('left' | 'center' | 'right' | null)[],
-  tabId?: string,
-  segmentId?: string,
-): Promise<void> {
-  const R = rows.length;
-  const C = Math.max(...rows.map((r) => r.length));
+async function insertTableAt(clients: GoogleClients, documentId: string, table: TablePlacement, tabId?: string, segmentId?: string): Promise<void> {
+  const { index, rows, aligns, layout } = table;
+  const placement = layout && placeCells(layout);
+  const R = placement?.rowCount ?? rows.length;
+  const C = placement?.columnCount ?? Math.max(...rows.map((r) => r.length));
   if (R === 0 || C === 0) return;
-  await clients.docs.documents.batchUpdate({
-    documentId,
-    requestBody: { requests: [{ insertTable: { location: { index, tabId, segmentId }, rows: R, columns: C } }] },
-  });
+  const before = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
+  await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests: insertTableRequests(before, index, R, C, tabId, segmentId) } });
   const after = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
   const tableEl = tableInsertedAt(after, index, tabId, segmentId);
   if (!tableEl?.table?.tableRows) return;
+
+  if (layout && placement) {
+    const site = { tableStart: tableEl.startIndex ?? index, tabId, segmentId };
+    const requests = [
+      ...mergeRequests(placement, site),
+      ...lookRequests(plainLook(R, C, rowsTouchedByMerges(placement)), lookOf(layout, placement), site),
+      ...fillLayoutRequests(tableEl.table, placement, tabId, segmentId),
+    ];
+    if (requests.length) await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests } });
+    return;
+  }
 
   const requests = fillCellRequests(tableEl, rows, { tabId, segmentId });
   if (requests.length) await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests } });
@@ -102,7 +107,7 @@ export async function renderMarkdownInto(
   const warnings: string[] = [];
   const imageMap: { src: string; objectId: string }[] = [];
   const placements: { index: number; run: () => Promise<void> }[] = [
-    ...tables.map((t) => ({ index: t.index, run: () => insertTableAt(clients, documentId, t.index, t.rows, t.aligns, opts.tabId, opts.segmentId) })),
+    ...tables.map((t) => ({ index: t.index, run: () => insertTableAt(clients, documentId, t, opts.tabId, opts.segmentId) })),
     ...images.map((im) => ({
       index: im.index,
       run: async () => {
