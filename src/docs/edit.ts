@@ -316,7 +316,7 @@ function replacementRequestsFor(
     ownParagraph: offset === 0 ? startsParagraph(doc, tabId, segmentId, startIndex) : plain[offset - 1] === '\n',
   }));
   return [
-    { deleteContentRange: { range: { startIndex, endIndex, tabId, segmentId } } },
+    ...(endIndex > startIndex ? [{ deleteContentRange: { range: { startIndex, endIndex, tabId, segmentId } } }] : []),
     ...(plain ? [...insertedTextRequests(segments, plain, startIndex, tabId, segmentId), ...newParagraphRequests(newLines, lineTexts, startIndex, tabId, segmentId)] : []),
     ...pageBreakRequests(breaks, tabId, segmentId),
   ];
@@ -330,10 +330,22 @@ interface UnchangedAnchor {
 function unchangedAnchorOf(oldString: string, newString: string): UnchangedAnchor | undefined {
   if (newString.length <= oldString.length) return undefined;
   const after = newString.startsWith(oldString) ? newString.slice(oldString.length) : undefined;
-  if (after !== undefined && holdsBlockMarkdown(after)) return { side: 'after', added: after };
+  if (after?.includes('\n')) return { side: 'after', added: after };
   const before = newString.endsWith(oldString) ? newString.slice(0, newString.length - oldString.length) : undefined;
-  if (before !== undefined && holdsBlockMarkdown(before)) return { side: 'before', added: before };
+  if (before?.includes('\n')) return { side: 'before', added: before };
   return undefined;
+}
+
+function keptAnchorRange(anchor: UnchangedAnchor | undefined, matched: DocRange): DocRange {
+  if (!anchor) return matched;
+  const at = anchor.side === 'after' ? matched.endIndex : matched.startIndex;
+  return { startIndex: at, endIndex: at };
+}
+
+const isBlankOrPageBreak = (line: string): boolean => line.trim() === '' || parsePageBreakLine(line) !== undefined;
+
+function addsBlockText(markdown: string): boolean {
+  return holdsBlockMarkdown(markdown) || !markdown.split('\n').every(isBlankOrPageBreak);
 }
 
 interface BlockEditContext {
@@ -421,7 +433,7 @@ export async function editDoc(
   const written = anchor ? anchor.added : newString;
   const highestIndexFirst = (opts.replaceAll ? positions : [positions[0]]).sort((x, y) => y - x);
 
-  if (anchor || holdsBlockMarkdown(written)) {
+  if (anchor ? addsBlockText(written) : holdsBlockMarkdown(written)) {
     parseBlocks(written);
     const context: BlockEditContext = { clients, documentId, doc: res.data, markdown: written, anchor, tabId, segmentId, baseDir: opts.baseDir };
     const warnings: string[] = [];
@@ -441,11 +453,11 @@ export async function editDoc(
   const lineTexts = plain.split('\n');
   const replacement: Replacement = { newLines, lineTexts, segments, plain, breakOffsets: pageBreakOffsets(breaksAfterLines, lineTexts) };
 
-  const sameWords = plain === needle && replacement.breakOffsets.length === 0;
+  const sameWords = !anchor && plain === needle && replacement.breakOffsets.length === 0;
   const requests = highestIndexFirst.flatMap((a) =>
     sameWords
       ? styleOnlyRequestsFor(proj, a, needle.length, oldString, replacement, tabId, segmentId)
-      : replacementRequestsFor(res.data, rangeFor(proj, a, a + needle.length), replacement, tabId, segmentId),
+      : replacementRequestsFor(res.data, keptAnchorRange(anchor, rangeFor(proj, a, a + needle.length)), replacement, tabId, segmentId),
   );
 
   if (requests.length) {

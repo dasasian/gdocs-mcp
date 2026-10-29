@@ -231,7 +231,7 @@ describe('edit_doc and page breaks (#48)', () => {
     const result = await editDoc(clientsFor(plainDoc, batch), 'd', 'Title page', `Title page\n${BREAK}`);
     expect(result.status).toBe('ok');
     const requests = sentBy(batch);
-    expect(requests.find((r) => r.insertText)?.insertText).toMatchObject({ text: 'Title page', location: { index: 1 } });
+    expect(requests.some((r) => r.insertText || r.deleteContentRange)).toBe(false);
     expect(requests.find((r) => r.insertPageBreak)?.insertPageBreak?.location?.index).toBe(11);
   });
 
@@ -239,7 +239,7 @@ describe('edit_doc and page breaks (#48)', () => {
     const batch = vi.fn().mockResolvedValue({});
     await editDoc(clientsFor(plainDoc, batch), 'd', 'Body starts', `${BREAK}\nBody starts`);
     const requests = sentBy(batch);
-    expect(requests.find((r) => r.insertText)?.insertText?.text).toBe('Body starts');
+    expect(requests.some((r) => r.insertText || r.deleteContentRange)).toBe(false);
     expect(requests.find((r) => r.insertPageBreak)?.insertPageBreak?.location?.index).toBe(12);
   });
 
@@ -247,7 +247,8 @@ describe('edit_doc and page breaks (#48)', () => {
     const batch = vi.fn().mockResolvedValue({});
     await editDoc(clientsFor(plainDoc, batch), 'd', '<p class="title">Title page</p>', `<p class="title">Title page</p>\n${BREAK}`);
     const requests = sentBy(batch);
-    expect(requests.filter((r) => r.updateParagraphStyle).map((r) => r.updateParagraphStyle!.paragraphStyle!.namedStyleType)).toEqual(['TITLE']);
+    expect(requests.some((r) => r.insertText || r.deleteContentRange || r.updateParagraphStyle)).toBe(false);
+    expect(requests.filter((r) => r.insertPageBreak)).toHaveLength(1);
     expect(requests.filter((r) => r.deleteParagraphBullets)).toHaveLength(0);
   });
 

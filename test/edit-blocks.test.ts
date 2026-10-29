@@ -105,6 +105,15 @@ describe('a new block carries its own style, not its anchor’s (#60 rule 2)', (
     expect(bulletsRemovedOver(requests, 7)).toBeDefined();
   });
 
+  it('a single newline is enough: Scope then Scope plus a line adds a Normal paragraph and keeps the heading', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: 'Scope', namedStyleType: 'HEADING_2' }]));
+    await editDoc(clients, 'd', 'Scope', 'Scope\nNew para');
+    const requests = requestsOf(batchUpdate);
+    expect(requests.some((r) => r.deleteContentRange)).toBe(false);
+    expect(inserted(requests).map((i) => i.text)).toEqual(['\n', 'New para']);
+    expect(normalTextOver(requests, 7)).toBeDefined();
+  });
+
   it('text added inside an existing paragraph keeps that paragraph’s style', async () => {
     const { clients, batchUpdate } = clientsFor(docOf([{ text: 'Scope', namedStyleType: 'HEADING_1' }]));
     await editDoc(clients, 'd', 'Scope', 'Scope of work');
