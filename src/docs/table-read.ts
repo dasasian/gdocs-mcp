@@ -15,7 +15,7 @@ export interface CellReader {
   asBlocks(cell: docs_v1.Schema$TableCell): string;
 }
 
-const BLOCK_START = /^<(?:p|h[1-6])\b/i;
+const BLOCK_START = /^(?:<(?:p|h[1-6])\b|>)/i;
 
 const spansOf = (cell: docs_v1.Schema$TableCell): { rowspan: number; colspan: number } => ({
   rowspan: cell.tableCellStyle?.rowSpan ?? 1,

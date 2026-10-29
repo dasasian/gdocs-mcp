@@ -61,3 +61,14 @@ export function needsParagraphTag(line: string): boolean {
     throw error;
   }
 }
+
+/** True when the writer would read this text after a `> ` as anything but one quoted paragraph of exactly these words. */
+export function needsQuotedParagraphTag(line: string): boolean {
+  try {
+    const [only, ...more] = parseBlocks(`> ${line}`);
+    return !(more.length === 0 && only?.type === 'paragraph' && only.quote && only.text === line);
+  } catch (error) {
+    if (error instanceof StyleSyntaxError) return true;
+    throw error;
+  }
+}

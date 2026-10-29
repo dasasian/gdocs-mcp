@@ -33,7 +33,7 @@ export function renderHtmlTable(layout: TableLayout): string {
 const TAG = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)((?:\s[^<>]*)?)>/y;
 const ATTRIBUTE = /([a-zA-Z-]+)\s*=\s*"([^"]*)"/g;
 const CELL_CLOSE = /<\/t[dh]\s*>/iy;
-const BLOCK_START = /^<(?:p|h[1-6])\b/i;
+const BLOCK_START = /^(?:<(?:p|h[1-6])\b|>)/i;
 const SNIPPET = 40;
 
 interface Tag {

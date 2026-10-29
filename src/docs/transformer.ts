@@ -6,7 +6,8 @@ import type { TableLayout } from './table-layout.js';
 import { declarationsFor, styleAttribute } from './css.js';
 import { paragraphCssOf, effectiveStylesFor, type EffectiveStyles } from './style-block.js';
 import { rgbToHex } from './color.js';
-import { literalTextEscaper, needsParagraphTag, cellNeedsParagraphTag, type Escaper } from './literal-text.js';
+import { literalTextEscaper, needsParagraphTag, needsQuotedParagraphTag, cellNeedsParagraphTag, type Escaper } from './literal-text.js';
+import { hasQuoteBorder } from './quote.js';
 import { unescapePipes } from './write.js';
 
 const ORDERED_GLYPHS = new Set(['DECIMAL', 'ZERO_DECIMAL', 'UPPER_ALPHA', 'ALPHA', 'UPPER_ROMAN', 'ROMAN']);
@@ -114,6 +115,7 @@ function renderBlocks(content: docs_v1.Schema$StructuralElement[], context: Read
   let listBuf: string[] = [];
   let lastListId: string | null = null;
   let counters: Record<number, number> = {};
+  let endsInQuote = false;
   const flushList = (): void => {
     if (listBuf.length) {
       blocks.push(listBuf.join('\n'));
@@ -126,6 +128,7 @@ function renderBlocks(content: docs_v1.Schema$StructuralElement[], context: Read
   const addParagraph = (para: docs_v1.Schema$Paragraph): void => {
     const line = renderParagraph(para, context);
     if (para.bullet) {
+      endsInQuote = false;
       const listId = para.bullet.listId ?? null;
       const startsDistinctList = listBuf.length > 0 && listId !== lastListId;
       if (startsDistinctList) flushList();
@@ -141,20 +144,25 @@ function renderBlocks(content: docs_v1.Schema$StructuralElement[], context: Read
       listBuf.push(`${indent}${marker} ${line}`);
     } else {
       flushList();
-      const isSeparatorOnly = line === '';
-      if (!isSeparatorOnly) blocks.push(line);
+      if (line === '') return;
+      const isQuote = isQuoteParagraph(para, context);
+      if (isQuote && endsInQuote) blocks[blocks.length - 1] += `\n>\n${line}`;
+      else blocks.push(line);
+      endsInQuote = isQuote;
     }
   };
 
   for (const el of content) {
     if (!el.paragraph) {
       flushList();
+      endsInQuote = false;
       if (el.table && !context.inTableCell) blocks.push(renderTableMarkup(context.doc, el.table, context.opts));
       continue;
     }
     for (const piece of splitAtPageBreaks(el.paragraph)) {
       if (piece === PAGE_BREAK) {
         flushList();
+        endsInQuote = false;
         blocks.push(PAGE_BREAK_LINE);
       } else {
         addParagraph(piece);
@@ -224,8 +232,47 @@ function baselineStyles(context: ReadContext, namedStyleType: string): Effective
 const escapeTableTags =(text: string): string =>
   text.replace(/(\\*)<(?=\/?(?:table|thead|tbody|tr|td|th|col|p|h[1-6])\b)/gi, (whole, slashes: string) => (slashes.length % 2 === 1 ? whole : `${slashes}\\<`));
 
+const PLAIN_CODE_RUN_FIELDS = ['bold', 'italic', 'underline', 'strikethrough', 'link', 'foregroundColor', 'backgroundColor', 'fontSize', 'baselineOffset', 'smallCaps'] as const;
+
+const isPlainCodeRun = (run: docs_v1.Schema$TextRun): boolean => {
+  const style = run.textStyle ?? {};
+  return style.weightedFontFamily?.fontFamily === CODE_FONT && PLAIN_CODE_RUN_FIELDS.every((field) => !style[field]) && !run.suggestedInsertionIds?.length && !run.suggestedDeletionIds?.length;
+};
+
+const hasOnlyQuoteOverrides = (para: docs_v1.Schema$Paragraph, context: ReadContext): boolean => {
+  const { marginLeft: _indent, textIndent: _firstLine, ...other } = paragraphCssOf(para.paragraphStyle, baselineStyles(context, 'NORMAL_TEXT'));
+  return Object.keys(other).length === 0;
+};
+
+function isQuoteParagraph(para: docs_v1.Schema$Paragraph, context: ReadContext): boolean {
+  const named = para.paragraphStyle?.namedStyleType ?? 'NORMAL_TEXT';
+  return !para.bullet && named === 'NORMAL_TEXT' && hasQuoteBorder(para.paragraphStyle) && hasOnlyQuoteOverrides(para, context);
+}
+
+/** The text of a paragraph that is Courier New throughout, line breaks as newlines. In a table cell only one with a line break counts, so a cell holding `code` stays inline. */
+function codeParagraphText(para: docs_v1.Schema$Paragraph, context: ReadContext): string | undefined {
+  const named = para.paragraphStyle?.namedStyleType ?? 'NORMAL_TEXT';
+  const elements = para.elements ?? [];
+  if (para.bullet || named !== 'NORMAL_TEXT' || elements.some((pe) => !pe.textRun) || hasQuoteBorder(para.paragraphStyle)) return undefined;
+  if (Object.keys(paragraphCssOf(para.paragraphStyle, baselineStyles(context, named))).length > 0) return undefined;
+  const runs = elements.flatMap((pe) => (pe.textRun ? [pe.textRun] : []));
+  const text = runs.map((run) => run.content ?? '').join('').replace(/\n$/, '');
+  const codeRuns = runs.filter((run) => withoutParagraphMark(run.content ?? '') !== '');
+  if (text === '' || !codeRuns.every(isPlainCodeRun)) return undefined;
+  if (context.inTableCell && (!text.includes('\x0b') || escapeTableTags(text) !== text)) return undefined;
+  return text.replace(/\x0b/g, '\n');
+}
+
+function fencedCode(code: string): string {
+  const longestBacktickRun = Math.max(0, ...(code.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = '`'.repeat(Math.max(3, longestBacktickRun + 1));
+  return `${fence}\n${code}\n${fence}`;
+}
+
 function renderParagraph(para: docs_v1.Schema$Paragraph, context: ReadContext): string {
   const { opts, objects } = context;
+  const code = codeParagraphText(para, context);
+  if (code !== undefined) return fencedCode(code);
   const named = para.paragraphStyle?.namedStyleType ?? 'NORMAL_TEXT';
   const eff = baselineStyles(context, named);
   const paragraphFamily = eff.named?.textStyle?.weightedFontFamily?.fontFamily ?? eff.normal?.textStyle?.weightedFontFamily?.fontFamily ?? undefined;
@@ -245,6 +292,7 @@ function renderParagraph(para: docs_v1.Schema$Paragraph, context: ReadContext): 
   if (para.bullet) return inline;
   const level = LEVEL_BY_HEADING[para.paragraphStyle?.namedStyleType ?? 'NORMAL_TEXT'];
   if (inline === '') return level ? `${'#'.repeat(level)} ` : '';
+  if (isQuoteParagraph(para, context)) return needsQuotedParagraphTag(inline) ? `> <p>${inline}</p>` : `> ${inline}`;
 
   const overrides = paragraphCssOf(para.paragraphStyle, eff);
   const style = styleAttribute(declarationsFor(overrides));
@@ -265,6 +313,7 @@ function plainAlignmentOf(cell: docs_v1.Schema$TableCell, context: ReadContext):
   const paragraphs = content.flatMap((el) => (el.paragraph ? [el.paragraph] : []));
   if (paragraphs.length !== 1 || content.some((el) => el.table)) return undefined;
   const [paragraph] = paragraphs;
+  if (codeParagraphText(paragraph, context) !== undefined) return undefined;
   const named = paragraph.paragraphStyle?.namedStyleType ?? 'NORMAL_TEXT';
   if (paragraph.bullet || named !== 'NORMAL_TEXT') return undefined;
   const { align, ...other } = paragraphCssOf(paragraph.paragraphStyle, baselineStyles(context, named));
@@ -287,7 +336,7 @@ function htmlCellText(cell: docs_v1.Schema$TableCell, context: ReadContext): str
   const inlineWith = (escape: Escaper): string =>
     lineBreaksAsBr(withoutParagraphMark(runs.map((run) => renderRun(run, context.opts, undefined, (text) => escapeTableTags(escape(text)))).join('')));
   const inline = inlineWith(literalTextEscaper(runs.map((run) => run.content ?? '').join(''), inlineWith));
-  return cellNeedsParagraphTag(inline) ? `<p>${inline}</p>` : inline;
+  return cellNeedsParagraphTag(inline) || inline.startsWith('>') ? `<p>${inline}</p>` : inline;
 }
 
 function cellReaderFor(context: ReadContext): CellReader {

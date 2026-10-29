@@ -129,7 +129,7 @@ describe('renderRun — Docs-only formatting (#30)', () => {
   // Docs has no inline-code style — the writer maps `code` to a monospace font,
   // so the reader maps it back. Before this, backticks were silently dropped.
   it('renders the code font back to a code span, not a font-family span', () => {
-    expect(md([para([run('x', 1, { weightedFontFamily: { fontFamily: 'Courier New' } })])])).toBe('`x`');
+    expect(md([para([run('say ', 1), run('x', 5, { weightedFontFamily: { fontFamily: 'Courier New' } })])])).toBe('say `x`');
     // and other styles still wrap around it
     expect(md([para([run('x', 1, { weightedFontFamily: { fontFamily: 'Courier New' }, bold: true })])])).toBe('**`x`**');
   });
