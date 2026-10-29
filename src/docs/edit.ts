@@ -339,27 +339,106 @@ function replacementRequestsFor(
   ];
 }
 
-interface UnchangedAnchor {
-  side: 'after' | 'before';
-  added: string;
+type InsertionSide = 'after' | 'before';
+
+interface SharedLines {
+  keepsPrefix: boolean;
+  keepsSuffix: boolean;
+  prefixLength: number;
+  suffixLength: number;
+  middleOld: string;
+  middleNew: string;
 }
 
-function unchangedAnchorOf(oldString: string, newString: string): UnchangedAnchor | undefined {
-  if (newString.length <= oldString.length) return undefined;
-  const after = newString.startsWith(oldString) ? newString.slice(oldString.length) : undefined;
-  if (after?.includes('\n')) return { side: 'after', added: after };
-  const before = newString.endsWith(oldString) ? newString.slice(0, newString.length - oldString.length) : undefined;
-  if (before?.includes('\n')) return { side: 'before', added: before };
-  return undefined;
+const NOTHING_SHARED = (oldString: string, newString: string): SharedLines => ({ keepsPrefix: false, keepsSuffix: false, prefixLength: 0, suffixLength: 0, middleOld: oldString, middleNew: newString });
+
+function textLines(lines: string[]): string {
+  return lines.join('\n');
 }
 
-function keptAnchorRange(anchor: UnchangedAnchor | undefined, matched: DocRange): DocRange {
-  if (!anchor) return matched;
-  const at = anchor.side === 'after' ? matched.endIndex : matched.startIndex;
+function withoutLeadingBlanks(lines: string[]): string[] {
+  const first = lines.findIndex((line) => !isBlank(line));
+  return first < 0 ? [] : lines.slice(first);
+}
+
+function withoutTrailingBlanks(lines: string[]): string[] {
+  return withoutLeadingBlanks([...lines].reverse()).reverse();
+}
+
+function sharedLinesOf(oldString: string, newString: string, located: Located): SharedLines {
+  if (oldString === newString) return NOTHING_SHARED(oldString, newString);
+  const oldLines = oldString.split('\n');
+  const newLines = newString.split('\n');
+  const most = Math.min(oldLines.length, newLines.length);
+  let head = 0;
+  while (head < most && oldLines[head] === newLines[head]) head++;
+  let tail = 0;
+  while (tail < most - head && oldLines[oldLines.length - 1 - tail] === newLines[newLines.length - 1 - tail]) tail++;
+
+  const prefixText = textLines(withoutTrailingBlanks(oldLines.slice(0, head)));
+  const suffixText = textLines(withoutLeadingBlanks(oldLines.slice(oldLines.length - tail)));
+  const prefixLength = prefixText ? located.normalize(prefixText).length : 0;
+  const suffixLength = suffixText ? located.normalize(suffixText).length : 0;
+  const { needle } = located;
+  const prefixFits = !prefixText || (needle.startsWith(located.normalize(prefixText)) && [undefined, '\n'].includes(needle[prefixLength]));
+  const suffixFits = !suffixText || (needle.endsWith(located.normalize(suffixText)) && [undefined, '\n'].includes(needle[needle.length - suffixLength - 1]));
+  const keepsPrefix = Boolean(prefixText) && prefixFits && suffixFits;
+  const keepsSuffix = Boolean(suffixText) && prefixFits && suffixFits;
+  if (!keepsPrefix && !keepsSuffix) return NOTHING_SHARED(oldString, newString);
+
+  let middleOld = oldLines.slice(keepsPrefix ? head : 0, oldLines.length - (keepsSuffix ? tail : 0));
+  let middleNew = newLines.slice(keepsPrefix ? head : 0, newLines.length - (keepsSuffix ? tail : 0));
+  if (keepsPrefix) {
+    middleOld = withoutLeadingBlanks(middleOld);
+    middleNew = withoutLeadingBlanks(middleNew);
+  }
+  if (keepsSuffix) {
+    middleOld = withoutTrailingBlanks(middleOld);
+    middleNew = withoutTrailingBlanks(middleNew);
+  }
+  return {
+    keepsPrefix,
+    keepsSuffix,
+    prefixLength: keepsPrefix ? prefixLength : 0,
+    suffixLength: keepsSuffix ? suffixLength : 0,
+    middleOld: textLines(middleOld),
+    middleNew: textLines(middleNew),
+  };
+}
+
+interface PlainSpan {
+  from: number;
+  to: number;
+}
+
+function middleSpan(shared: SharedLines, matchStart: number, matchLength: number, deleting: boolean): PlainSpan {
+  const prefixEnd = matchStart + shared.prefixLength;
+  const suffixStart = matchStart + matchLength - shared.suffixLength;
+  if (deleting) {
+    return { from: shared.keepsPrefix ? prefixEnd : matchStart, to: shared.keepsSuffix && shared.keepsPrefix ? suffixStart - 1 : shared.keepsSuffix ? suffixStart : matchStart + matchLength };
+  }
+  return { from: shared.keepsPrefix ? prefixEnd + 1 : matchStart, to: shared.keepsSuffix ? suffixStart - 1 : matchStart + matchLength };
+}
+
+function insertionPoint(proj: Projection, shared: SharedLines, matchStart: number, matchLength: number): { side: InsertionSide; matched: DocRange } {
+  if (shared.keepsSuffix) {
+    const suffixStart = matchStart + matchLength - shared.suffixLength;
+    return { side: 'before', matched: rangeFor(proj, suffixStart, matchStart + matchLength) };
+  }
+  return { side: 'after', matched: rangeFor(proj, matchStart, matchStart + shared.prefixLength) };
+}
+
+function rangeOfSpan(proj: Projection, span: PlainSpan): DocRange {
+  return rangeFor(proj, span.from, span.to);
+}
+
+function pointAt(side: InsertionSide | undefined, matched: DocRange): DocRange {
+  if (!side) return matched;
+  const at = side === 'after' ? matched.endIndex : matched.startIndex;
   return { startIndex: at, endIndex: at };
 }
 
-const isBlankOrPageBreak = (line: string): boolean => line.trim() === '' || parsePageBreakLine(line) !== undefined;
+const isBlankOrPageBreak = (line: string): boolean => isBlank(line) || parsePageBreakLine(line) !== undefined;
 
 function addsBlockText(markdown: string): boolean {
   return holdsBlockMarkdown(markdown) || !markdown.split('\n').every(isBlankOrPageBreak);
@@ -370,28 +449,26 @@ interface BlockEditContext {
   documentId: string;
   doc: docs_v1.Schema$Document;
   markdown: string;
-  anchor: UnchangedAnchor | undefined;
   tabId: string | undefined;
   segmentId: string | undefined;
   baseDir: string | undefined;
 }
 
-function blockInsertionRange(context: BlockEditContext, matched: DocRange): DocRange {
-  const { doc, anchor, tabId, segmentId } = context;
-  if (!anchor) return matched;
-  if (anchor.side === 'after') {
+function blockInsertionRange(context: BlockEditContext, matched: DocRange, side: InsertionSide | undefined): DocRange {
+  const { doc, tabId, segmentId } = context;
+  if (!side) return matched;
+  if (side === 'after') {
     const table = tableHolding(doc, tabId, segmentId, matched.endIndex - 1);
-    const at = table?.endIndex ?? matched.endIndex;
-    return { startIndex: at, endIndex: at };
+    return pointAt('after', table ? { startIndex: matched.startIndex, endIndex: table.endIndex ?? matched.endIndex } : matched);
   }
   const table = tableHolding(doc, tabId, segmentId, matched.startIndex);
   const at = table ? (table.startIndex ?? 1) - 1 : matched.startIndex;
   return { startIndex: at, endIndex: at };
 }
 
-async function applyBlockEdit(context: BlockEditContext, matched: DocRange, revisionId: string | undefined) {
+async function applyBlockEdit(context: BlockEditContext, matched: DocRange, side: InsertionSide | undefined, revisionId: string | undefined) {
   const { clients, documentId, doc, markdown, tabId, segmentId, baseDir } = context;
-  const { startIndex, endIndex } = blockInsertionRange(context, matched);
+  const { startIndex, endIndex } = blockInsertionRange(context, matched, side);
   const startsAParagraph = paragraphEdgesAt(doc, tabId, segmentId, startIndex).atStart;
   const trimmed = startsAParagraph ? { before: 0, after: 0 } : { before: spacesAround(doc, tabId, segmentId, startIndex).before, after: spacesAround(doc, tabId, segmentId, endIndex).after };
   const from = startIndex - trimmed.before;
@@ -437,7 +514,8 @@ export async function editDoc(
   }
   if (isEmptyContent(res.data, tabId, segmentId)) throw new Error(EMPTY_CONTENT_MESSAGE);
 
-  const { needle, positions } = locate(proj.text, oldString);
+  const located = locate(proj.text, oldString);
+  const { needle, positions } = located;
   if (positions.length === 0) {
     return { status: 'not_found', message: `"${oldString}" not found.` };
   }
@@ -449,17 +527,26 @@ export async function editDoc(
     };
   }
 
-  const anchor = unchangedAnchorOf(oldString, newString);
-  const written = anchor ? anchor.added : newString;
+  const shared = sharedLinesOf(oldString, newString, located);
+  const keepsAnything = shared.keepsPrefix || shared.keepsSuffix;
+  const written = shared.middleNew;
+  const insertsOnly = keepsAnything && isBlank(shared.middleOld);
+  const writesNothing = isBlank(written);
   const highestIndexFirst = (opts.replaceAll ? positions : [positions[0]]).sort((x, y) => y - x);
 
-  if (anchor ? addsBlockText(written) : holdsBlockMarkdown(written)) {
+  if (insertsOnly && writesNothing) return { status: 'ok', replaced: 0 };
+
+  const asBlocks = insertsOnly ? addsBlockText(written) : holdsBlockMarkdown(written);
+  if (asBlocks) {
     parseBlocks(written);
-    const context: BlockEditContext = { clients, documentId, doc: res.data, markdown: written, anchor, tabId, segmentId, baseDir: opts.baseDir };
+    const context: BlockEditContext = { clients, documentId, doc: res.data, markdown: written, tabId, segmentId, baseDir: opts.baseDir };
     const warnings: string[] = [];
     const images: { src: string; objectId: string }[] = [];
     for (const [n, a] of highestIndexFirst.entries()) {
-      const done = await applyBlockEdit(context, rangeFor(proj, a, a + needle.length), n === 0 ? revisionId : undefined);
+      const edit = insertsOnly
+        ? insertionPoint(proj, shared, a, needle.length)
+        : { side: undefined, matched: rangeOfSpan(proj, middleSpan(shared, a, needle.length, false)) };
+      const done = await applyBlockEdit(context, edit.matched, edit.side, n === 0 ? revisionId : undefined);
       warnings.push(...done.warnings);
       images.push(...done.images);
     }
@@ -473,12 +560,16 @@ export async function editDoc(
   const lineTexts = plain.split('\n');
   const replacement: Replacement = { newLines, lineTexts, segments, plain, breakOffsets: pageBreakOffsets(breaksAfterLines, lineTexts) };
 
-  const sameWords = !anchor && plain === needle && replacement.breakOffsets.length === 0;
-  const requests = highestIndexFirst.flatMap((a) =>
-    sameWords
-      ? styleOnlyRequestsFor(proj, a, needle.length, oldString, replacement, tabId, segmentId)
-      : replacementRequestsFor(res.data, keptAnchorRange(anchor, rangeFor(proj, a, a + needle.length)), replacement, tabId, segmentId),
-  );
+  const requests = highestIndexFirst.flatMap((a) => {
+    if (insertsOnly) {
+      const { side, matched } = insertionPoint(proj, shared, a, needle.length);
+      return replacementRequestsFor(res.data, pointAt(side, matched), replacement, tabId, segmentId);
+    }
+    const span = middleSpan(shared, a, needle.length, writesNothing);
+    const sameWords = plain === proj.text.slice(span.from, span.to) && replacement.breakOffsets.length === 0;
+    if (sameWords) return styleOnlyRequestsFor(proj, span.from, span.to - span.from, shared.middleOld, replacement, tabId, segmentId);
+    return replacementRequestsFor(res.data, rangeFor(proj, span.from, span.to), replacement, tabId, segmentId);
+  });
 
   if (requests.length) {
     await clients.docs.documents.batchUpdate({

@@ -208,6 +208,49 @@ describe('an empty doc has no anchor (#60 rule 7)', () => {
   });
 });
 
+describe('the lines shared at both ends are kept (#60)', () => {
+  const scopeDoc = (): Piece[] => [{ text: 'Scope', namedStyleType: 'HEADING_2' }, { text: 'This project covers the work.' }, { text: 'Tail' }];
+
+  it('quoting both sides of an insertion point inserts only the new block', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf(scopeDoc()));
+    await editDoc(clients, 'd', '## Scope\n\nThis project covers', '## Scope\n\nIntro line\n\nThis project covers');
+    const requests = requestsOf(batchUpdate);
+    expect(requests.some((r) => r.deleteContentRange)).toBe(false);
+    expect(inserted(requests).map((i) => i.text)).toEqual(['Intro line\n']);
+    expect(inserted(requests)[0].location!.index).toBe(bodyOf(scopeDoc())[1].startIndex);
+    expect(requests.some((r) => r.updateParagraphStyle?.paragraphStyle?.namedStyleType === 'HEADING_2')).toBe(false);
+  });
+
+  it('a table goes in between without retyping the heading or the paragraph', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf(scopeDoc()));
+    await editDoc(clients, 'd', '## Scope\n\nThis project covers', '## Scope\n\n| Phase | Weeks |\n|---|---|\n| 1 | 4 |\n\nThis project covers');
+    const allRequests = batchUpdate.mock.calls.flatMap((c) => c[0].requestBody.requests as docs_v1.Schema$Request[]);
+    expect(allRequests.some((r) => r.deleteContentRange)).toBe(false);
+    expect(allRequests.find((r) => r.insertTable)!.insertTable!.location!.index).toBe(bodyOf(scopeDoc())[1].startIndex);
+    expect(inserted(allRequests).some((i) => i.text!.includes('Scope') || i.text!.includes('This project'))).toBe(false);
+  });
+
+  it('replaces only the middle paragraph', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: 'A' }, { text: 'B' }, { text: 'C' }]));
+    await editDoc(clients, 'd', 'A\n\nB\n\nC', 'A\n\nX\n\nC');
+    const requests = requestsOf(batchUpdate);
+    expect(requests.filter((r) => r.deleteContentRange).map((r) => r.deleteContentRange!.range)).toEqual([{ startIndex: 3, endIndex: 4 }]);
+    expect(inserted(requests)).toMatchObject([{ location: { index: 3 }, text: 'X' }]);
+  });
+
+  it('deleting the middle paragraph removes its paragraph, not just its words', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: 'A' }, { text: 'B' }, { text: 'C' }]));
+    await editDoc(clients, 'd', 'A\n\nB\n\nC', 'A\n\nC');
+    expect(requestsOf(batchUpdate).filter((r) => r.deleteContentRange).map((r) => r.deleteContentRange!.range)).toEqual([{ startIndex: 2, endIndex: 4 }]);
+  });
+
+  it('shares whole lines only: a shared word fragment keeps nothing', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: 'foo' }, { text: 'tail' }]));
+    await editDoc(clients, 'd', 'foo', 'foobar\n\nbaz');
+    expect(requestsOf(batchUpdate).some((r) => r.deleteContentRange)).toBe(true);
+  });
+});
+
 describe('an anchor copied from the read across two paragraphs is found (#60)', () => {
   it('edits text under a heading quoted with a blank line between', async () => {
     const { clients, batchUpdate } = clientsFor(docOf([{ text: 'Scope', namedStyleType: 'HEADING_2' }, { text: 'This project covers the work.' }]));

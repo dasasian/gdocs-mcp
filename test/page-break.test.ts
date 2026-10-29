@@ -289,7 +289,8 @@ describe('edit_doc and page breaks (#48)', () => {
   it('an anchor that ends on the break leaves the paragraph mark, and takes the break with it', async () => {
     const batch = vi.fn().mockResolvedValue({});
     await editDoc(clientsFor(apiDoc, batch), 'd', `Title page\n${BREAK}`, 'Title page');
-    expect(sentBy(batch)[0].deleteContentRange?.range).toMatchObject({ startIndex: 1, endIndex: 12 });
+    expect(sentBy(batch)[0].deleteContentRange?.range).toMatchObject({ startIndex: 11, endIndex: 12 });
+    expect(sentBy(batch).some((r) => r.insertText)).toBe(false);
     expect(sentBy(batch).filter((r) => r.insertPageBreak)).toHaveLength(0);
   });
 
@@ -297,7 +298,8 @@ describe('edit_doc and page breaks (#48)', () => {
     const batch = vi.fn().mockResolvedValue({});
     await editDoc(clientsFor(apiDoc, batch), 'd', `${BREAK}\nSecond`, 'Second');
     const requests = sentBy(batch);
-    expect(requests[0].deleteContentRange?.range).toMatchObject({ startIndex: 23, endIndex: 31 });
+    expect(requests[0].deleteContentRange?.range).toMatchObject({ startIndex: 23, endIndex: 25 });
+    expect(requests.some((r) => r.insertText)).toBe(false);
     expect(requests.filter((r) => r.insertPageBreak)).toHaveLength(0);
   });
 });
