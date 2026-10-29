@@ -344,7 +344,29 @@ path for long markdown, so the writer reads lines the way CommonMark does (#59).
   borders stay outside the CSS of §2a: the border is the quote's marker, not a
   style the agent sets.
 - **A quote inside a quote (`>>`) and a list or code block inside a quote are
-  refused,** naming the line, rather than flattened.
+  refused,** naming the line, rather than flattened. So is a heading inside a
+  quote, and a fence that is never closed.
+
+How far each rule reaches, where the issue left room:
+
+- A paragraph reads as a fence only when every run is Courier New and nothing
+  else is set on it (no bold, italic, link, colour or size on a run, no paragraph
+  style); otherwise it keeps the code span (`` `x` ``, in a `<p>` when styled), so
+  no styling is dropped. In a table cell only code with a line break is a fence,
+  so a cell holding `` `npm test` `` stays inline and a pipe table stays a pipe
+  table.
+- A paragraph is a quote when it has the quote border and no paragraph style
+  beyond its indent. With more (a centred quote) it reads as a styled paragraph
+  and its border is not carried.
+- A line that continues a list item or a quote without its marker is joined on,
+  as in CommonMark. A heading, list marker, fence, `>` or page break ends it.
+- Table cells that start with `>` are wrapped in `<p>` on read, as a paragraph
+  that starts with `> ` is (§2b), so a cell of text stays text.
+- `edit_doc` follows the same rule: `Intro` → `Intro\nMore` puts "More" in
+  Intro's paragraph after a space (a list item takes it as more of the item).
+  Each of these makes the added lines a new block instead: the anchor is a
+  heading, Title or Subtitle; a blank line between; a line that is a block (list
+  item, table row, quote, fence, image) or a page break; a `<p>` or `<h>` line.
 
 ---
 
@@ -858,7 +880,7 @@ Security posture is first-class: token files `0600`, scope justification documen
 
 The three differentiators are unproven *because* nobody has done them:
 1. **Suggestion accept/reject via range-reconstruction** — ✅ **validated** (spike): clean ACCEPT of a replacement (no ghost) *and* multi-suggestion batch resolve with descending-index ordering (no corruption). Remaining cases (reject path, insertion/deletion-only, style) are lower-risk variants of the same proven mechanism.
-2. **markdown + HTML + `<ins>/<del>` round-trip** — ✅ **read validated**; ✅ **style-write validated** (paragraph, text and named styles, §2a); ✅ **inline `new_string` markdown *and* HTML validated** in `edit_doc`; ✅ **block-level markdown→Docs validated** (`write.ts`: headings, paragraphs, inline, bullet/ordered nested lists → `write_doc`, with a **lossless live round-trip** md→Docs→md). Reader/writer share `markdown-spec` constants + round-trip tests (the "extend in pairs" discipline) instead of a bidirectional spec engine. Open: Tier-2 blocks (tables, images, code blocks) in the renderer.
+2. **markdown + HTML + `<ins>/<del>` round-trip** — ✅ **read validated**; ✅ **style-write validated** (paragraph, text and named styles, §2a); ✅ **inline `new_string` markdown *and* HTML validated** in `edit_doc`; ✅ **block-level markdown→Docs validated** (`write.ts`: headings, paragraphs, inline, bullet/ordered nested lists → `write_doc`, with a **lossless live round-trip** md→Docs→md). Reader/writer share `markdown-spec` constants + round-trip tests (the "extend in pairs" discipline) instead of a bidirectional spec engine. Tables, images, code blocks and quotes render (§2d, §2e).
 3. **String-anchored editing over batchUpdate** — ✅ **validated in code**: plain-text projection + index map across runs, exact + markup-tolerant match, ambiguity→context, optimistic revision, delete+insert. Live round-trip edit confirmed. Open: whitespace-normalized matching; new_string formatting.
 
 The canonical-projection requirement (§10b) is the linchpin for AI-merge and a stressor for round-trip fidelity generally.

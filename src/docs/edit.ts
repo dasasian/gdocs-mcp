@@ -1,7 +1,7 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
 import { project, type Projection } from './transformer.js';
-import { resolveTabId, writeControlFor, startsParagraph, paragraphEdgesAt, spacesAround, tableHolding, isEmptyContent, type SegmentKind, type SegmentPage } from './structure.js';
+import { resolveTabId, writeControlFor, startsParagraph, paragraphEdgesAt, spacesAround, tableHolding, isEmptyContent, namedStyleAt, type SegmentKind, type SegmentPage } from './structure.js';
 import { resolveSegmentTarget } from './segments.js';
 import { parseInline, segmentTextStyle, inlineStyleIssues, type Segment } from './inline.js';
 import { HEADING_BY_LEVEL, NAMED_STYLE_BY_CLASS } from './markdown-spec.js';
@@ -350,9 +350,11 @@ interface SharedLines {
   suffixLength: number;
   middleOld: string;
   middleNew: string;
+  /** true when the new lines follow the one kept line with no blank line between, so CommonMark reads them as more of its paragraph. */
+  continuesKeptLine: boolean;
 }
 
-const NOTHING_SHARED = (oldString: string, newString: string): SharedLines => ({ keepsPrefix: false, keepsSuffix: false, prefixLength: 0, suffixLength: 0, middleOld: oldString, middleNew: newString });
+const NOTHING_SHARED = (oldString: string, newString: string): SharedLines => ({ keepsPrefix: false, keepsSuffix: false, prefixLength: 0, suffixLength: 0, middleOld: oldString, middleNew: newString, continuesKeptLine: false });
 
 function textLines(lines: string[]): string {
   return lines.join('\n');
@@ -398,6 +400,7 @@ function sharedLinesOf(oldString: string, newString: string, located: Located): 
     middleOld = withoutTrailingBlanks(middleOld);
     middleNew = withoutTrailingBlanks(middleNew);
   }
+  const nextNewLine = keepsPrefix ? newLines[head] : newLines[newLines.length - tail - 1];
   return {
     keepsPrefix,
     keepsSuffix,
@@ -405,6 +408,7 @@ function sharedLinesOf(oldString: string, newString: string, located: Located): 
     suffixLength: keepsSuffix ? suffixLength : 0,
     middleOld: textLines(middleOld),
     middleNew: textLines(middleNew),
+    continuesKeptLine: keepsPrefix !== keepsSuffix && nextNewLine !== undefined && !isBlank(nextNewLine),
   };
 }
 
@@ -439,6 +443,20 @@ function pointAt(side: InsertionSide | undefined, matched: DocRange): DocRange {
   const at = side === 'after' ? matched.endIndex : matched.startIndex;
   return { startIndex: at, endIndex: at };
 }
+
+const HEADING_LIKE_STYLES = new Set(['TITLE', 'SUBTITLE', 'HEADING_1', 'HEADING_2', 'HEADING_3', 'HEADING_4', 'HEADING_5', 'HEADING_6']);
+
+const isPlainTextLine = (line: string): boolean => !parsePageBreakLine(line) && splitEditLine(line).markup === undefined;
+
+/** The new lines as one line of words, when CommonMark would read them as one paragraph with what they follow: no blank line, no block, no markup line. */
+function softJoinedWords(newLines: string, continuesKeptLine: boolean): string | undefined {
+  const lines = newLines.split('\n');
+  const joinsSomething = continuesKeptLine || lines.length > 1;
+  if (!joinsSomething || isBlank(newLines) || holdsBlockMarkdown(newLines) || !lines.every(isPlainTextLine)) return undefined;
+  return lines.join(' ');
+}
+
+const wordsBeside = (words: string, keptLine: InsertionSide | undefined): string => (keptLine === 'after' ? ` ${words}` : keptLine === 'before' ? `${words} ` : words);
 
 const isBlankOrPageBreak = (line: string): boolean => isBlank(line) || parsePageBreakLine(line) !== undefined;
 
@@ -550,14 +568,21 @@ export async function editDoc(
 
   const shared = sharedLinesOf(oldString, newString, located);
   const keepsAnything = shared.keepsPrefix || shared.keepsSuffix;
-  const written = shared.middleNew;
   const insertsOnly = keepsAnything && isBlank(shared.middleOld);
+  const joinedWords = softJoinedWords(shared.middleNew, insertsOnly && shared.continuesKeptLine);
+  const anchorPlainIndex = (matchStart: number): number => {
+    if (!insertsOnly) return middleSpan(shared, matchStart, needle.length, false).from;
+    return shared.keepsPrefix ? matchStart + shared.prefixLength - 1 : matchStart + needle.length - shared.suffixLength;
+  };
+  const joinsAnchorParagraphs =
+    joinedWords !== undefined && positions.every((matchStart) => !HEADING_LIKE_STYLES.has(namedStyleAt(fetched.data, tabId, segmentId, projection.map[anchorPlainIndex(matchStart)])));
+  const written = joinsAnchorParagraphs ? wordsBeside(joinedWords, insertsOnly ? (shared.keepsPrefix ? 'after' : 'before') : undefined) : shared.middleNew;
   const writesNothing = isBlank(written);
   const highestIndexFirst = (opts.replaceAll ? positions : [positions[0]]).sort((x, y) => y - x);
 
   if (insertsOnly && writesNothing) return { status: 'ok', replaced: 0 };
 
-  const asBlocks = insertsOnly ? addsBlockText(written) : holdsBlockMarkdown(written);
+  const asBlocks = !joinsAnchorParagraphs && (insertsOnly ? addsBlockText(written) : holdsBlockMarkdown(written));
   if (asBlocks) {
     parseBlocks(written);
     const context: BlockEditContext = { clients, documentId, doc: fetched.data, markdown: written, tabId, segmentId, baseDir: opts.baseDir };

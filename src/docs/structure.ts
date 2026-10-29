@@ -213,6 +213,12 @@ export function paragraphEdgesAt(doc: docs_v1.Schema$Document, tabId: string | u
   };
 }
 
+/** The named style of the paragraph that holds `index`; Normal text when none does. */
+export function namedStyleAt(doc: docs_v1.Schema$Document, tabId: string | undefined, segmentId: string | undefined, index: number): string {
+  const holder = paragraphsWithin(contentOf(doc, tabId, segmentId)).find((el) => (el.startIndex ?? 0) <= index && index < (el.endIndex ?? 0));
+  return holder?.paragraph?.paragraphStyle?.namedStyleType ?? 'NORMAL_TEXT';
+}
+
 const isSpaceOrTab = (ch: string): boolean => ch === ' ' || ch === '\t';
 
 /** How many spaces and tabs sit immediately before and after `index` within its paragraph. */

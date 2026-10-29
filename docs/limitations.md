@@ -100,8 +100,8 @@ Legend for "What gdocs-mcp does": **mitigated** = a tool works around it; **surf
 
 | Limitation | Why | What gdocs-mcp does |
 |---|---|---|
-| **Code blocks aren't rendered** from pushed markdown yet. | Not a Google limit — a not-yet-built writer feature. | **roadmap** — Tier-2 block rendering. |
+| **Docs has no code-block or blockquote style.** | A paragraph is the only block, so both are paragraphs with direct styling. | **mitigated** — a fenced or four-space-indented code block is one Courier New paragraph with line breaks and every space kept, and a paragraph that is Courier New throughout reads back as a fence (the language tag is dropped; a code run that is also bold, sized or coloured stays a code span). A `>` quote is a paragraph indented 36pt with a 1.5pt #cccccc left border, read back as `> `; a paragraph with that border and other paragraph styling reads as a styled paragraph, not a quote. One quote level only: `>>`, and a list, heading or code block inside a quote, are refused, naming the line (#59). |
 | **Tables/images embedded *in* pushed markdown** render on `write_doc` and `edit_doc`; there are no standalone insert tools. | — | **mitigated**. |
 | **Two inline containers of the same tag can't nest** — `<span …><span …>x</span></span>` closes the outer span on the inner one's end tag. | The inline patterns are regexes; matching balanced same-tag nesting needs a real parser. | **documented** — the reader never emits this shape (every style of a run goes in one span), and one span carrying both properties (`style="color:blue;font-size:14pt"`) is the supported spelling. Different tags nest fine (`<u>**x**</u>`, #31). |
 
-> Only the code-block row here is a `gdocs-mcp` roadmap item; everything else on this page is a Google-API constraint.
+> Nothing on this page is a `gdocs-mcp` roadmap item: each row is a Google-API constraint or the way a markdown construct is mapped to Docs.

@@ -15,7 +15,7 @@
 
 An [MCP](https://modelcontextprotocol.io) server that lets an AI agent (like Claude Code) treat a **Google Doc like a local file** — read it, edit it by content, review and resolve **suggestions**, manage **comments**, and work across **tabs** and **multiple Google accounts**.
 
-> **Status:** beta. The tool surface is complete and every change is verified against the live API, not just unit tests. Markdown code blocks are the one construct still to render (see [Roadmap](#roadmap)).
+> **Status:** beta. The tool surface is complete and every change is verified against the live API, not just unit tests.
 
 ## Why this exists
 
@@ -170,13 +170,11 @@ These are **Google-API constraints, not bugs** — the highlights are below; the
 - **Comments** created via the API aren't anchored to text, and Drive returns author *name* only (no email).
 - **Images are inline only** (no floating/x,y positioning), and Google downscales/re-encodes embedded images, so pulled copies aren't byte-identical.
 - **Headers and footers are separate content trees** — not part of the body. Every content tool (`read_doc`, `edit_doc`, `write_doc`, `list_suggestions`, `apply_suggestions`) takes `segment: "header" | "footer"` to reach them, and `page` when a doc defines more than one.
-- **Style is CSS inside the markdown** — `read_doc` opens with a `<style>` block of the named styles and shows `style="…"` where a paragraph or run differs from its rule; `edit_doc` changes it (same words with new markup is a style-only edit) and the write tools accept the same CSS. It is a small set (`text-align`, `line-height`, `margin-*`, `text-indent`, `font-*`, `text-decoration`, `color`, in pt); anything else is refused before a request is sent. A table with nothing but Docs defaults reads as a pipe table; one with any cell or row style, set column widths or row heights, pinned header rows or merged cells reads as an HTML `<table>` with the same CSS (`border`, `padding`, `background`, `vertical-align`, `width` on `<col>`, `height` on `<tr>`, `colspan`, `rowspan`) and `edit_doc` changes it, a style-only edit sending only style requests. Code blocks aren't rendered from markdown yet (roadmap).
+- **Style is CSS inside the markdown** — `read_doc` opens with a `<style>` block of the named styles and shows `style="…"` where a paragraph or run differs from its rule; `edit_doc` changes it (same words with new markup is a style-only edit) and the write tools accept the same CSS. It is a small set (`text-align`, `line-height`, `margin-*`, `text-indent`, `font-*`, `text-decoration`, `color`, in pt); anything else is refused before a request is sent. A table with nothing but Docs defaults reads as a pipe table; one with any cell or row style, set column widths or row heights, pinned header rows or merged cells reads as an HTML `<table>` with the same CSS (`border`, `padding`, `background`, `vertical-align`, `width` on `<col>`, `height` on `<tr>`, `colspan`, `rowspan`) and `edit_doc` changes it, a style-only edit sending only style requests. Lines follow CommonMark: a single newline inside a paragraph, list item or quote is a space, so a hard-wrapped file keeps its structure; a fenced or four-space-indented code block is one Courier New paragraph with its line breaks and spaces, and reads back as a fence; a `>` quote is a paragraph indented 36pt with a gray left border, a bare `>` line separating its paragraphs (`>>`, and a list or code block inside a quote, are refused).
 
 See **[docs/limitations.md](docs/limitations.md)** for the full table, including how each is mitigated or surfaced.
 
 ## Roadmap
-
-- **Code blocks** in the markdown writer — the remaining Tier-2 block type (tables and images already render, in `write_doc` and `edit_doc` alike).
 
 > Suggestion attribution (author/timestamp) is **not** on the roadmap — it has no API path for typical suggestions (see [docs/limitations.md](docs/limitations.md)).
 

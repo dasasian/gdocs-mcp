@@ -122,6 +122,85 @@ describe('a new block carries its own style, not its anchor’s (#60 rule 2)', (
   });
 });
 
+describe('a single newline in what edit_doc adds is a space unless the anchor is a heading (#59 rule 1)', () => {
+  const noParagraphAdded = (requests: docs_v1.Schema$Request[]) => requests.every((r) => !r.updateParagraphStyle && !r.deleteParagraphBullets && !r.deleteContentRange);
+
+  it('Intro then Intro plus a line puts the line in Intro’s paragraph after a space', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: 'Intro' }, { text: 'Later' }]));
+    await editDoc(clients, 'd', 'Intro', 'Intro\nMore');
+    const requests = requestsOf(batchUpdate);
+    expect(inserted(requests)).toMatchObject([{ location: { index: 6 }, text: ' More' }]);
+    expect(noParagraphAdded(requests)).toBe(true);
+  });
+
+  it('a line added before a kept line joins it too, with the space after', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: 'Scope', namedStyleType: 'HEADING_2' }, { text: 'Body' }]));
+    await editDoc(clients, 'd', 'Body', 'Intro\nBody');
+    expect(inserted(requestsOf(batchUpdate))).toMatchObject([{ location: { index: 7 }, text: 'Intro ' }]);
+  });
+
+  it('several added lines are one run of words', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: 'Intro' }]));
+    await editDoc(clients, 'd', 'Intro', 'Intro\nOne\nTwo');
+    expect(inserted(requestsOf(batchUpdate)).map((i) => i.text)).toEqual([' One Two']);
+  });
+
+  it('new words with a newline in them replace old words as one line', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: 'Intro' }]));
+    await editDoc(clients, 'd', 'Intro', 'Hello\nworld');
+    expect(inserted(requestsOf(batchUpdate)).map((i) => i.text)).toEqual(['Hello world']);
+  });
+
+  it('a list item takes the line as more of the item', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: 'Item', bullet: true }]));
+    await editDoc(clients, 'd', 'Item', 'Item\nmore');
+    const requests = requestsOf(batchUpdate);
+    expect(inserted(requests).map((i) => i.text)).toEqual([' more']);
+    expect(noParagraphAdded(requests)).toBe(true);
+  });
+
+  it.each([
+    ['a Heading 2', 'HEADING_2'],
+    ['a Title', 'TITLE'],
+    ['a Subtitle', 'SUBTITLE'],
+  ])('%s ends at its line, so the added line is a new Normal text paragraph', async (_name, namedStyleType) => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: 'Scope', namedStyleType }]));
+    await editDoc(clients, 'd', 'Scope', 'Scope\nNew para');
+    const requests = requestsOf(batchUpdate);
+    expect(inserted(requests).map((i) => i.text)).toEqual(['\n', 'New para']);
+  });
+
+  it('a blank line between still makes a new paragraph in a Normal text anchor', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: 'Intro' }]));
+    await editDoc(clients, 'd', 'Intro', 'Intro\n\nMore');
+    expect(inserted(requestsOf(batchUpdate)).map((i) => i.text)).toEqual(['\n', 'More']);
+  });
+
+  it('a line that is a block (a list item) is still a new block, not words', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: 'Intro' }]));
+    await editDoc(clients, 'd', 'Intro', 'Intro\n- item');
+    expect(inserted(requestsOf(batchUpdate)).map((i) => i.text)).toEqual(['\n', 'item']);
+  });
+});
+
+describe('a fence or a quote in new_string is a block (#59)', () => {
+  it('adds the code as one Courier New paragraph with its spaces', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: 'Intro' }]));
+    await editDoc(clients, 'd', 'Intro', 'Intro\n\n```\na  b\n  c\n```');
+    const requests = requestsOf(batchUpdate);
+    expect(inserted(requests).map((i) => i.text)).toEqual(['\n', 'a  b\v  c']);
+    expect(requests.some((r) => r.updateTextStyle?.textStyle?.weightedFontFamily?.fontFamily === 'Courier New')).toBe(true);
+  });
+
+  it('adds the quote with its left border, directly after a line with no blank line between', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: 'Intro' }]));
+    await editDoc(clients, 'd', 'Intro', 'Intro\n> Said so.');
+    const requests = requestsOf(batchUpdate);
+    expect(inserted(requests).map((i) => i.text)).toEqual(['\n', 'Said so.']);
+    expect(requests.some((r) => r.updateParagraphStyle?.paragraphStyle?.borderLeft)).toBe(true);
+  });
+});
+
 describe('an anchor mid-paragraph splits it (#60 rule 3)', () => {
   it('ends the paragraph at the anchor, puts the table next, leaves the rest as its own paragraph', async () => {
     const sentence = 'We pay within 30 days of receipt.';
