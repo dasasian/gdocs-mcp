@@ -31,7 +31,7 @@ one, do this review and record the trade-off in the PR/commit:
    not a family of their own; a tab became a step in the document `path`, not
    a `tab` param or a family of tab tools (DESIGN.md §3d).
 2. **Merge symmetric verbs.** CRUD verbs that share a target and param shape
-   should be one parametric tool: `edit_table({op, side})`, `write_doc`
+   should be one parametric tool: `write_doc`
    (create when the path names nothing, replace when it names something),
    `drive mv` (rename and move, for files and tabs), `add_comment({replyTo?})`,
    `share_doc` (person vs. link), `apply_suggestions` (1+ ids).

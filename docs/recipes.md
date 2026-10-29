@@ -22,8 +22,7 @@ Proposal', then fill in the client name, the dates, and the pricing table."*
 
 **What happens:** `drive({ cmd: "cp" })` duplicates the template, so the letterhead,
 the logo at its exact size, the fonts and the page setup come along intact. Then
-`edit_doc` swaps each placeholder by content, and `edit_table` fills the pricing
-rows.
+`edit_doc` swaps each placeholder by content and adds the pricing rows.
 
 **Why it's nice:** a template is precisely the thing a markdown round-trip *cannot*
 rebuild — headers, footers, image sizing, the fiddly formatting somebody spent an
@@ -170,7 +169,7 @@ context so you can disambiguate.
 add a row under 'Deposit' and widen the first column."*
 
 **What happens:** `edit_doc` (or `write_doc`) renders the markdown table;
-`edit_table` inserts the row (located by the cell text "Deposit", no indices);
+`edit_doc` adds the row (quote the "Deposit" row and write it back with the new row after it; no indices);
 `edit_doc` shades the header and widens the column by giving the table back as HTML
 with the same words and a `style` on the row and the `<col>`, which sends only style requests.
 

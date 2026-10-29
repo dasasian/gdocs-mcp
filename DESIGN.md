@@ -335,7 +335,6 @@ only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 | `write_doc(path, content\|contentFile, confirmLoss?, segment?, baseDir?)` | The local `Write`: creates the doc, tab, header or footer when the path names nothing or something empty, replaces it when it holds content — **guarded** (§4) |
 | `export_doc(path, dir, format?, filename?)` | Server-side render to pdf/docx/odt/rtf/txt/html/epub/md. A doc path (or a one-tab doc) goes through Drive `files.export`, which renders every tab; a tab path of a multi-tab doc goes through the Docs UI's `export?tab=` endpoint — undocumented and throttled, so a failure is refused, never widened to the whole doc (`docs/limitations.md`) |
 | `set_page_setup / get_page_setup(path)` | Document page setup: margins, page size, orientation |
-| `edit_table(path, cell, op, side?, segment?)` | Tables: insert/delete a row or column. `edit_doc` does the same by comparison (§2d); `edit_table` goes once an eval shows agents use that. A new table, and every table style, is markdown in `edit_doc` or `write_doc`, and the read shows it (§2d). `segment` reaches a letterhead table (§3a) |
 | `list_suggestions(path, segment?)` | Suggestions as before→after diffs |
 | `apply_suggestions(path, resolutions[], segment?)` | Resolve one or more suggestions atomically (§6) |
 | `list_comments / add_comment(replyTo?) / resolve_comment` | Drive comments (`add_comment` also replies) |
