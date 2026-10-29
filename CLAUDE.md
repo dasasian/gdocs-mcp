@@ -86,7 +86,7 @@ why enhancing an existing tool was rejected.
   changes.** It is the only check that a model picks the right tool and syntax from
   the descriptions alone: a real agent does a plain-worded task, and the doc is
   graded through the API, never the agent's reply. The default (Haiku, one run per
-  task) costs about $0.05; run `--full` (Sonnet and Haiku, three runs each) before
+  task) costs about $0.03; run `--full` (Sonnet and Haiku, three runs each) before
   a merge. Tasks live in `eval/tasks/`, one file each, and a new construct gets a
   task. Every task's grader must fail on its untouched setup doc
   (`--check-graders`), or it grades nothing.

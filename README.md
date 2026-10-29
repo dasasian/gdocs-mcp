@@ -190,6 +190,7 @@ npm run typecheck
 npm run eval:agent              # a real agent does each task in eval/tasks/; graded from the doc
 npm run eval:agent -- --full    # Sonnet and Haiku, 3 runs each, before a merge
 npm run eval:agent -- --tag tables
+npm run eval:agent -- --check-graders   # every grader must fail on an untouched doc
 ```
 
 `eval:agent` is not part of `npm test`: it uses real model calls and a real Google
