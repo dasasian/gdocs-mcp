@@ -26,7 +26,7 @@ There is no canonical local copy and no continuous sync in the core model. The G
 The agent reads and writes **GitHub-flavored markdown with inline HTML**:
 
 - **Content & inline emphasis** → markdown (`#`, `**bold**`, lists, tables, links).
-- **Docs-only formatting** markdown can't express (alignment, color, font, size, spacing, indent, image dimensions) → CSS, in the two places a web page puts it (§2a): a `<style>` block for the document's defaults, and `style="…"` on a `<p>` or `<span>` that differs from them. `<img width="400">` for images.
+- **Docs-only formatting** markdown can't express (alignment, color, font, size, spacing, indent, image dimensions) → CSS, in the two places a web page puts it (§2a): a `<style>` block for the document's defaults, and `style="…"` on a `<p>` or `<span>` that differs from them. `<img width="400">` for images. A table with any style reads as an HTML `<table>` carrying the same CSS (§2d).
 - **Suggestions / tracked changes** → HTML `<ins>` / `<del>` with an ID marker (`data-sug` attribute or `<!-- sug:id -->`).
 
 This single format does both jobs: formatting is **visible in the read** (so the agent can perceive *and* verify style changes), and it is a format the agent authors natively. It replaces an earlier "clean markdown + separate formatting sidecar" idea.
@@ -192,6 +192,68 @@ be made through the API at all (`insertText` strips the control character and
 there is no `insertColumnBreak`); it is counted from the documented
 `columnBreak` paragraph element.
 
+### 2d. A table is a pipe table when it is plain, HTML when it is not
+
+A table that has nothing but Docs defaults reads as a markdown pipe table. That
+means no cell or row style set (Docs' own borders and padding), even column
+widths, no pinned rows and no merged cells. Its first row is the pipe header
+line, and is only the first row: it is not pinned or bolded when written.
+
+Any other table reads as HTML, whole. There is no middle form, because a pipe
+table that drops a property loses it silently on the next write:
+
+```
+<table style="border:0.5pt solid #cccccc">
+<col style="width:120pt"><col><col>
+<thead>
+<tr style="background:#eeeeee"><th>Item</th><th>Price</th><th>Notes</th></tr>
+</thead>
+<tr><td>Design</td><td>$1,200</td><td>**Fixed** fee</td></tr>
+<tr style="height:40pt"><td style="vertical-align:middle">Build</td><td>$3,000</td><td>
+
+- phase 1
+- phase 2
+
+</td></tr>
+</table>
+```
+
+- **Text is markdown everywhere, cells included.** Tags carry only style and
+  structure, as `<p style>` already does: `<td>**Fixed** fee</td>` is bold
+  "Fixed". A cell with several paragraphs or a list holds markdown blocks on
+  their own lines, as above. Literal-text marking (§2b) works in a cell as
+  anywhere else.
+- **One row per line,** like the pipe table it replaces, so an anchor quotes a
+  row (§4). Only a cell holding blocks spans lines.
+- **Style sits at the narrowest level every cell under it shares:** `<table>`,
+  `<col>`, `<tr>`, then `<td>`. The writer cascades the CSS way: a cell's own
+  style beats its row's, the row's beats its column's, the column's beats the
+  table's.
+- **`<thead>` is exactly the pinned rows** (Docs' "repeat header rows"), however
+  many there are. The read writes `<th>` inside it; the writer treats `<th>` and
+  `<td>` alike, and only `<thead>` pins.
+- **Merged cells** are `colspan` and `rowspan` (`mergeTableCells`).
+- **Properties:** `border` (per side: `border-top` …; solid, dotted, dashed;
+  width 0 hides it, since Docs cannot make one transparent), `padding`,
+  `background`, `vertical-align` (top, middle, bottom), `width` on `<col>`,
+  `height` on `<tr>` (a minimum, as in Docs). Anything else is refused the way
+  §2a refuses unsupported CSS.
+
+A style change is an `edit_doc` whose words stay the same (§4):
+`<td>Client</td>` → `<td style="background:#eeeeee">Client</td>` sends only
+`updateTableCellStyle`. The first style on a pipe table is the same edit with
+the table written back as HTML; its cells come back unchanged, so nothing is
+retyped.
+
+**No stray empty paragraphs.** `insertTable` adds a paragraph before the table,
+and the API refuses to delete it afterwards ("Invalid deletion range", checked
+live). So the writer inserts the table at the end of the text of the paragraph
+before it. The table then follows that paragraph directly, and the paragraph mark
+left after the table, an empty paragraph in the previous paragraph's style, is
+deleted in the same batch. Two empty paragraphs stay because Docs requires them:
+one before a table at the very top of a doc or segment, and one after a table
+that ends it.
+
 ---
 
 ## 3. Tool surface
@@ -208,7 +270,7 @@ only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 | `write_doc(path, content\|contentFile, confirmLoss?, segment?, baseDir?)` | The local `Write`: creates the doc, tab, header or footer when the path names nothing or something empty, replaces it when it holds content — **guarded** (§4) |
 | `export_doc(path, dir, format?, filename?)` | Server-side render to pdf/docx/odt/rtf/txt/html/epub/md. A doc path (or a one-tab doc) goes through Drive `files.export`, which renders every tab; a tab path of a multi-tab doc goes through the Docs UI's `export?tab=` endpoint — undocumented and throttled, so a failure is refused, never widened to the whole doc (`docs/limitations.md`) |
 | `set_page_setup / get_page_setup(path)` | Document page setup: margins, page size, orientation |
-| `edit_table(path, cell, op, side?, segment?)` · `set_table_style / get_table_style(path, cell, segment?)` | Tables: insert/delete row-or-column, style and read style back. A new table is markdown in `edit_doc` or `write_doc`. `segment` reaches a letterhead table (§3a) |
+| `edit_table(path, cell, op, side?, segment?)` | Tables: insert/delete a row or column. A new table, and every table style, is markdown in `edit_doc` or `write_doc`, and the read shows it (§2d). `segment` reaches a letterhead table (§3a) |
 | `list_suggestions(path, segment?)` | Suggestions as before→after diffs |
 | `apply_suggestions(path, resolutions[], segment?)` | Resolve one or more suggestions atomically (§6) |
 | `list_comments / add_comment(replyTo?) / resolve_comment` | Drive comments (`add_comment` also replies) |

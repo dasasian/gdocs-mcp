@@ -54,17 +54,18 @@ one, do this review and record the trade-off in the PR/commit:
    the selector (#43).
 5. **Uniform-vocabulary targets can merge; target-dependent style can't.** A tool
    is clearest to the model when its style/param fields don't change based on the
-   target. Paragraph and run style go through `edit_doc` as CSS because they
-   share one vocabulary (DESIGN.md §2a); table and page styling do NOT (different
-   fields), so `set_table_style` and `set_page_setup` stay their own tools.
+   target. Paragraph, run and table style go through `edit_doc` as CSS because
+   they share one vocabulary (DESIGN.md §2a, §2d); page geometry does NOT
+   (margins and page size have no element to sit on), so `set_page_setup` stays
+   its own tool.
 6. **Pair reads with writes.** Every write must be visible to a read. For
-   paragraph and run style that read is `read_doc` itself — the CSS it emits is
+   paragraph, run and table style that read is `read_doc` itself — the CSS it emits is
    the CSS `edit_doc` accepts, so no getter is needed. Anything markdown can't
    carry gets a getter: `get_page_setup`/`set_page_setup`. Shipping
    without one is a deliberate choice you state in the commit, not a default —
-   this rule used to say "consider", which is how `set_table_style` shipped with
-   no reader at all, leaving column widths and shading settable but invisible
-   (#33).
+   this rule used to say "consider", which is how a table style setter shipped
+   with no reader at all, leaving column widths and shading settable but
+   invisible (#33).
 
 If, after this, a new tool is still the right call — add it, and say in the commit
 why enhancing an existing tool was rejected.
