@@ -510,32 +510,32 @@ export async function editDoc(
   newString: string,
   opts: { replaceAll?: boolean; tabId?: string; segment?: SegmentKind; page?: SegmentPage; baseDir?: string; confirmLoss?: string } = {},
 ): Promise<EditResult> {
-  const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
-  const revisionId = res.data.revisionId ?? undefined;
-  const tabId = resolveTabId(res.data, opts.tabId);
-  const target = resolveSegmentTarget(res.data, { segment: opts.segment, page: opts.page, tabId });
+  const fetched = await clients.docs.documents.get({ documentId, includeTabsContent: true });
+  const revisionId = fetched.data.revisionId ?? undefined;
+  const tabId = resolveTabId(fetched.data, opts.tabId);
+  const target = resolveSegmentTarget(fetched.data, { segment: opts.segment, page: opts.page, tabId });
   if (target.error) return { status: 'no_segment', message: target.error };
   const segmentId = target.segmentId;
-  const proj = project(res.data, tabId, segmentId);
+  const projection = project(fetched.data, tabId, segmentId);
 
-  const block = renderStyleBlock(styleRulesOf(res.data, tabId));
-  if (targetsStyleBlock(oldString, block, proj.text)) {
+  const block = renderStyleBlock(styleRulesOf(fetched.data, tabId));
+  if (targetsStyleBlock(oldString, block, projection.text)) {
     return editStyleBlock(clients, documentId, block, oldString, newString, tabId, revisionId);
   }
-  if (isEmptyContent(res.data, tabId, segmentId)) throw new Error(EMPTY_CONTENT_MESSAGE);
+  if (isEmptyContent(fetched.data, tabId, segmentId)) throw new Error(EMPTY_CONTENT_MESSAGE);
 
   if (quotesTable(oldString, newString)) {
     const insertBlocks: TableEditInput['insertBlocks'] = (side, table, markdown, revisionId) => {
       const inside = (table.startIndex ?? 0) + 1;
-      return applyBlockEdit({ clients, documentId, doc: res.data, markdown, tabId, segmentId, baseDir: opts.baseDir }, { startIndex: inside, endIndex: inside + 1 }, side, revisionId);
+      return applyBlockEdit({ clients, documentId, doc: fetched.data, markdown, tabId, segmentId, baseDir: opts.baseDir }, { startIndex: inside, endIndex: inside + 1 }, side, revisionId);
     };
-    return editTableMarkup(clients, documentId, res.data, { oldString, newString, replaceAll: opts.replaceAll, tabId, segmentId, baseDir: opts.baseDir, confirmLoss: opts.confirmLoss, insertBlocks });
+    return editTableMarkup(clients, documentId, fetched.data, { oldString, newString, replaceAll: opts.replaceAll, tabId, segmentId, baseDir: opts.baseDir, confirmLoss: opts.confirmLoss, insertBlocks });
   }
   if (mentionsTableMarkup(newString) && !holdsBlockMarkdown(newString)) {
     throw new StyleSyntaxError(['new_string holds table tags, but old_string does not quote a table. Quote the table markup from read_doc in old_string, or write a whole <table> block.']);
   }
 
-  const located = locate(proj.text, oldString);
+  const located = locate(projection.text, oldString);
   const { needle, positions } = located;
   if (positions.length === 0) {
     return { status: 'not_found', message: `"${oldString}" not found.` };
@@ -544,7 +544,7 @@ export async function editDoc(
     return {
       status: 'ambiguous',
       message: `${positions.length} matches — add surrounding context, or set replace_all.`,
-      matches: positions.map((p) => ({ context: contextAround(proj.text, p, p + needle.length) })),
+      matches: positions.map((p) => ({ context: contextAround(projection.text, p, p + needle.length) })),
     };
   }
 
@@ -560,16 +560,16 @@ export async function editDoc(
   const asBlocks = insertsOnly ? addsBlockText(written) : holdsBlockMarkdown(written);
   if (asBlocks) {
     parseBlocks(written);
-    const context: BlockEditContext = { clients, documentId, doc: res.data, markdown: written, tabId, segmentId, baseDir: opts.baseDir };
+    const context: BlockEditContext = { clients, documentId, doc: fetched.data, markdown: written, tabId, segmentId, baseDir: opts.baseDir };
     const warnings: string[] = [];
     const images: { src: string; objectId: string }[] = [];
-    for (const [n, a] of highestIndexFirst.entries()) {
+    for (const [order, matchStart] of highestIndexFirst.entries()) {
       const edit = insertsOnly
-        ? insertionPoint(proj, shared, a, needle.length)
-        : { side: undefined, matched: rangeOfSpan(proj, middleSpan(shared, a, needle.length, false)) };
-      const done = await applyBlockEdit(context, edit.matched, edit.side, n === 0 ? revisionId : undefined);
-      warnings.push(...done.warnings);
-      images.push(...done.images);
+        ? insertionPoint(projection, shared, matchStart, needle.length)
+        : { side: undefined, matched: rangeOfSpan(projection, middleSpan(shared, matchStart, needle.length, false)) };
+      const applied = await applyBlockEdit(context, edit.matched, edit.side, order === 0 ? revisionId : undefined);
+      warnings.push(...applied.warnings);
+      images.push(...applied.images);
     }
     return { status: 'ok', replaced: highestIndexFirst.length, ...(warnings.length ? { warnings } : {}), ...(images.length ? { images } : {}) };
   }
@@ -581,15 +581,15 @@ export async function editDoc(
   const lineTexts = plain.split('\n');
   const replacement: Replacement = { newLines, lineTexts, segments, plain, breakOffsets: pageBreakOffsets(breaksAfterLines, lineTexts) };
 
-  const requests = highestIndexFirst.flatMap((a) => {
+  const requests = highestIndexFirst.flatMap((matchStart) => {
     if (insertsOnly) {
-      const { side, matched } = insertionPoint(proj, shared, a, needle.length);
-      return replacementRequestsFor(res.data, pointAt(side, matched), replacement, tabId, segmentId);
+      const { side, matched } = insertionPoint(projection, shared, matchStart, needle.length);
+      return replacementRequestsFor(fetched.data, pointAt(side, matched), replacement, tabId, segmentId);
     }
-    const span = middleSpan(shared, a, needle.length, writesNothing);
-    const sameWords = plain === proj.text.slice(span.from, span.to) && replacement.breakOffsets.length === 0;
-    if (sameWords) return styleOnlyRequestsFor(proj, span.from, span.to - span.from, shared.middleOld, replacement, tabId, segmentId);
-    return replacementRequestsFor(res.data, rangeFor(proj, span.from, span.to), replacement, tabId, segmentId);
+    const span = middleSpan(shared, matchStart, needle.length, writesNothing);
+    const sameWords = plain === projection.text.slice(span.from, span.to) && replacement.breakOffsets.length === 0;
+    if (sameWords) return styleOnlyRequestsFor(projection, span.from, span.to - span.from, shared.middleOld, replacement, tabId, segmentId);
+    return replacementRequestsFor(fetched.data, rangeFor(projection, span.from, span.to), replacement, tabId, segmentId);
   });
 
   if (requests.length) {

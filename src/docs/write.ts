@@ -293,116 +293,144 @@ export function holdsBlockMarkdown(markdown: string): boolean {
   return hasBlockLine || /\n[ \t]*\n/.test(markdown);
 }
 
+interface ParseContext {
+  lines: string[];
+  report: Reporter;
+  issues: string[];
+}
+
+interface Parsed {
+  blocks: Block[];
+  next: number;
+}
+
+type BlockParser = (context: ParseContext, from: number) => Parsed | undefined;
+
+const single = (block: Block, from: number): Parsed => ({ blocks: [block], next: from + 1 });
+
+const parseIndentedCode: BlockParser = ({ lines }, from) => {
+  if (!INDENTED_CODE_RE.test(lines[from])) return undefined;
+  const code = parseIndentedCodeAt(lines, from);
+  return { blocks: [code.block], next: code.next };
+};
+
+const parseHtmlComment: BlockParser = ({ lines }, from) =>
+  lines[from].trim().startsWith('<!--') ? { blocks: [], next: skipHtmlComment(lines, from) } : undefined;
+
+const parseStyleBlockLines: BlockParser = ({ lines, issues }, from) => {
+  if (!STYLE_OPEN_RE.test(lines[from].trim())) return undefined;
+  const next = parseStyleBlockAt(lines, from, issues);
+  const parsed = parseStyleBlock(lines.slice(from, next).join('\n'), from + 1);
+  issues.push(...parsed.issues);
+  return { blocks: [{ type: 'style', rules: parsed.rules }], next };
+};
+
+const parseHeadingLine: BlockParser = ({ lines, report }, from) => {
+  const heading = HEADING_RE.exec(lines[from]);
+  if (!heading) return undefined;
+  report(from, inlineStyleIssues(heading[2]));
+  return single({ type: 'heading', level: heading[1].length, text: heading[2].trim() }, from);
+};
+
+const parseHtmlTableBlock: BlockParser = ({ lines, report }, from) => {
+  if (!HTML_TABLE_START_RE.test(lines[from].trim())) return undefined;
+  const table = parseHtmlTableAt(lines, from, report);
+  return { blocks: [table.block], next: table.next };
+};
+
+const parsePipeTable: BlockParser = ({ lines }, from) => {
+  if (!(isTableRow(lines[from]) && from + 1 < lines.length && isTableSep(lines[from + 1]))) return undefined;
+  const table = parseTableAt(lines, from);
+  return { blocks: [table.block], next: table.next };
+};
+
+const parseMarkdownImage: BlockParser = ({ lines }, from) => {
+  const image = IMAGE_RE.exec(lines[from].trim());
+  return image ? single({ type: 'image', alt: image[1], src: image[2] }, from) : undefined;
+};
+
+const parseImageTagLine: BlockParser = ({ lines }, from) => {
+  const image = IMG_TAG_RE.test(lines[from].trim()) ? parseImgTag(lines[from].trim()) : undefined;
+  return image ? single(image, from) : undefined;
+};
+
+const parsePageBreakBlock: BlockParser = ({ lines, report }, from) => {
+  const pageBreak = parsePageBreakLine(lines[from]);
+  if (!pageBreak) return undefined;
+  report(from, pageBreak.issues);
+  return single({ type: 'pageBreak' }, from);
+};
+
+const parseFencedCode: BlockParser = ({ lines, report }, from) => {
+  if (!FENCE_OPEN_RE.test(lines[from])) return undefined;
+  const code = parseFencedCodeAt(lines, from, report);
+  return { blocks: [code.block], next: code.next };
+};
+
+const parseQuote: BlockParser = ({ lines, report }, from) => (QUOTE_MARK_RE.test(lines[from]) ? parseQuoteAt(lines, from, report) : undefined);
+
+const parseWrappedParagraph: BlockParser = ({ lines, report }, from) => {
+  const wrapped = splitWrappedLine(lines[from]);
+  if (!wrapped) return undefined;
+  report(from, [...wrapped.issues, ...inlineStyleIssues(wrapped.inner)]);
+  const { markup } = wrapped;
+  const css = Object.keys(markup.css).length ? markup.css : undefined;
+  const wrappedImage = css && !markup.heading && IMG_TAG_RE.test(wrapped.inner.trim()) ? parseImgTag(wrapped.inner.trim()) : undefined;
+  if (wrappedImage) return single({ ...wrappedImage, css }, from);
+  return single(
+    markup.heading ? { type: 'heading', level: markup.heading, text: wrapped.inner, css } : { type: 'paragraph', text: wrapped.inner, css, className: markup.className },
+    from,
+  );
+};
+
+const parseListOrParagraph: BlockParser = ({ lines, report }, from) => {
+  const parsed = LIST_RE.test(lines[from]) ? parseListAt(lines, from) : parseSoftJoinedParagraphAt(lines, from);
+  for (let n = from; n < parsed.next; n++) report(n, inlineStyleIssues(lines[n]));
+  return { blocks: [parsed.block], next: parsed.next };
+};
+
+const BLOCK_PARSERS_IN_ORDER: BlockParser[] = [
+  parseIndentedCode,
+  parseHtmlComment,
+  parseStyleBlockLines,
+  parseHeadingLine,
+  parseHtmlTableBlock,
+  parsePipeTable,
+  parseMarkdownImage,
+  parseImageTagLine,
+  parsePageBreakBlock,
+  parseFencedCode,
+  parseQuote,
+  parseWrappedParagraph,
+  parseListOrParagraph,
+];
+
 export function parseBlocks(md: string): Block[] {
   const lines = md.replace(/\r\n/g, '\n').split('\n');
   const blocks: Block[] = [];
   const issues: string[] = [];
   const structure = new Set<string>();
-  const report = (lineIndex: number, found: string[], aboutTableShape = false): void => {
+  const report: Reporter = (lineIndex, found, aboutTableShape = false) => {
     for (const issue of found) {
       issues.push(`line ${lineIndex + 1}: ${issue}`);
       if (aboutTableShape) structure.add(`line ${lineIndex + 1}: ${issue}`);
     }
   };
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    if (line.trim() === '') {
-      i++;
+  const context: ParseContext = { lines, report, issues };
+  let from = 0;
+  while (from < lines.length) {
+    if (lines[from].trim() === '') {
+      from++;
       continue;
     }
-    if (INDENTED_CODE_RE.test(line)) {
-      const code = parseIndentedCodeAt(lines, i);
-      blocks.push(code.block);
-      i = code.next;
-      continue;
+    for (const parser of BLOCK_PARSERS_IN_ORDER) {
+      const parsed = parser(context, from);
+      if (!parsed) continue;
+      if (parsed.next <= from) throw new Error(`The markdown parser made no progress at line ${from + 1}: ${lines[from]}`);
+      blocks.push(...parsed.blocks);
+      from = parsed.next;
+      break;
     }
-    if (line.trim().startsWith('<!--')) {
-      i = skipHtmlComment(lines, i);
-      continue;
-    }
-    if (STYLE_OPEN_RE.test(line.trim())) {
-      const next = parseStyleBlockAt(lines, i, issues);
-      const parsed = parseStyleBlock(lines.slice(i, next).join('\n'), i + 1);
-      issues.push(...parsed.issues);
-      blocks.push({ type: 'style', rules: parsed.rules });
-      i = next;
-      continue;
-    }
-    const h = HEADING_RE.exec(line);
-    if (h) {
-      report(i, inlineStyleIssues(h[2]));
-      blocks.push({ type: 'heading', level: h[1].length, text: h[2].trim() });
-      i++;
-      continue;
-    }
-    if (HTML_TABLE_START_RE.test(line.trim())) {
-      const t = parseHtmlTableAt(lines, i, report);
-      blocks.push(t.block);
-      i = t.next;
-      continue;
-    }
-    const startsTable = isTableRow(line) && i + 1 < lines.length && isTableSep(lines[i + 1]);
-    if (startsTable) {
-      const t = parseTableAt(lines, i);
-      blocks.push(t.block);
-      i = t.next;
-      continue;
-    }
-    const img = IMAGE_RE.exec(line.trim());
-    if (img) {
-      blocks.push({ type: 'image', alt: img[1], src: img[2] });
-      i++;
-      continue;
-    }
-    const imgTag = IMG_TAG_RE.test(line.trim()) ? parseImgTag(line.trim()) : undefined;
-    if (imgTag) {
-      blocks.push(imgTag);
-      i++;
-      continue;
-    }
-    const pageBreak = parsePageBreakLine(line);
-    if (pageBreak) {
-      report(i, pageBreak.issues);
-      blocks.push({ type: 'pageBreak' });
-      i++;
-      continue;
-    }
-    if (FENCE_OPEN_RE.test(line)) {
-      const code = parseFencedCodeAt(lines, i, report);
-      blocks.push(code.block);
-      i = code.next;
-      continue;
-    }
-    if (QUOTE_MARK_RE.test(line)) {
-      const quote = parseQuoteAt(lines, i, report);
-      blocks.push(...quote.blocks);
-      i = quote.next;
-      continue;
-    }
-    const wrapped = splitWrappedLine(line);
-    if (wrapped) {
-      report(i, [...wrapped.issues, ...inlineStyleIssues(wrapped.inner)]);
-      const { markup } = wrapped;
-      const css = Object.keys(markup.css).length ? markup.css : undefined;
-      const wrappedImage = css && !markup.heading && IMG_TAG_RE.test(wrapped.inner.trim()) ? parseImgTag(wrapped.inner.trim()) : undefined;
-      if (wrappedImage) {
-        blocks.push({ ...wrappedImage, css });
-        i++;
-        continue;
-      }
-      blocks.push(
-        markup.heading
-          ? { type: 'heading', level: markup.heading, text: wrapped.inner, css }
-          : { type: 'paragraph', text: wrapped.inner, css, className: markup.className },
-      );
-      i++;
-      continue;
-    }
-    const parsed = LIST_RE.test(line) ? parseListAt(lines, i) : parseSoftJoinedParagraphAt(lines, i);
-    for (let n = i; n < parsed.next; n++) report(n, inlineStyleIssues(lines[n]));
-    blocks.push(parsed.block);
-    i = parsed.next;
   }
   if (issues.length) throw new StyleSyntaxError(issues, structure);
   return blocks;
