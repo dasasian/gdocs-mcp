@@ -253,8 +253,50 @@ Details the checks against Docs settled (#61):
 - **A merged cell keeps its far borders on the cells it covers.** A cell spanning columns stores its right border on the last cell it covers, and one spanning rows its bottom border on the last row; the read takes them from there, and the covered cells are not in the markup.
 - **Docs gives a merged row a height of its own** (21pt for one line of text). The writer sets it back, so a table written with a merge reads with the heights it was written with.
 - **A row or column takes a style only when two or more cells under it share it.** One cell's style is that cell's.
-- **A table edit compares whole tables.** `edit_doc` finds old_string in the markup of the tables it reads (exact text, so quote it from `read_doc`), applies the replacement, reads the result as a table and sends the difference: style for what changed in style, a retyped cell for a cell whose words changed, a restyle of the cell's text when the words are the same and only its markup differs, and a new table for a change of rows, columns or merges. Table tags in new_string with no table in old_string are an error, not text. Blocks added before `<table` or after `</table>` are not part of the table: the table is kept, and they are inserted next to it by the ordinary insertion of §4 (Normal text, no empty paragraph between). `</table>`, or a last row and `</table>`, is a valid anchor for the table it closes; more than one table matching is the usual ambiguity. A table edit that cannot be read as one table is refused with a plain message that names what to quote, and lists no CSS: the supported-CSS lists belong to unsupported CSS alone.
+- **A table edit compares whole tables.** `edit_doc` finds old_string in the markup of the tables it reads (exact text, so quote it from `read_doc`), applies the replacement, reads the result as a table and sends the difference: style for what changed in style, a retyped cell for a cell whose words changed, a restyle of the cell's text when the words are the same and only its markup differs, and row, column and merge requests for a change of shape (below). A table is never rewritten whole. Table tags in new_string with no table in old_string are an error, not text. Blocks added before `<table` or after `</table>` are not part of the table: the table is kept, and they are inserted next to it by the ordinary insertion of §4 (Normal text, no empty paragraph between). `</table>`, or a last row and `</table>`, is a valid anchor for the table it closes; more than one table matching is the usual ambiguity. A table edit that cannot be read as one table is refused with a plain message that names what to quote, and lists no CSS: the supported-CSS lists belong to unsupported CSS alone.
 - **A dash style HTML has no word for** (long dash, dash-dot) reads as `dashed`.
+
+**Changing a table's shape is a comparison, not a rewrite.** The agent writes the
+rows it wants, quoting only the rows around the change:
+
+```
+old_string: <tr><td>Design</td><td>$1,200</td></tr>
+            <tr><td>Total</td><td>$4,200</td></tr>
+new_string: <tr><td>Design</td><td>$1,200</td></tr>
+            <tr><td>Hosting</td><td>$300</td></tr>
+            <tr><td>Total</td><td>$4,500</td></tr>
+```
+
+The server applies that to the table, compares the old table with the result, and
+sends `insertTableRow` below Design, the text of the two new cells, and "$4,500"
+into Total's price cell. Design, Total's first cell and every cell outside the
+quote are not touched, so their comments and style stay.
+
+- **Columns are paired first, then rows,** by the same rule, so one edit can
+  add a column and a row.
+- **A row or column that matches exactly is kept.** In the gap between two kept
+  rows, old and new rows are paired by the cells they share: old `Build | $3,000`
+  facing new `Build | $3,500` and `Hosting | $300` is Build edited (only
+  "$3,500" is retyped) and Hosting inserted after it. A tie, for example two new
+  rows that each share one cell with the old one, is refused.
+- **Inside a paired row,** only a cell whose words changed is retyped; a cell
+  whose markup alone changed gets style requests only.
+- **A new row or column copies its neighbour's style,** as Excel's Insert
+  Options do by default. A row copies the row above, or the row below when the
+  row above is a header row. A column copies the column to its left, or to its
+  right when it is the new first column. A style written in `new_string` wins.
+  Links are never copied, and alternating row shading is not continued.
+- **A merge change** sends `mergeTableCells` or `unmergeTableCells`, then the head
+  cell's text if its words changed.
+- **A moved row is a delete and an insert,** because the API has no move. The
+  inserted copy is retyped, so comments on the old row are lost. Before moving,
+  the server counts the comments whose quoted text appears in the row (Drive
+  anchors are opaque, §4, so the quote is the only link, and it can overcount
+  but never miss). If there are any, the first call is refused with the count
+  and a `confirmLoss` string, as `write_doc` does. A row with none moves without
+  asking.
+- **Anything the comparison cannot read as one clean set of changes is refused,**
+  with what to quote instead.
 
 **No stray empty paragraphs.** `insertTable` adds a paragraph before the table,
 and the API refuses to delete it afterwards ("Invalid deletion range", checked
@@ -281,7 +323,7 @@ only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 | `write_doc(path, content\|contentFile, confirmLoss?, segment?, baseDir?)` | The local `Write`: creates the doc, tab, header or footer when the path names nothing or something empty, replaces it when it holds content — **guarded** (§4) |
 | `export_doc(path, dir, format?, filename?)` | Server-side render to pdf/docx/odt/rtf/txt/html/epub/md. A doc path (or a one-tab doc) goes through Drive `files.export`, which renders every tab; a tab path of a multi-tab doc goes through the Docs UI's `export?tab=` endpoint — undocumented and throttled, so a failure is refused, never widened to the whole doc (`docs/limitations.md`) |
 | `set_page_setup / get_page_setup(path)` | Document page setup: margins, page size, orientation |
-| `edit_table(path, cell, op, side?, segment?)` | Tables: insert/delete a row or column. A new table, and every table style, is markdown in `edit_doc` or `write_doc`, and the read shows it (§2d). `segment` reaches a letterhead table (§3a) |
+| `edit_table(path, cell, op, side?, segment?)` | Tables: insert/delete a row or column. `edit_doc` does the same by comparison (§2d); `edit_table` goes once an eval shows agents use that. A new table, and every table style, is markdown in `edit_doc` or `write_doc`, and the read shows it (§2d). `segment` reaches a letterhead table (§3a) |
 | `list_suggestions(path, segment?)` | Suggestions as before→after diffs |
 | `apply_suggestions(path, resolutions[], segment?)` | Resolve one or more suggestions atomically (§6) |
 | `list_comments / add_comment(replyTo?) / resolve_comment` | Drive comments (`add_comment` also replies) |
