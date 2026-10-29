@@ -191,11 +191,6 @@ function splitAtPageBreaks(para: docs_v1.Schema$Paragraph): (docs_v1.Schema$Para
   return pieces;
 }
 
-// Embedded image -> the <img> escape hatch (DESIGN.md §2). `src` stays the
-// `image:<objectId>` marker: Docs keeps the embedded bytes, not the original URL,
-// so the id is the only durable handle — download_images resolves it to a file.
-// Docs always reports a size (it fits the image on insert), so width/height are
-// always present; they are points, matching insert_image's units.
 function renderImage(objectId: string, objects: Record<string, docs_v1.Schema$InlineObject>): string {
   const eo = objects[objectId]?.inlineObjectProperties?.embeddedObject ?? {};
   const attrs = [`src="image:${objectId}"`];
@@ -208,8 +203,7 @@ function renderImage(objectId: string, objects: Record<string, docs_v1.Schema$In
   return `<img ${attrs.join(' ')}>`;
 }
 
-// Docs' automatic hyperlink colour.
-const LINK_BLUE = '#1155cc';
+const DOCS_AUTOMATIC_LINK_COLOR = '#1155cc';
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 const escapeAttr = (s: string): string => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
@@ -309,7 +303,7 @@ function cellReaderFor(context: ReadContext): CellReader {
 function spanCssFor(s: docs_v1.Schema$TextStyle, isCode: boolean, paragraphFamily?: string): string[] {
   const css: string[] = [];
   const color = rgbToHex(s.foregroundColor?.color?.rgbColor ?? undefined);
-  const isDefaultLinkBlue = !!s.link?.url && color === LINK_BLUE;
+  const isDefaultLinkBlue = !!s.link?.url && color === DOCS_AUTOMATIC_LINK_COLOR;
   if (color && !isDefaultLinkBlue) css.push(`color:${color}`);
   if (s.fontSize?.magnitude) css.push(`font-size:${s.fontSize.magnitude}pt`);
   const family = s.weightedFontFamily?.fontFamily ?? undefined;

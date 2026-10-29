@@ -92,7 +92,6 @@ export function columnAlignRequests(
   return requests;
 }
 
-// ---- Table structure ops (surgical: preserve the rest of the table) ----
 
 function cellTextOf(cell: docs_v1.Schema$TableCell): string {
   let s = '';
