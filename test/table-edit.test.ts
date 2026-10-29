@@ -5,17 +5,26 @@ import { editDoc } from '../src/docs/edit.js';
 import { renderMarkdown } from '../src/docs/transformer.js';
 import { StyleSyntaxError } from '../src/docs/css.js';
 import { parseBlocks } from '../src/docs/write.js';
-import { bodyDocWithTable, plain, tableElement, type TableSpec } from './table-fixtures.js';
+import { background, bodyDocWithTable, headerDocWithTable, plain, tableElement, type TableSpec } from './table-fixtures.js';
 
-function clientsFor(doc: docs_v1.Schema$Document) {
+interface Reads {
+  /** the doc as it reads after the rows and columns were changed. */
+  afterStructure?: docs_v1.Schema$Document;
+  /** the quoted text of each comment on the doc. */
+  quotes?: string[];
+}
+
+function clientsFor(doc: docs_v1.Schema$Document, { afterStructure, quotes = [] }: Reads = {}) {
   const batchUpdate = vi.fn().mockResolvedValue({ data: { replies: [] } });
+  const get = vi.fn().mockResolvedValueOnce({ data: doc }).mockResolvedValue({ data: afterStructure ?? doc });
+  const list = vi.fn().mockResolvedValue({ data: { comments: quotes.map((value) => ({ quotedFileContent: { value } })) } });
   const clients: GoogleClients = {
     account: 'a',
     auth: {} as GoogleClients['auth'],
-    docs: { documents: { get: vi.fn().mockResolvedValue({ data: doc }), batchUpdate } } as unknown as GoogleClients['docs'],
-    drive: {} as GoogleClients['drive'],
+    docs: { documents: { get, batchUpdate } } as unknown as GoogleClients['docs'],
+    drive: { comments: { list } } as unknown as GoogleClients['drive'],
   };
-  return { clients, batchUpdate };
+  return { clients, batchUpdate, list };
 }
 
 const RED = { foregroundColor: { color: { rgbColor: { red: 1 } } } };
@@ -90,13 +99,6 @@ describe('a style-only table edit retypes nothing (#61 rule 6)', () => {
     const sent = allRequests(batchUpdate);
     expect(sent.filter((r) => r.insertText).map((r) => r.insertText!.text)).toEqual(['Cost']);
     expect(sent.filter((r) => r.deleteContentRange)).toHaveLength(1);
-  });
-
-  it('a change of rows replaces the table', async () => {
-    const { clients, batchUpdate } = clientsFor(bodyDocWithTable({ rows: [plain('a'), plain('b')], columns: [{ widthType: 'FIXED_WIDTH', width: { magnitude: 90, unit: 'PT' } }] }));
-    const result = await editDoc(clients, 'd', '<tr><td>b</td></tr>', '<tr><td>b</td></tr>\n<tr><td>c</td></tr>');
-    expect(result.status).toBe('ok');
-    expect(allRequests(batchUpdate).some((r) => r.deleteContentRange)).toBe(true);
   });
 });
 
@@ -186,5 +188,193 @@ describe('a table problem is not reported as a style problem (#61 review)', () =
 
   it('unsupported CSS in a table still lists the supported CSS', () => {
     expect(() => parseBlocks('<table>\n<tr><td style="float:left">a</td></tr>\n</table>')).toThrow(/Supported in <table>/);
+  });
+});
+
+const FIXED = [{ widthType: 'FIXED_WIDTH' as const, width: { magnitude: 90, unit: 'PT' as const } }];
+const TWO_FIXED = [...FIXED, ...FIXED];
+const pipe = (...cells: string[]): string => `| ${cells.join(' | ')} |`;
+const BLANK = plain('', '');
+const PRICES = [plain('Item', 'Price'), plain('Design', '$1,200'), plain('Build', '$3,000'), plain('Total', '$4,200')];
+const withRows = (...rows: TableSpec['rows']): docs_v1.Schema$Document => bodyDocWithTable({ rows });
+const typed = (batchUpdate: ReturnType<typeof vi.fn>): string[] => allRequests(batchUpdate).filter((r) => r.insertText).map((r) => r.insertText!.text!);
+const batchKinds = (batchUpdate: ReturnType<typeof vi.fn>): string[][] => batchUpdate.mock.calls.map((call) => call[0].requestBody.requests.map((r: docs_v1.Schema$Request) => Object.keys(r)[0]));
+
+describe('a change of rows is a comparison, never a rewrite (#62 rules 1, 2, 3, 8)', () => {
+  it('an added row is an insertTableRow and the text of its cells; the table is not deleted', async () => {
+    const { clients, batchUpdate } = clientsFor(bodyDocWithTable({ rows: [plain('a'), plain('b')], columns: FIXED }), { afterStructure: bodyDocWithTable({ rows: [plain('a'), plain('b'), plain('')], columns: FIXED }) });
+    const result = await editDoc(clients, 'd', '<tr><td>b</td></tr>', '<tr><td>b</td></tr>\n<tr><td>c</td></tr>');
+    expect(result.status).toBe('ok');
+    expect(batchKinds(batchUpdate)[0]).toEqual(['insertTableRow']);
+    expect(allRequests(batchUpdate)[0].insertTableRow).toMatchObject({ tableCellLocation: { tableStartLocation: { index: 1 }, rowIndex: 1, columnIndex: 0 }, insertBelow: true });
+    expect(typed(batchUpdate)).toEqual(['c']);
+    expect(allRequests(batchUpdate).some((r) => r.deleteContentRange || r.insertTable)).toBe(false);
+  });
+
+  it('quoting only the rows around the change adds the row and touches no other cell (the partial quote)', async () => {
+    const before = withRows(...PRICES, plain('Tax', '$0'), plain('Due', '$4,200'));
+    const after = withRows(...PRICES.slice(0, 3), BLANK, ...PRICES.slice(3), plain('Tax', '$0'), plain('Due', '$4,200'));
+    const { clients, batchUpdate } = clientsFor(before, { afterStructure: after });
+    await editDoc(clients, 'd', `${pipe('Build', '$3,000')}\n${pipe('Total', '$4,200')}`, `${pipe('Build', '$3,000')}\n${pipe('Hosting', '$300')}\n${pipe('Total', '$4,200')}`);
+    expect(batchKinds(batchUpdate)[0]).toEqual(['insertTableRow']);
+    expect(allRequests(batchUpdate)[0].insertTableRow!.tableCellLocation).toMatchObject({ rowIndex: 2 });
+    expect(typed(batchUpdate)).toEqual(['$300', 'Hosting']);
+    expect(allRequests(batchUpdate).some((r) => r.deleteContentRange)).toBe(false);
+  });
+
+  it('a deleted row is one deleteTableRow and nothing is typed', async () => {
+    const { clients, batchUpdate } = clientsFor(withRows(...PRICES), { afterStructure: withRows(PRICES[0], PRICES[1], PRICES[3]) });
+    await editDoc(clients, 'd', pipe('Build', '$3,000'), '');
+    expect(batchKinds(batchUpdate)).toEqual([['deleteTableRow']]);
+    expect(allRequests(batchUpdate)[0].deleteTableRow!.tableCellLocation).toMatchObject({ rowIndex: 2, columnIndex: 0 });
+  });
+
+  it('an added column is one insertTableColumn and the text of its cells', async () => {
+    const after = withRows(plain('Item', '', 'Price'), plain('Design', '', '$1,200'), plain('Build', '', '$3,000'), plain('Total', '', '$4,200'));
+    const { clients, batchUpdate } = clientsFor(withRows(...PRICES), { afterStructure: after });
+    const oldTable = '| Item | Price |\n| --- | --- |\n| Design | $1,200 |\n| Build | $3,000 |\n| Total | $4,200 |';
+    const newTable = '| Item | Qty | Price |\n| --- | --- | --- |\n| Design | 1 | $1,200 |\n| Build | 2 | $3,000 |\n| Total | 3 | $4,200 |';
+    await editDoc(clients, 'd', oldTable, newTable);
+    expect(batchKinds(batchUpdate)[0]).toEqual(['insertTableColumn']);
+    expect(allRequests(batchUpdate)[0].insertTableColumn).toMatchObject({ tableCellLocation: { rowIndex: 0, columnIndex: 0 }, insertRight: true });
+    expect(typed(batchUpdate).sort()).toEqual(['1', '2', '3', 'Qty']);
+  });
+
+  it('a price changed and a row added in one edit retype the price cells and type the new row, and nothing else', async () => {
+    const after = withRows(PRICES[0], PRICES[1], PRICES[2], BLANK, PRICES[3]);
+    const { clients, batchUpdate } = clientsFor(withRows(...PRICES), { afterStructure: after });
+    await editDoc(clients, 'd', `${pipe('Build', '$3,000')}\n${pipe('Total', '$4,200')}`, `${pipe('Build', '$3,500')}\n${pipe('Hosting', '$300')}\n${pipe('Total', '$4,500')}`);
+    expect(typed(batchUpdate).sort()).toEqual(['$3,500', '$300', '$4,500', 'Hosting']);
+    expect(allRequests(batchUpdate).filter((r) => r.deleteContentRange)).toHaveLength(2);
+  });
+
+  it('a row moved without any change of words types only the moved row', async () => {
+    const after = withRows(PRICES[0], PRICES[2], BLANK, PRICES[3]);
+    const { clients, batchUpdate } = clientsFor(withRows(...PRICES), { afterStructure: after });
+    await editDoc(clients, 'd', `${pipe('Design', '$1,200')}\n${pipe('Build', '$3,000')}`, `${pipe('Build', '$3,000')}\n${pipe('Design', '$1,200')}`);
+    expect(batchKinds(batchUpdate)[0]).toEqual(['deleteTableRow', 'insertTableRow']);
+    expect(typed(batchUpdate).sort()).toEqual(['$1,200', 'Design']);
+  });
+});
+
+describe('new cells copy their neighbour and explicit style wins (#62 rule 4)', () => {
+  const SHADE = { backgroundColor: background('eee') };
+  const shaded = (...texts: string[]): TableSpec['rows'][number] => ({ cells: texts.map((text) => ({ text, style: SHADE })) });
+  const before = withRows(plain('Item', 'Price'), shaded('Design', '$1,200'), plain('Total', '$4,200'));
+  const NEW_ROW = '<tr><td>Hosting</td><td>$300</td></tr>\n<tr><td>Total</td>';
+  const editWith = (newRow: string, afterStructure: docs_v1.Schema$Document) => {
+    const harness = clientsFor(before, { afterStructure });
+    const markup = renderMarkdown(before);
+    return { ...harness, run: () => editDoc(harness.clients, 'd', markup, markup.replace('<tr><td>Total</td>', newRow)) };
+  };
+  const unstyledNewRow = withRows(plain('Item', 'Price'), shaded('Design', '$1,200'), BLANK, plain('Total', '$4,200'));
+  const copiedNewRow = withRows(plain('Item', 'Price'), shaded('Design', '$1,200'), shaded('', ''), plain('Total', '$4,200'));
+
+  it('a new row whose cells came back unstyled is given the style of the row above', async () => {
+    const { run, batchUpdate } = editWith(NEW_ROW, unstyledNewRow);
+    await run();
+    const styled = allRequests(batchUpdate).filter((r) => r.updateTableCellStyle);
+    expect(styled).toHaveLength(1);
+    expect(styled[0].updateTableCellStyle).toMatchObject({ tableRange: { tableCellLocation: { rowIndex: 2, columnIndex: 0 }, columnSpan: 2 }, fields: 'backgroundColor' });
+  });
+
+  it('the shading is the row above’s, not the opposite of it', async () => {
+    const { run, batchUpdate } = editWith(NEW_ROW, unstyledNewRow);
+    await run();
+    const styled = allRequests(batchUpdate).find((r) => r.updateTableCellStyle)!.updateTableCellStyle!;
+    expect(styled.tableCellStyle!.backgroundColor!.color!.rgbColor!.red).toBeCloseTo(0.9333, 3);
+  });
+
+  it('a new row Docs already styled like the row above is sent no style', async () => {
+    const { run, batchUpdate } = editWith(NEW_ROW, copiedNewRow);
+    await run();
+    expect(kinds(batchUpdate)).not.toContain('updateTableCellStyle');
+  });
+
+  it('a style written on the new row wins over the row above', async () => {
+    const { run, batchUpdate } = editWith('<tr style="background:#ffffcc"><td>Hosting</td><td>$300</td></tr>\n<tr><td>Total</td>', copiedNewRow);
+    await run();
+    const styled = allRequests(batchUpdate).find((r) => r.updateTableCellStyle)!.updateTableCellStyle!;
+    expect(styled.tableRange).toMatchObject({ tableCellLocation: { rowIndex: 2 }, columnSpan: 2 });
+    expect(styled.tableCellStyle!.backgroundColor!.color!.rgbColor).toMatchObject({ red: 1, green: 1 });
+  });
+
+  it('a link is never copied: the new cell’s text is typed with direct styling cleared and no link', async () => {
+    const linked = { cells: [{ text: 'Design', runStyle: { link: { url: 'https://example.com' }, italic: true } }] };
+    const before = bodyDocWithTable({ rows: [plain('Item'), linked] });
+    const { clients, batchUpdate } = clientsFor(before, { afterStructure: bodyDocWithTable({ rows: [plain('Item'), linked, plain('')] }) });
+    const designRow = renderMarkdown(before).split('\n').at(-1)!;
+    expect(designRow).toContain('https://example.com');
+    await editDoc(clients, 'd', designRow, `${designRow}\n| Hosting |`);
+    const styles = allRequests(batchUpdate).filter((r) => r.updateTextStyle).map((r) => r.updateTextStyle!);
+    expect(styles.length).toBeGreaterThan(0);
+    expect(styles.every((u) => u.textStyle?.link === undefined)).toBe(true);
+    expect(styles[0].fields).toContain('link');
+    expect(typed(batchUpdate)).toEqual(['Hosting']);
+  });
+});
+
+describe('merges (#62 rule 5)', () => {
+  const THREE = [plain('Item', 'Price', 'Notes'), plain('Design', '$1,200', 'fixed')];
+  const html = (lastRow: string): string => ['<table>', '<tr><td>Item</td><td>Price</td><td>Notes</td></tr>', '<tr><td>Design</td><td>$1,200</td><td>fixed</td></tr>', lastRow, '</table>'].join('\n');
+  const mergedTotal: TableSpec['rows'][number] = { cells: [{ text: 'Total', style: { columnSpan: 2 } }, { text: '' }, { text: '' }] };
+
+  it('a new colspan is a mergeTableCells, and the head cell is not retyped when its words are what the merge left', async () => {
+    const before = withRows(...THREE, plain('Total', '', ''));
+    const { clients, batchUpdate } = clientsFor(before, { afterStructure: withRows(...THREE, mergedTotal) });
+    await editDoc(clients, 'd', renderMarkdown(before), html('<tr><td colspan="2">Total</td><td></td></tr>'));
+    expect(batchKinds(batchUpdate)[0]).toEqual(['mergeTableCells']);
+    expect(allRequests(batchUpdate)[0].mergeTableCells!.tableRange).toMatchObject({ tableCellLocation: { rowIndex: 2, columnIndex: 0 }, rowSpan: 1, columnSpan: 2 });
+    expect(typed(batchUpdate)).toEqual([]);
+  });
+
+  it('the head cell is retyped when the merge joined words that are not the new words', async () => {
+    const before = withRows(...THREE, plain('Total', '$4,200', ''));
+    const joined: TableSpec['rows'][number] = { cells: [{ text: ['Total', '$4,200'], style: { columnSpan: 2 } }, { text: '' }, { text: '' }] };
+    const { clients, batchUpdate } = clientsFor(before, { afterStructure: withRows(...THREE, joined) });
+    await editDoc(clients, 'd', renderMarkdown(before), html('<tr><td colspan="2">Total</td><td></td></tr>'));
+    expect(batchKinds(batchUpdate)[0]).toEqual(['mergeTableCells']);
+    expect(typed(batchUpdate)).toEqual(['Total']);
+  });
+
+  it('a removed colspan is an unmergeTableCells, then the cell it freed is typed', async () => {
+    const before = withRows(...THREE, mergedTotal);
+    const { clients, batchUpdate } = clientsFor(before, { afterStructure: withRows(...THREE, plain('Total', '', '')) });
+    await editDoc(clients, 'd', renderMarkdown(before), html('<tr><td>Total</td><td>$4,200</td><td></td></tr>'));
+    expect(batchKinds(batchUpdate)[0]).toEqual(['unmergeTableCells']);
+    expect(typed(batchUpdate)).toEqual(['$4,200']);
+  });
+});
+
+describe('a change that cannot be read cleanly is refused and nothing is sent (#62 rule 7)', () => {
+  it('a row that could be an edit of two different new rows', async () => {
+    const { clients, batchUpdate } = clientsFor(withRows(PRICES[0], PRICES[1], PRICES[3]));
+    await expect(editDoc(clients, 'd', pipe('Design', '$1,200'), `${pipe('Design', '$900')}\n${pipe('Fee', '$1,200')}`)).rejects.toThrow(/one row at a time/);
+    expect(batchUpdate).not.toHaveBeenCalled();
+  });
+
+  it('a table that shares nothing with the new one', async () => {
+    const { clients, batchUpdate } = clientsFor(withRows(plain('a', 'b')));
+    await expect(editDoc(clients, 'd', `${pipe('a', 'b')}\n| --- | --- |`, `${pipe('x', 'y')}\n| --- | --- |\n${pipe('z', 'w')}`)).rejects.toThrow(/shares no/);
+    expect(batchUpdate).not.toHaveBeenCalled();
+  });
+
+  it('a table that Docs did not leave the shape the edit asked for is reported, not typed into', async () => {
+    const { clients, batchUpdate } = clientsFor(bodyDocWithTable({ rows: [plain('a'), plain('b')], columns: FIXED }));
+    await expect(editDoc(clients, 'd', '<tr><td>b</td></tr>', '<tr><td>b</td></tr>\n<tr><td>c</td></tr>')).rejects.toThrow(/2 x 1, not the 3 x 1/);
+    expect(typed(batchUpdate)).toEqual([]);
+  });
+});
+
+describe('a table in a header behaves the same (#62 rule 9)', () => {
+  it('an added row is an insertTableRow addressed to the header, and the new cells are typed in it', async () => {
+    const before = headerDocWithTable({ rows: [plain('Name', 'Phone'), plain('Ann', '1')], columns: TWO_FIXED });
+    const after = headerDocWithTable({ rows: [plain('Name', 'Phone'), plain('Ann', '1'), plain('', '')], columns: TWO_FIXED });
+    const { clients, batchUpdate } = clientsFor(before, { afterStructure: after });
+    const result = await editDoc(clients, 'd', '<tr><td>Ann</td><td>1</td></tr>', '<tr><td>Ann</td><td>1</td></tr>\n<tr><td>Bob</td><td>2</td></tr>', { segment: 'header' });
+    expect(result.status).toBe('ok');
+    expect(allRequests(batchUpdate)[0].insertTableRow).toMatchObject({ tableCellLocation: { tableStartLocation: { index: 0, segmentId: 'h1' }, rowIndex: 1 }, insertBelow: true });
+    expect(allRequests(batchUpdate).filter((r) => r.insertText).map((r) => r.insertText!.location!.segmentId)).toEqual(['h1', 'h1']);
+    expect(allRequests(batchUpdate).some((r) => r.deleteContentRange)).toBe(false);
   });
 });

@@ -4,11 +4,12 @@ import type { EditResult } from './edit.js';
 import { contentOf, writeControlFor } from './structure.js';
 import { renderTableMarkup, readTableLayout } from './transformer.js';
 import { parseBlocks, buildContentRequests, cellBlocksOf, clearDirectRunStyling, type CellBlock } from './write.js';
-import { placeCells, type LayoutCell, type Placement, type TableLayout } from './table-layout.js';
-import { lookOf, lookRequests } from './table-write.js';
+import { placeCells, effectiveGrid, type LayoutCell, type Placement, type TableLayout } from './table-layout.js';
+import { lookOf, lookRequests, structureRequests } from './table-write.js';
+import { compareTables, plainTextOf, type TableComparison } from './table-compare.js';
+import { refusal } from './table-pairing.js';
 import { parseInline, segmentTextStyle } from './inline.js';
-import { paragraphCssChange, paragraphStyleUpdate, StyleSyntaxError } from './css.js';
-import { renderMarkdownInto } from './render.js';
+import { paragraphCssChange, paragraphStyleUpdate } from './css.js';
 
 const TABLE_MARKUP_TAG = /(?<!\\)<\/?(?:table|thead|tbody|tr|td|th|col)\b/i;
 const CONTEXT = 30;
@@ -66,9 +67,11 @@ function matchesFor(tables: TableInDoc[], { oldString, newString }: TableEditInp
   return [];
 }
 
+const withoutBlankLine = (markup: string): string => markup.replace(/\n\n(?=<tr|\|)/g, '\n');
+
 function editedMarkup({ found, at, needle, replacement }: Match, replaceAll: boolean | undefined): string {
-  if (replaceAll) return found.markup.split(needle).join(replacement);
-  return found.markup.slice(0, at[0]) + replacement + found.markup.slice(at[0] + needle.length);
+  const edited = replaceAll ? found.markup.split(needle).join(replacement) : found.markup.slice(0, at[0]) + replacement + found.markup.slice(at[0] + needle.length);
+  return replacement === '' ? withoutBlankLine(edited) : edited;
 }
 
 function pipeLayout(rows: string[][], aligns: (string | null)[]): TableLayout {
@@ -83,10 +86,6 @@ function pipeLayout(rows: string[][], aligns: (string | null)[]): TableLayout {
     columns: Array.from({ length: columnCount }, () => ({ css: {} })),
     rows: rows.map((row) => ({ css: {}, pinned: false, cells: Array.from({ length: columnCount }, (_, c) => cellOf(row[c] ?? '', c)) })),
   };
-}
-
-function structureError(message: string): StyleSyntaxError {
-  return new StyleSyntaxError([message], new Set([message]));
 }
 
 const TABLE_CLOSE = /<\/table\s*>/gi;
@@ -110,24 +109,16 @@ function layoutAfterEdit(markup: string): TableLayout {
   const blocks = parseBlocks(markup);
   const [only] = blocks;
   if (blocks.length !== 1 || only.type !== 'table') {
-    throw structureError(
+    throw refusal(
       `old_string and new_string must stay inside one table. The edit leaves ${blocks.map((b) => b.type).join(', ') || 'nothing'} where the table was. Quote the table markup from read_doc: a row, </table>, or the whole table.`,
     );
   }
   return only.layout ?? pipeLayout(only.rows, only.aligns);
 }
 
-const mergesOf = (placement: Placement): string =>
-  JSON.stringify(placement.cells.filter(({ cell }) => cell.colspan > 1 || cell.rowspan > 1).map(({ row, column, cell }) => [row, column, cell.rowspan, cell.colspan]));
-
-const sameShape = (before: Placement, after: Placement): boolean =>
-  before.rowCount === after.rowCount && before.columnCount === after.columnCount && mergesOf(before) === mergesOf(after);
-
 function signatureOf(blocks: CellBlock[]): string {
   return JSON.stringify(blocks.map((block) => (block.type === 'list' ? { ...block, items: block.items.map((item) => ({ level: item.level, text: parseInline(item.text) })) } : { ...block, text: parseInline(block.text) })));
 }
-
-const plainTextOf = (text: string): string => parseInline(text).map((segment) => segment.text).join('');
 
 function onlyParagraph(blocks: CellBlock[]): Extract<CellBlock, { type: 'paragraph' }> | undefined {
   return blocks.length === 1 && blocks[0].type === 'paragraph' ? blocks[0] : undefined;
@@ -187,7 +178,8 @@ function cellRequests(
   return { start: range.start, requests: [...deletion, ...retyped.requests] };
 }
 
-function surgicalRequests(found: TableInDoc, before: TableLayout, after: TableLayout, placements: { before: Placement; after: Placement }, tabId: string | undefined, segmentId: string | undefined): docs_v1.Schema$Request[] {
+function surgicalRequests(found: TableElementAndTable, before: TableLayout, after: TableLayout, tabId: string | undefined, segmentId: string | undefined): docs_v1.Schema$Request[] {
+  const placements = { before: placeCells(before), after: placeCells(after) };
   const site = { tableStart: found.element.startIndex ?? 0, tabId, segmentId };
   const requests = lookRequests(lookOf(before, placements.before), lookOf(after, placements.after), site);
   const afterAt = new Map(placements.after.cells.map((placed) => [`${placed.row},${placed.column}`, placed.cell]));
@@ -200,11 +192,79 @@ function surgicalRequests(found: TableInDoc, before: TableLayout, after: TableLa
   return [...requests, ...changes.sort((a, b) => b.start - a.start).flatMap((change) => change.requests)];
 }
 
+type TableElementAndTable = Pick<TableInDoc, 'element' | 'table'>;
+
+function withNeighbourStyle(after: TableLayout, comparison: TableComparison): TableLayout {
+  const placement = placeCells(after);
+  const grid = effectiveGrid(after, placement);
+  const { rows: rowSource, columns: columnSource } = comparison.styleSource;
+  const positionOf = new Map(placement.cells.map((placed) => [placed.cell, placed]));
+  const copiedHeight = (r: number): number | undefined => after.rows[r].height ?? (rowSource[r] === undefined ? undefined : after.rows[rowSource[r] as number].height);
+  return {
+    ...after,
+    columns: Array.from({ length: placement.columnCount }, (_, c) => {
+      const column = after.columns[c] ?? { css: {} };
+      const source = columnSource[c];
+      return source === undefined ? column : { ...column, width: column.width ?? after.columns[source]?.width };
+    }),
+    rows: after.rows.map((row, r) => ({
+      ...row,
+      height: copiedHeight(r),
+      cells: row.cells.map((cell) => {
+        const at = positionOf.get(cell) as { row: number; column: number };
+        const fromRow = rowSource[at.row];
+        const fromColumn = columnSource[at.column];
+        if (fromRow === undefined && fromColumn === undefined) return cell;
+        const neighbour = grid[fromRow ?? at.row][fromColumn ?? at.column] ?? {};
+        const written = { ...(fromRow === undefined ? {} : row.css), ...(fromColumn === undefined ? {} : after.columns[at.column]?.css), ...cell.css };
+        return { ...cell, css: { ...neighbour, ...written } };
+      }),
+    })),
+  };
+}
+
+function tableStartingAt(doc: docs_v1.Schema$Document, startIndex: number, tabId: string | undefined, segmentId: string | undefined): TableElementAndTable {
+  const element = contentOf(doc, tabId, segmentId).find((el) => el.table && el.startIndex === startIndex);
+  if (!element?.table) throw new Error(`The table that began at index ${startIndex} is no longer there after the rows and columns were changed. Read the doc again to see what it holds now.`);
+  return { element, table: element.table };
+}
+
+const mergesOf = (placement: Placement): string =>
+  JSON.stringify(placement.cells.filter(({ cell }) => cell.colspan > 1 || cell.rowspan > 1).map(({ row, column, cell }) => [row, column, cell.rowspan, cell.colspan]));
+
+function requireExpectedShape(read: TableLayout, expected: TableLayout): void {
+  const got = placeCells(read);
+  const wanted = placeCells(expected);
+  if (got.rowCount !== wanted.rowCount || got.columnCount !== wanted.columnCount || mergesOf(got) !== mergesOf(wanted)) {
+    throw new Error(
+      `After the rows and columns were changed the table is ${got.rowCount} x ${got.columnCount}, not the ${wanted.rowCount} x ${wanted.columnCount} the edit asked for, and its cells were not typed. Read the doc to see what it holds now.`,
+    );
+  }
+}
+
+interface PreparedEdit {
+  match: Match;
+  around: TableAndNeighbours;
+  before: TableLayout;
+  after: TableLayout;
+  comparison: TableComparison;
+}
+
+function prepareEdit(doc: docs_v1.Schema$Document, match: Match, input: TableEditInput): PreparedEdit {
+  const around = splitAroundTable(editedMarkup(match, input.replaceAll));
+  parseBlocks(`${around.before}\n\n${around.after}`);
+  const after = layoutAfterEdit(around.table);
+  const before = readTableLayout(doc, match.found.table, { tabId: input.tabId });
+  return { match, around, before, after, comparison: compareTables(before, after) };
+}
+
 /**
  * An edit whose old_string quotes a table's markup. The edited markup is read as
- * a table, compared with the table as it is, and only the difference is sent: a
- * cell whose words are unchanged is never retyped, so a style change sends style
- * requests alone. A change in rows, columns or merges replaces the whole table.
+ * a table and compared with the table as it is, and only the difference is sent:
+ * rows, columns and merges by their own requests (a row or column the edit moves
+ * is a delete and an insert), then
+ * the text and style of the cells that differ. A cell whose words are unchanged
+ * is never retyped, and no table is ever rewritten whole.
  */
 export async function editTableMarkup(clients: GoogleClients, documentId: string, doc: docs_v1.Schema$Document, input: TableEditInput): Promise<EditResult> {
   const { tabId, segmentId } = input;
@@ -219,43 +279,38 @@ export async function editTableMarkup(clients: GoogleClients, documentId: string
     const contexts = matches.flatMap((m) => m.at.map((i) => ({ context: `…${m.found.markup.slice(Math.max(0, i - CONTEXT), i)}⟦${m.needle}⟧${m.found.markup.slice(i + m.needle.length, i + m.needle.length + CONTEXT)}…`.replace(/\n/g, '⏎') })));
     return { status: 'ambiguous', message: `${total} matches — add surrounding context, or set replace_all.`, matches: contexts };
   }
-  const edits = matches
-    .map((match) => {
-      const around = splitAroundTable(editedMarkup(match, input.replaceAll));
-      parseBlocks(`${around.before}\n\n${around.after}`);
-      return { match, around, after: layoutAfterEdit(around.table) };
-    })
-    .sort((a, b) => (b.match.found.element.startIndex ?? 0) - (a.match.found.element.startIndex ?? 0));
+  const edits = matches.map((match) => prepareEdit(doc, match, input)).sort((a, b) => (b.match.found.element.startIndex ?? 0) - (a.match.found.element.startIndex ?? 0));
   if (edits.length > 1 && edits.some(({ around }) => around.before || around.after)) {
-    throw structureError('replace_all cannot add blocks next to a table: it matches more than one table. Quote one table with enough context to be unique.');
+    throw refusal('replace_all cannot add blocks next to a table: it matches more than one table. Quote one table with enough context to be unique.');
   }
   let changed = 0;
   let revisionId = doc.revisionId ?? undefined;
+  const send = async (requests: docs_v1.Schema$Request[]): Promise<void> => {
+    if (requests.length === 0) return;
+    await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests, writeControl: writeControlFor(revisionId) } });
+    revisionId = undefined;
+    changed++;
+  };
   const insertNextToTable = async (side: BlockSide, found: TableInDoc, markdown: string): Promise<void> => {
     if (!markdown) return;
     await input.insertBlocks(side, found.element, markdown, revisionId);
     revisionId = undefined;
     changed++;
   };
-  for (const { match, around, after } of edits) {
+  for (const { match, around, before, after, comparison } of edits) {
     const { found } = match;
     await insertNextToTable('after', found, around.after);
-    const before = readTableLayout(doc, found.table, { tabId });
-    const placements = { before: placeCells(before), after: placeCells(after) };
-    if (sameShape(placements.before, placements.after)) {
-      const requests = surgicalRequests(found, before, after, placements, tabId, segmentId);
-      if (requests.length > 0) {
-        await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests, writeControl: writeControlFor(revisionId) } });
-        revisionId = undefined;
-        changed++;
-      }
+    if (comparison.operations.length === 0) {
+      await send(surgicalRequests(found, before, after, tabId, segmentId));
     } else {
-      const replacement = around.table;
-      const start = found.element.startIndex ?? 0;
-      const preRequests: docs_v1.Schema$Request[] = [{ deleteContentRange: { range: { startIndex: start, endIndex: found.element.endIndex ?? start, tabId, segmentId } } }];
-      await renderMarkdownInto(clients, documentId, replacement, { tabId, segmentId, baseDir: input.baseDir, preRequests, requiredRevisionId: revisionId, startIndex: start, resetParagraphStyles: true, startsParagraph: true });
-      revisionId = undefined;
-      changed++;
+      const tableStart = found.element.startIndex ?? 0;
+      await send(structureRequests(comparison.operations, { tableStart, tabId, segmentId }));
+      const fresh = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
+      const freshTable = tableStartingAt(fresh, tableStart, tabId, segmentId);
+      const freshLayout = readTableLayout(fresh, freshTable.table, { tabId });
+      const wanted = withNeighbourStyle(after, comparison);
+      requireExpectedShape(freshLayout, wanted);
+      await send(surgicalRequests(freshTable, freshLayout, wanted, tabId, segmentId));
     }
     await insertNextToTable('before', found, around.before);
   }

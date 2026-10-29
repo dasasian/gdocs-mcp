@@ -3,6 +3,7 @@ import { patchBetween, cellStyleUpdate, type CellCss, type CellPatch } from './t
 import { effectiveGrid, type Placement, type TableLayout } from './table-layout.js';
 import { buildContentRequests, cellBlocksOf } from './write.js';
 import { contentOf } from './structure.js';
+import type { CellRef, Span, StructureOperation } from './table-compare.js';
 
 export interface TableSite {
   tableStart: number;
@@ -117,6 +118,30 @@ export function mergeRequests(placement: Placement, site: TableSite): docs_v1.Sc
       },
     }));
 }
+
+const cellLocation = (site: TableSite, ref: CellRef): docs_v1.Schema$TableCellLocation => ({ tableStartLocation: location(site), rowIndex: ref.row, columnIndex: ref.column });
+
+const tableRangeOf = (site: TableSite, span: Span): docs_v1.Schema$TableRange => ({ tableCellLocation: cellLocation(site, span), rowSpan: span.rowSpan, columnSpan: span.columnSpan });
+
+function structureRequest(operation: StructureOperation, site: TableSite): docs_v1.Schema$Request {
+  switch (operation.kind) {
+    case 'unmerge':
+      return { unmergeTableCells: { tableRange: tableRangeOf(site, operation.span) } };
+    case 'merge':
+      return { mergeTableCells: { tableRange: tableRangeOf(site, operation.span) } };
+    case 'deleteRow':
+      return { deleteTableRow: { tableCellLocation: cellLocation(site, operation.at) } };
+    case 'deleteColumn':
+      return { deleteTableColumn: { tableCellLocation: cellLocation(site, operation.at) } };
+    case 'insertRow':
+      return { insertTableRow: { tableCellLocation: cellLocation(site, operation.at), insertBelow: operation.below } };
+    case 'insertColumn':
+      return { insertTableColumn: { tableCellLocation: cellLocation(site, operation.at), insertRight: operation.right } };
+  }
+}
+
+/** The requests for a comparison's operations, in the order given: each addresses the table as the ones before it leave it. */
+export const structureRequests = (operations: StructureOperation[], site: TableSite): docs_v1.Schema$Request[] => operations.map((operation) => structureRequest(operation, site));
 
 /** The requests that take a table from one look to another. A cell that already looks right gets nothing. Neighbours that change the same way share one request. */
 export function lookRequests(before: TableLook, after: TableLook, site: TableSite): docs_v1.Schema$Request[] {

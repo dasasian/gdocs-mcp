@@ -492,8 +492,13 @@ async function applyBlockEdit(context: BlockEditContext, matched: DocRange, side
   });
 }
 
+const holdsOnlyTableRows = (text: string): boolean => {
+  const lines = text.split('\n').filter((line) => !isBlank(line));
+  return lines.length > 0 && lines.every(isTableRow);
+};
+
 const quotesTable = (oldString: string, newString: string): boolean =>
-  mentionsTableMarkup(oldString) || (mentionsTableMarkup(newString) && oldString.split('\n').some(isTableRow));
+  mentionsTableMarkup(oldString) || (mentionsTableMarkup(newString) && oldString.split('\n').some(isTableRow)) || (holdsOnlyTableRows(oldString) && (holdsOnlyTableRows(newString) || isBlank(newString)));
 
 const EMPTY_CONTENT_MESSAGE = 'There is nothing here to anchor an edit: the doc, tab or header/footer is empty. Use write_doc to write it.';
 
