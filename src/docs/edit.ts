@@ -11,6 +11,7 @@ import { parseStyleBlock, namedStyleRequests, styleRulesOf, renderStyleBlock } f
 import { clearDirectRunStyling, pageBreakRequests, parseBlocks, holdsBlockMarkdown, isTableRow, isTableSep, splitRow } from './write.js';
 import { renderMarkdownInto } from './render.js';
 import { parsePageBreakLine } from './page-break.js';
+import { editTableMarkup, mentionsTableMarkup } from './table-edit.js';
 
 export interface EditResult {
   status: 'ok' | 'not_found' | 'ambiguous' | 'no_segment';
@@ -491,6 +492,9 @@ async function applyBlockEdit(context: BlockEditContext, matched: DocRange, side
   });
 }
 
+const quotesTable = (oldString: string, newString: string): boolean =>
+  mentionsTableMarkup(oldString) || (mentionsTableMarkup(newString) && oldString.split('\n').some(isTableRow));
+
 const EMPTY_CONTENT_MESSAGE = 'There is nothing here to anchor an edit: the doc, tab or header/footer is empty. Use write_doc to write it.';
 
 export async function editDoc(
@@ -513,6 +517,13 @@ export async function editDoc(
     return editStyleBlock(clients, documentId, block, oldString, newString, tabId, revisionId);
   }
   if (isEmptyContent(res.data, tabId, segmentId)) throw new Error(EMPTY_CONTENT_MESSAGE);
+
+  if (quotesTable(oldString, newString)) {
+    return editTableMarkup(clients, documentId, res.data, { oldString, newString, replaceAll: opts.replaceAll, tabId, segmentId, baseDir: opts.baseDir });
+  }
+  if (mentionsTableMarkup(newString) && !holdsBlockMarkdown(newString)) {
+    throw new StyleSyntaxError(['new_string holds table tags, but old_string does not quote a table. Quote the table markup from read_doc in old_string, or write a whole <table> block.']);
+  }
 
   const located = locate(proj.text, oldString);
   const { needle, positions } = located;
