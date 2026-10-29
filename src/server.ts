@@ -7,9 +7,9 @@ import { listSuggestions, applySuggestions } from './docs/suggestions.js';
 import { listComments, addComment, replyComment, resolveComment } from './drive/comments.js';
 import { readDoc } from './docs/read.js';
 import { editDoc } from './docs/edit.js';
-import { insertContent, writeDoc, resolveContentSource } from './docs/document.js';
+import { writeDoc, resolveContentSource } from './docs/document.js';
 import { setPageSetup, getPageSetup } from './docs/page.js';
-import { insertImage, insertTable, insertRow, deleteRow, insertColumn, deleteColumn, setTableStyle, getTableStyle } from './docs/objects.js';
+import { insertRow, deleteRow, insertColumn, deleteColumn, setTableStyle, getTableStyle } from './docs/objects.js';
 import { listPermissions, shareDoc, unshareDoc, setLinkAccess } from './drive/sharing.js';
 import { driveShell } from './drive/shell.js';
 import { downloadImages } from './drive/images.js';
@@ -126,20 +126,27 @@ export function createServer(options: ServerOptions = {}): McpServer {
     {
       title: 'Edit a Google Doc',
       description:
-        'Replace an exact unique snippet of text in a Google Doc (like a local file Edit). old_string is matched markup-tolerantly; ambiguous matches return surrounding context to disambiguate. new_string is interpreted as inline markdown and inline HTML (**bold**, *italic*, `code`, [text](url), `<u>`, `<span style="color:…;font-size:…pt">`, `<p style="…">`, `<p class="title">`, and a page break as a line of its own: `<div style="page-break-after:always"></div>`, so new_string `Title page\\n<div style="page-break-after:always"></div>` puts what follows on a new page; old_string can span a break) — the same spelling read_doc emits, so a read can be edited and written back. STYLE IS CSS, and this is the only way to change it. Restyle text you are not otherwise changing by giving the same words with different markup: old_string `<p>4. Term`, new_string `<p style="margin-left:36pt; text-indent:-18pt">4. Term` sends only style requests — no delete, no insert, so a long paragraph is never retyped and its words cannot change; markup missing from new_string is cleared (drop the wrapper to remove an indent). To restyle a whole named style, edit its rule in read_doc’s <style> block: old_string `p { font-family: Arial; font-size: 11pt`, new_string `p { font-family: Arial; font-size: 12pt` becomes one updateNamedStyle and every paragraph that does not override it follows. An unsupported property (border, float, a px length, a typo) fails the edit before any request is sent, listing every offending line and the supported set. NOTE: this is a direct edit — the change is applied as live text, not a tracked suggestion (the Docs API cannot create suggestions). If the doc has pending suggestions from other reviewers, flag to the user that your edit will sit alongside them as an accepted change.',
+        'Replace an exact unique snippet of text in a Google Doc (like a local file Edit). old_string is matched markup-tolerantly; ambiguous matches return surrounding context to disambiguate; a table is matched as its markdown rows. INSERTING IS AN EDIT: quote the text to add after (or before), write it back in new_string, and add the new content to it. Text from old_string that comes back unchanged is kept as it is, with its style, comments and suggestions, so old_string `| Total | $4,200 |` and new_string `| Total | $4,200 |\\n\\nPayment due within 30 days.` leaves the table alone and adds the paragraph after it; a match that ends in a table puts the new blocks after the whole table. An anchor in the middle of a paragraph splits the paragraph there. A new block carries its own style, not its anchor’s: a paragraph added after a heading, a Title or a list item is Normal text with no bullet unless the markdown says otherwise, while text added inside an existing paragraph keeps that paragraph’s style. An empty doc, tab, header or footer has nothing to anchor on: use write_doc. new_string is the same markdown and inline HTML write_doc takes: headings, lists, tables, images (`<img src width height>` or `![alt](src)`; a centered one is `<p style="text-align:center"><img …></p>`, local files resolve against baseDir), page breaks, and inline constructs (**bold**, *italic*, `code`, [text](url), `<u>`, `<span style="color:…;font-size:…pt">`, `<p style="…">`, `<p class="title">`, and a page break as a line of its own: `<div style="page-break-after:always"></div>`, so new_string `Title page\\n<div style="page-break-after:always"></div>` puts what follows on a new page; old_string can span a break) — the same spelling read_doc emits, so a read can be edited and written back. STYLE IS CSS, and this is the only way to change it. Restyle text you are not otherwise changing by giving the same words with different markup: old_string `<p>4. Term`, new_string `<p style="margin-left:36pt; text-indent:-18pt">4. Term` sends only style requests — no delete, no insert, so a long paragraph is never retyped and its words cannot change; markup missing from new_string is cleared (drop the wrapper to remove an indent). To restyle a whole named style, edit its rule in read_doc’s <style> block: old_string `p { font-family: Arial; font-size: 11pt`, new_string `p { font-family: Arial; font-size: 12pt` becomes one updateNamedStyle and every paragraph that does not override it follows. An unsupported property (border, float, a px length, a typo) fails the edit before any request is sent, listing every offending line and the supported set. NOTE: this is a direct edit — the change is applied as live text, not a tracked suggestion (the Docs API cannot create suggestions). If the doc has pending suggestions from other reviewers, flag to the user that your edit will sit alongside them as an accepted change.',
       inputSchema: {
         path: tabPathArg,
         old_string: z.string().describe('exact text to replace (quote a unique slice from read_doc)'),
-        new_string: z.string().describe('replacement text'),
+        new_string: z.string().optional().describe('replacement markdown (or use contentFile)'),
+        contentFile: z
+          .string()
+          .optional()
+          .describe('path to a local markdown/text file to use as new_string, read directly by the server — preferred for long text. Absolute, or relative to baseDir. Mutually exclusive with new_string.'),
+        baseDir: z.string().optional().describe('absolute dir to resolve relative local image paths and contentFile against'),
         replace_all: z.boolean().optional().describe('replace every occurrence (default false)'),
         ...segmentArg,
         ...accountArg,
       },
     },
-    async ({ path, old_string, new_string, replace_all, segment, page, account }) => {
+    async ({ path, old_string, new_string, contentFile, baseDir, replace_all, segment, page, account }) => {
       const clients = await clientsForAccount(account);
       const target = await resolveTab(clients, path);
-      const result = await editDoc(clients, target.documentId, old_string, new_string, { replaceAll: replace_all, tabId: target.tabId, segment, page });
+      const src = await resolveContentSource({ content: new_string, contentFile, baseDir });
+      if (src.content === undefined) throw new Error('Provide new_string or contentFile.');
+      const result = await editDoc(clients, target.documentId, old_string, src.content, { replaceAll: replace_all, tabId: target.tabId, segment, page, baseDir: src.baseDir });
       return json(result.status === 'ok' ? { ...result, note: DIRECT_EDIT_NOTE } : result);
     },
   );
@@ -204,68 +211,6 @@ export function createServer(options: ServerOptions = {}): McpServer {
       const clients = await clientsForAccount(account);
       const target = await resolveTab(clients, path);
       return json(await downloadImages(clients, target.documentId, dir, target.tabId));
-    },
-  );
-
-  server.registerTool(
-    'insert_image',
-    {
-      title: 'Insert an image',
-      description:
-        'Insert an inline image from a public URL or a local file (uploaded to Drive, embedded, then the temp upload removed). Position via at (top/end/or a unique text anchor), size via width/height (points), and align left/center/right. Set segment:"header" for a letterhead logo — that is where a repeating, correctly-sized logo belongs, and it is why a template’s logo is invisible to a body read. A direct edit, not a tracked suggestion. Note: floating/text-wrapped images are not supported by the Docs API.',
-      inputSchema: {
-        path: tabPathArg,
-        uri: z.string().describe('public image URL, or a path to a local image file (absolute, or relative to baseDir)'),
-        at: z.string().optional().describe('"top", "end", or a unique text snippet to insert after (default top)'),
-        width: z.number().optional().describe('points'),
-        height: z.number().optional().describe('points'),
-        align: z.enum(['left', 'center', 'right']).optional(),
-        baseDir: z.string().optional().describe('absolute dir to resolve a relative local `uri` against'),
-        ...segmentArg,
-        createSegment: z
-          .boolean()
-          .optional()
-          .describe('when segment is header/footer and the doc has none, create it first (the letterhead case). Only the default header/footer can be created via the API.'),
-        ...accountArg,
-      },
-    },
-    async ({ path, uri, at, width, height, align, baseDir, segment, page, createSegment, account }) => {
-      const clients = await clientsForAccount(account);
-      const target = await resolveTab(clients, path);
-      return json(await insertImage(clients, target.documentId, uri, { at, width, height, align, baseDir, tabId: target.tabId, segment, page, createSegment }));
-    },
-  );
-
-  server.registerTool(
-    'insert_table',
-    {
-      title: 'Insert a table',
-      description:
-        'Insert a rows×columns table, optionally populated from a 2D array of cell text — cell text may use inline markdown (**bold**, *italic*, `code`, [links](url)). Per-column alignment via align. Position via at (top/end/or a unique text anchor, default end). A direct edit, not a tracked suggestion.',
-      inputSchema: {
-        path: tabPathArg,
-        rows: z.number().int().positive(),
-        columns: z.number().int().positive(),
-        data: z.array(z.array(z.string())).optional().describe('row-major cell text, e.g. [["A","B"],["1","2"]]'),
-        columnWidths: z.array(z.number()).optional().describe('fixed width per column, in points'),
-        headerShade: z.string().optional().describe('hex background color for the first row, e.g. #f1f3f4'),
-        align: z
-          .array(z.enum(['left', 'center', 'right', 'justify']).nullable())
-          .optional()
-          .describe('per-column text alignment, e.g. ["left","right"]; null or "left" leaves a column at the default'),
-        at: z.string().optional().describe('"top", "end", or a unique text snippet to insert after (default end)'),
-        ...segmentArg,
-        createSegment: z
-          .boolean()
-          .optional()
-          .describe('when segment is header/footer and the doc has none, create it first. Only the default header/footer can be created via the API.'),
-        ...accountArg,
-      },
-    },
-    async ({ path, rows, columns, data, columnWidths, headerShade, align, at, segment, page, createSegment, account }) => {
-      const clients = await clientsForAccount(account);
-      const target = await resolveTab(clients, path);
-      return json(await insertTable(clients, target.documentId, rows, columns, { at, tabId: target.tabId, data, columnWidths, headerShade, align, segment, page, createSegment }));
     },
   );
 
@@ -371,42 +316,6 @@ export function createServer(options: ServerOptions = {}): McpServer {
   );
 
   server.registerTool(
-    'insert_content',
-    {
-      title: 'Insert content at a position',
-      description:
-        'Insert NEW markdown-rendered content at a structural position — no anchor text required. `at`: "end" (default, the end of the doc/tab) · "top" · a unique text snippet to insert immediately after. Use this where edit_doc can\u2019t reach: adding a paragraph after a table that ends the doc (a table\u2019s cells can\u2019t anchor an insert outside the table, and the trailing empty paragraph has no text to match), or appending to an empty doc. Use edit_doc instead when you are replacing or extending existing text. Content is full markdown (headings, lists, tables, images, page breaks as <div style="page-break-after:always"></div> on a line of their own), same renderer as write_doc. Style is CSS, in the spelling read_doc emits: a leading <style> block sets the named styles (p, h1–h6, .title, .subtitle), <p style="…"> / <hN style="…"> / <p class="title"> style a paragraph, <span style="…"> a run. Supported: text-align, line-height, margin-top/bottom/left/right, text-indent (pt; text-indent is relative to margin-left), and on spans/rules font-family, font-size, font-weight, font-style, text-decoration, color. Any other property fails the whole write before anything is sent, listing every offending line. A direct edit, not a tracked suggestion.',
-      inputSchema: {
-        path: tabPathArg,
-        content: z.string().optional().describe('markdown content to insert (or use contentFile)'),
-        contentFile: z
-          .string()
-          .optional()
-          .describe('path to a local markdown/text file to insert, read directly by the server \u2014 preferred for long content. Absolute, or relative to baseDir. Mutually exclusive with content.'),
-        at: z
-          .string()
-          .optional()
-          .describe('"end" (default) | "top" | a unique text snippet to insert right after'),
-        ...segmentArg,
-        createSegment: z
-          .boolean()
-          .optional()
-          .describe('when segment is header/footer and the doc has none, create it first (the letterhead case). Only the default header/footer can be created via the API.'),
-        baseDir: z.string().optional().describe('absolute dir to resolve relative local image paths against'),
-        ...accountArg,
-      },
-    },
-    async ({ path, content, contentFile, at, segment, page, createSegment, baseDir, account }) => {
-      const clients = await clientsForAccount(account);
-      const target = await resolveTab(clients, path);
-      const src = await resolveContentSource({ content, contentFile, baseDir });
-      if (src.content === undefined) throw new Error('Provide content or contentFile.');
-      const result = await insertContent(clients, target.documentId, src.content, { at, tabId: target.tabId, baseDir: src.baseDir, segment, page, createSegment });
-      return json(result.status === 'ok' ? { ...result, note: DIRECT_EDIT_NOTE } : result);
-    },
-  );
-
-  server.registerTool(
     'export_doc',
     {
       title: 'Export a doc to a file',
@@ -436,7 +345,7 @@ export function createServer(options: ServerOptions = {}): McpServer {
     {
       title: 'Write a doc or a tab',
       description:
-        'Write markdown-rendered content to a path, like the local Write tool. A path that names nothing is CREATED and never asks, but only an absolute path (or a Drive id or URL start) creates: a bare name like Contract is refused with the full path to call. When the project has a default folder for new docs, a new doc at the top of My Drive (/Contract) is refused once too, with the default folder\u2019s full path to call, so the user is told where it goes first; the same call repeated goes through: /Work/Contract creates a doc in the folder /Work, /Work/Contract/Notes a tab in that doc, /Work/Contract/Part 2/Ch.4 a child tab under Part 2 (only the last step may be new; make the folder with drive mkdir first). A path that names something is REPLACED, and the first call is refused with a loss summary — the paragraphs of text and everything a read cannot carry that the replace would take with it: comments, suggestions, tab stops, person/date/link chips, links to bookmarks, section breaks, column breaks — plus a confirmLoss string. Ask the user before anything else — show them what would be lost and wait for a yes; never pass confirmLoss on your own. Only after their yes, call again with the same content and confirmLoss set to that string exactly. If the doc changed in between, the string no longer matches and the call is refused again with a fresh summary. A doc with several tabs needs a tab step (the refusal lists them); a doc with one tab means that tab. Replacing keeps the doc’s title, sharing and other tabs but the new paragraphs start unstyled, so anything not in the markdown (including indents) is gone; prefer edit_doc to change a document, which keeps everything its anchor does not cover. Style is CSS, in the spelling read_doc emits: a leading <style> block sets the named styles (p, h1–h6, .title, .subtitle), <p style="…"> / <hN style="…"> / <p class="title"> style a paragraph, <span style="…"> a run. Supported: text-align, line-height, margin-top/bottom/left/right, text-indent (pt; text-indent is relative to margin-left), and on spans/rules font-family, font-size, font-weight, font-style, text-decoration, color. Any other property fails the whole write before anything is sent, listing every offending line. A page break is <div style="page-break-after:always"></div> on a line of its own (also accepted: <hr style="page-break-before:always">, break-before: page, break-after: page); any other <div> or <hr> is refused. For long documents, pass contentFile instead of content so the server reads the body directly (retyping a long doc inline can silently drop text). Returns images ({src, objectId}) for pushed images. A direct edit, not a tracked suggestion.',
+        'Write markdown-rendered content to a path, like the local Write tool. A path that names nothing is CREATED and never asks, but only an absolute path (or a Drive id or URL start) creates: a bare name like Contract is refused with the full path to call. When the project has a default folder for new docs, a new doc at the top of My Drive (/Contract) is refused once too, with the default folder\u2019s full path to call, so the user is told where it goes first; the same call repeated goes through: /Work/Contract creates a doc in the folder /Work, /Work/Contract/Notes a tab in that doc, /Work/Contract/Part 2/Ch.4 a child tab under Part 2 (only the last step may be new; make the folder with drive mkdir first). A path that names something is REPLACED, and the first call is refused with a loss summary — the paragraphs of text and everything a read cannot carry that the replace would take with it: comments, suggestions, tab stops, person/date/link chips, links to bookmarks, section breaks, column breaks — plus a confirmLoss string. Ask the user before anything else — show them what would be lost and wait for a yes; never pass confirmLoss on your own. Only after their yes, call again with the same content and confirmLoss set to that string exactly. If the doc changed in between, the string no longer matches and the call is refused again with a fresh summary. A doc with several tabs needs a tab step (the refusal lists them); a doc with one tab means that tab. Nothing to lose, nothing to ask: an empty doc, tab, header or footer is written without the refusal. segment: "header" or "footer" writes the page header or footer of an existing doc instead of its body: a missing default one is created and written, an existing one with content is replaced after the same confirmLoss round-trip, and a missing first-page or even-page one (page: "first" / "even") is refused with the instruction to turn on Different first page in Docs. Replacing keeps the doc’s title, sharing and other tabs but the new paragraphs start unstyled, so anything not in the markdown (including indents) is gone; prefer edit_doc to change a document, which keeps everything its anchor does not cover. Style is CSS, in the spelling read_doc emits: a leading <style> block sets the named styles (p, h1–h6, .title, .subtitle), <p style="…"> / <hN style="…"> / <p class="title"> style a paragraph, <span style="…"> a run. Supported: text-align, line-height, margin-top/bottom/left/right, text-indent (pt; text-indent is relative to margin-left), and on spans/rules font-family, font-size, font-weight, font-style, text-decoration, color. Any other property fails the whole write before anything is sent, listing every offending line. A page break is <div style="page-break-after:always"></div> on a line of its own (also accepted: <hr style="page-break-before:always">, break-before: page, break-after: page); any other <div> or <hr> is refused. For long documents, pass contentFile instead of content so the server reads the body directly (retyping a long doc inline can silently drop text). Returns images ({src, objectId}) for pushed images. A direct edit, not a tracked suggestion.',
       inputSchema: {
         path: writePathArg,
         content: z.string().optional().describe('markdown content (or use contentFile)'),
@@ -451,14 +360,15 @@ export function createServer(options: ServerOptions = {}): McpServer {
           .optional()
           .describe('the confirmLoss string from the refusal, passed back exactly, after the user has agreed to what it lists. Never needed when creating.'),
         baseDir: z.string().optional().describe('absolute dir to resolve relative local image paths against (e.g. the markdown file’s folder)'),
+        ...segmentArg,
         ...accountArg,
       },
     },
-    async ({ path, content, contentFile, confirmLoss, baseDir, account }) => {
+    async ({ path, content, contentFile, confirmLoss, baseDir, segment, page, account }) => {
       const clients = await clientsForAccount(account);
       const src = await resolveContentSource({ content, contentFile, baseDir });
       if (src.content === undefined) throw new Error('Provide content or contentFile.');
-      return json(await writeDoc(clients, path, src.content, { confirmLoss, baseDir: src.baseDir, defaultFolder: findProjectConfig().folder, rootCreates }));
+      return json(await writeDoc(clients, path, src.content, { confirmLoss, baseDir: src.baseDir, defaultFolder: findProjectConfig().folder, rootCreates, segment, page }));
     },
   );
 

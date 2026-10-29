@@ -113,7 +113,7 @@ export async function listSuggestions(
 ): Promise<{ revisionId: string; title: string; suggestions: (Suggestion & { preview: string })[]; message?: string }> {
   const doc = await getDocInline(clients, documentId);
   const tabId = resolveTabId(doc, requestedTabId);
-  const seg = await resolveSegmentTarget(clients, documentId, doc, { segment: opts.segment, page: opts.page, tabId });
+  const seg = resolveSegmentTarget(doc, { segment: opts.segment, page: opts.page, tabId });
   if (seg.error) return { revisionId: doc.revisionId ?? '', title: doc.title ?? '', suggestions: [], message: seg.error };
   const suggestions = parseSuggestions(seg.doc, tabId, seg.segmentId).map((s) => ({ ...s, preview: formatSuggestionPreview(s) }));
   return { revisionId: doc.revisionId ?? '', title: doc.title ?? '', suggestions };
@@ -306,7 +306,7 @@ export async function applySuggestions(
   const tabId = resolveTabId(doc, requestedTabId);
   // Read and write must agree on the segment: indices are per-segment, so runs
   // collected from a header can only be written back with that header's id.
-  const seg = await resolveSegmentTarget(clients, documentId, doc, { segment: opts.segment, page: opts.page, tabId });
+  const seg = resolveSegmentTarget(doc, { segment: opts.segment, page: opts.page, tabId });
   if (seg.error) return { status: 'no_segment', errors: [seg.error] };
   const segmentId = seg.segmentId;
   const suggestions = parseSuggestions(seg.doc, tabId, segmentId);

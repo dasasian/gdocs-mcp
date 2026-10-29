@@ -8,6 +8,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Breaking
 
+> **Three tools are removed and two change shape (#60): inserting becomes an edit.** `insert_content`, `insert_table` and `insert_image` go, and `createSegment` goes from every tool. `edit_doc`'s `new_string` takes the full markdown, and `write_doc` takes `segment`. 25 tools become 22.
+
+| Removed | Use instead |
+|---|---|
+| `insert_content(path, content, at)` | `edit_doc` with the anchor written back and the new content after it: `old_string` `Scope`, `new_string` `Scope\n\nNew paragraph`. `contentFile` and `baseDir` work as in `write_doc`. Into an empty doc, tab, header or footer: `write_doc` |
+| `insert_table(path, rows, columns, data, …)` | a markdown table in `new_string`; later row and column changes stay with `edit_table` and `set_table_style` |
+| `insert_image(path, uri, at, width, height, align, …)` | `<img src="…" width="…" height="…">` or `![alt](src)` in `new_string`; a centered image is `<p style="text-align:center"><img …></p>`, the form `read_doc` shows |
+| `createSegment: true` on any tool | `write_doc(path, content, segment: "header" \| "footer")` creates a missing default header or footer and writes it |
+
+Behaviour that comes with it: text in `old_string` that comes back unchanged in `new_string` is kept, not deleted and typed again, so its style, comments and suggestions stay; a match that ends inside a table keeps the table and puts new blocks after it, which is how a paragraph goes after a table that ends the doc; an anchor in the middle of a paragraph splits it; a new block is Normal text with no bullet unless the markdown says otherwise, while text added inside a paragraph keeps that paragraph's style; `edit_doc` on an empty doc, tab, header or footer is an error that points at `write_doc`. `write_doc` asks (`confirmLoss`) only when there is something to lose, so an empty doc, tab, header or footer is written without the refusal (this changes #55 for an empty doc). A missing first-page or even-page header or footer is refused with "Turn on Different first page in Docs (Format → Headers & footers), then retry."
+
 > **Six tools are removed and one added (#55): `create_doc` and `overwrite_doc` become `write_doc`; `list_tabs`, `add_tab`, `rename_tab` and `delete_tab` go.** Every doc tool takes `path` instead of `documentId` and `tab`. 30 tools become 25.
 
 | Removed | Use instead |

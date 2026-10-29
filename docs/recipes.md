@@ -169,10 +169,10 @@ context so you can disambiguate.
 **Ask Claude:** *"Turn my markdown table into a real table with a shaded header, then
 add a row under 'Deposit' and widen the first column."*
 
-**What happens:** `insert_table` renders the table (with header shading and column
-widths); `edit_table` inserts the row (located by the cell text "Deposit", no
-indices); `set_table_style` adjusts padding / background / column widths on the
-existing table.
+**What happens:** `edit_doc` (or `write_doc`) renders the markdown table;
+`edit_table` inserts the row (located by the cell text "Deposit", no indices);
+`set_table_style` shades the header and adjusts padding / background / column
+widths on the existing table.
 
 ---
 

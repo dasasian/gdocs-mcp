@@ -2,10 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../src/google/clients.js';
 import { listSegments, resolveSegmentId, contentOf } from '../src/docs/structure.js';
-import { resolveSegmentTarget } from '../src/docs/segments.js';
+import { resolveSegmentTarget, segmentForWrite, DIFFERENT_FIRST_PAGE_REFUSAL } from '../src/docs/segments.js';
 import { readDoc } from '../src/docs/read.js';
 import { editDoc } from '../src/docs/edit.js';
-import { insertImage } from '../src/docs/objects.js';
 
 const para = (text: string): docs_v1.Schema$StructuralElement => ({
   paragraph: { elements: [{ textRun: { content: `${text}\n` } }] },
@@ -105,49 +104,49 @@ describe('readDoc segments (#23)', () => {
 });
 
 describe('resolveSegmentTarget (#23)', () => {
-  it('resolves an existing header without writing anything', async () => {
-    const b = vi.fn();
-    const doc = letterhead();
-    const t = await resolveSegmentTarget(clientsFor(doc, b), 'd', doc, { segment: 'header' });
-    expect(t).toMatchObject({ segmentId: 'hDefault', created: false });
-    expect(b).not.toHaveBeenCalled();
+  it('resolves an existing header', () => {
+    expect(resolveSegmentTarget(letterhead(), { segment: 'header' })).toMatchObject({ segmentId: 'hDefault' });
   });
 
-  it('errors (and creates nothing) when the segment is missing and create is not set', async () => {
-    const b = vi.fn();
-    const doc = letterhead({ header: false });
-    const t = await resolveSegmentTarget(clientsFor(doc, b), 'd', doc, { segment: 'header' });
-    expect(t.error).toContain('create:true');
-    expect(b).not.toHaveBeenCalled();
+  it('errors when the segment is missing, pointing at write_doc', () => {
+    const t = resolveSegmentTarget(letterhead({ header: false }), { segment: 'header' });
+    expect(t.error).toContain('write_doc');
   });
 
+  it('is a no-op for the body', () => {
+    expect(resolveSegmentTarget(letterhead(), {})).toMatchObject({ segmentId: undefined });
+  });
+});
+
+describe('segmentForWrite (#60)', () => {
   it('creates the default header on demand and re-fetches the doc', async () => {
     const b = vi.fn().mockResolvedValue({ data: {} });
-    const before = letterhead({ header: false });
-    const clients = {
-      auth: {} as GoogleClients['auth'],
-      docs: {
-        documents: { get: vi.fn().mockResolvedValue({ data: letterhead() }), batchUpdate: b },
-      } as unknown as GoogleClients['docs'],
-      drive: {} as GoogleClients['drive'],
-    } as GoogleClients;
-    const t = await resolveSegmentTarget(clients, 'd', before, { segment: 'header', create: true });
+    const clients = clientsFor(letterhead(), b);
+    const t = await segmentForWrite(clients, 'd', letterhead({ header: false }), { segment: 'header' });
     expect(b.mock.calls[0][0].requestBody.requests[0]).toEqual({ createHeader: { type: 'DEFAULT' } });
-    expect(t).toMatchObject({ segmentId: 'hDefault', created: true });
+    expect(t).toMatchObject({ segmentId: 'hDefault' });
   });
 
-  it('refuses to create a first-page header (the API cannot)', async () => {
+  it('creates the default footer on demand', async () => {
+    const b = vi.fn().mockResolvedValue({ data: {} });
+    const clients = clientsFor(letterhead({ header: true, footer: true }), b);
+    await segmentForWrite(clients, 'd', letterhead({ header: false }), { segment: 'footer' });
+    expect(b.mock.calls[0][0].requestBody.requests[0]).toEqual({ createFooter: { type: 'DEFAULT' } });
+  });
+
+  it('uses an existing one without writing anything', async () => {
     const b = vi.fn();
-    const doc = letterhead({ header: false });
-    const t = await resolveSegmentTarget(clientsFor(doc, b), 'd', doc, { segment: 'header', page: 'first', create: true });
-    expect(t.error).toContain('only create the default header');
+    const t = await segmentForWrite(clientsFor(letterhead(), b), 'd', letterhead(), { segment: 'header' });
+    expect(t).toMatchObject({ segmentId: 'hDefault' });
     expect(b).not.toHaveBeenCalled();
   });
 
-  it('is a no-op for the body', async () => {
+  it('refuses a missing first-page header with the instruction to turn it on in Docs', async () => {
     const b = vi.fn();
-    const doc = letterhead();
-    expect(await resolveSegmentTarget(clientsFor(doc, b), 'd', doc, {})).toMatchObject({ segmentId: undefined, created: false });
+    const t = await segmentForWrite(clientsFor(letterhead(), b), 'd', letterhead({ header: false }), { segment: 'header', page: 'first' });
+    expect(t).toEqual({ refusal: DIFFERENT_FIRST_PAGE_REFUSAL });
+    expect(DIFFERENT_FIRST_PAGE_REFUSAL).toBe('Turn on Different first page in Docs (Format → Headers & footers), then retry.');
+    expect(b).not.toHaveBeenCalled();
   });
 });
 
@@ -176,14 +175,5 @@ describe('writes into a segment carry segmentId (#23)', () => {
     const r = await editDoc(clientsFor(letterhead({ header: false }), b), 'd', 'Dear team,', 'Hi', { segment: 'header' });
     expect(r.status).toBe('no_segment');
     expect(b).not.toHaveBeenCalled();
-  });
-
-  it('insert_image places a logo in the header at index 0', async () => {
-    const b = vi.fn().mockResolvedValue({ data: { replies: [{ insertInlineImage: { objectId: 'kix.new' } }] } });
-    const r = await insertImage(clientsFor(letterhead(), b), 'd', 'https://x/logo.png', { segment: 'header', width: 120 });
-    expect(r.status).toBe('ok');
-    const img = reqs(b)[0].insertInlineImage!;
-    expect(img.location).toMatchObject({ index: 0, segmentId: 'hDefault' });
-    expect(img.objectSize!.width).toEqual({ magnitude: 120, unit: 'PT' });
   });
 });

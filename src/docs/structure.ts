@@ -196,6 +196,35 @@ export function inlineObjectsOf(
   return tabContainer(doc, tabId)?.inlineObjects ?? {};
 }
 
+function paragraphsWithin(content: docs_v1.Schema$StructuralElement[]): docs_v1.Schema$StructuralElement[] {
+  return content.flatMap((el) => {
+    if (el.paragraph) return [el];
+    const cells = (el.table?.tableRows ?? []).flatMap((row) => row.tableCells ?? []);
+    return cells.flatMap((cell) => paragraphsWithin(cell.content ?? []));
+  });
+}
+
+/** Where `index` sits in its paragraph, table cells included: at its first character, and/or at its paragraph mark. */
+export function paragraphEdgesAt(doc: docs_v1.Schema$Document, tabId: string | undefined, segmentId: string | undefined, index: number): { atStart: boolean; atMark: boolean } {
+  const paragraphs = paragraphsWithin(contentOf(doc, tabId, segmentId));
+  return {
+    atStart: paragraphs.some((el) => el.startIndex === index),
+    atMark: paragraphs.some((el) => (el.endIndex ?? 0) - 1 === index),
+  };
+}
+
+/** The top-level table whose range holds `index`. */
+export function tableHolding(doc: docs_v1.Schema$Document, tabId: string | undefined, segmentId: string | undefined, index: number): docs_v1.Schema$StructuralElement | undefined {
+  return contentOf(doc, tabId, segmentId).find((el) => el.table && (el.startIndex ?? 0) <= index && index < (el.endIndex ?? 0));
+}
+
+/** True when the tab, header or footer holds nothing but its one empty paragraph. */
+export function isEmptyContent(doc: docs_v1.Schema$Document, tabId: string | undefined, segmentId: string | undefined): boolean {
+  const content = contentOf(doc, tabId, segmentId).filter((el) => !el.sectionBreak);
+  if (content.length !== 1 || !content[0].paragraph) return false;
+  return (content[0].paragraph.elements ?? []).every((pe) => pe.textRun?.content === '\n');
+}
+
 /** True when a paragraph of this tab or segment begins at `index`. */
 export function startsParagraph(doc: docs_v1.Schema$Document, tabId: string | undefined, segmentId: string | undefined, index: number): boolean {
   return contentOf(doc, tabId, segmentId).some((el) => el.paragraph && el.startIndex === index);

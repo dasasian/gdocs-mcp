@@ -1,19 +1,22 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
 import { project, type Projection } from './transformer.js';
-import { resolveTabId, writeControlFor, startsParagraph, type SegmentKind, type SegmentPage } from './structure.js';
+import { resolveTabId, writeControlFor, startsParagraph, paragraphEdgesAt, tableHolding, isEmptyContent, type SegmentKind, type SegmentPage } from './structure.js';
 import { resolveSegmentTarget } from './segments.js';
 import { parseInline, segmentTextStyle, inlineStyleIssues, type Segment } from './inline.js';
 import { HEADING_BY_LEVEL, NAMED_STYLE_BY_CLASS } from './markdown-spec.js';
 import { paragraphCssChange, paragraphStyleUpdate, StyleSyntaxError } from './css.js';
 import { splitEditLine, type ParagraphLine, type ParagraphMarkup } from './paragraph-markup.js';
 import { parseStyleBlock, namedStyleRequests, styleRulesOf, renderStyleBlock } from './style-block.js';
-import { clearDirectRunStyling, pageBreakRequests } from './write.js';
+import { clearDirectRunStyling, pageBreakRequests, parseBlocks, holdsBlockMarkdown, isTableRow, isTableSep, splitRow } from './write.js';
+import { renderMarkdownInto } from './render.js';
 import { parsePageBreakLine } from './page-break.js';
 
 export interface EditResult {
   status: 'ok' | 'not_found' | 'ambiguous' | 'no_segment';
   replaced?: number;
+  warnings?: string[];
+  images?: { src: string; objectId: string }[];
   matches?: { context: string }[];
   message?: string;
 }
@@ -51,10 +54,26 @@ function findAll(haystack: string, needle: string): number[] {
   return out;
 }
 
+// A table's cells are paragraphs in the doc's text, one per line, so a markdown
+// row matches as its cells' text and the separator row matches nothing.
+function tableRowsAsCellText(s: string): string {
+  return s
+    .split('\n')
+    .filter((line) => !(isTableRow(line) && isTableSep(line)))
+    .map((line) => (isTableRow(line) ? splitRow(line).join('\n') : line))
+    .join('\n');
+}
+
 // Resolve old_string to its match positions, trying exact then markup-tolerant.
 export function locate(text: string, oldString: string): { needle: string; positions: number[] } {
   let positions = findAll(text, oldString);
   if (positions.length) return { needle: oldString, positions };
+  const cellText = tableRowsAsCellText(oldString);
+  if (cellText !== oldString) {
+    const needle = stripMarkdown(cellText);
+    positions = findAll(text, needle);
+    if (positions.length) return { needle, positions };
+  }
   const stripped = stripMarkdown(oldString);
   if (stripped !== oldString) {
     positions = findAll(text, stripped);
@@ -258,6 +277,11 @@ function pageBreakOffsets(breaksAfterLines: number[], lineTexts: string[]): numb
   return breaksAfterLines.map((count) => (count < lineTexts.length ? lengthOfFirst(count) : Math.max(0, lengthOfFirst(count) - 1)));
 }
 
+interface DocRange {
+  startIndex: number;
+  endIndex: number;
+}
+
 interface Replacement {
   newLines: ParagraphLine[];
   lineTexts: string[];
@@ -284,14 +308,11 @@ function styleOnlyRequestsFor(
 
 function replacementRequestsFor(
   doc: docs_v1.Schema$Document,
-  proj: Projection,
-  from: number,
-  length: number,
+  { startIndex, endIndex }: DocRange,
   { newLines, lineTexts, segments, plain, breakOffsets }: Replacement,
   tabId?: string,
   segmentId?: string,
 ): docs_v1.Schema$Request[] {
-  const { startIndex, endIndex } = rangeFor(proj, from, from + length);
   const breaks = breakOffsets.map((offset) => ({
     index: startIndex + offset,
     ownParagraph: offset === 0 ? startsParagraph(doc, tabId, segmentId, startIndex) : plain[offset - 1] === '\n',
@@ -303,17 +324,79 @@ function replacementRequestsFor(
   ];
 }
 
+interface UnchangedAnchor {
+  side: 'after' | 'before';
+  added: string;
+}
+
+function unchangedAnchorOf(oldString: string, newString: string): UnchangedAnchor | undefined {
+  if (newString.length <= oldString.length) return undefined;
+  const after = newString.startsWith(oldString) ? newString.slice(oldString.length) : undefined;
+  if (after !== undefined && holdsBlockMarkdown(after)) return { side: 'after', added: after };
+  const before = newString.endsWith(oldString) ? newString.slice(0, newString.length - oldString.length) : undefined;
+  if (before !== undefined && holdsBlockMarkdown(before)) return { side: 'before', added: before };
+  return undefined;
+}
+
+interface BlockEditContext {
+  clients: GoogleClients;
+  documentId: string;
+  doc: docs_v1.Schema$Document;
+  markdown: string;
+  anchor: UnchangedAnchor | undefined;
+  tabId: string | undefined;
+  segmentId: string | undefined;
+  baseDir: string | undefined;
+}
+
+function blockInsertionRange(context: BlockEditContext, matched: DocRange): DocRange {
+  const { doc, anchor, tabId, segmentId } = context;
+  if (!anchor) return matched;
+  if (anchor.side === 'after') {
+    const table = tableHolding(doc, tabId, segmentId, matched.endIndex - 1);
+    const at = table?.endIndex ?? matched.endIndex;
+    return { startIndex: at, endIndex: at };
+  }
+  const table = tableHolding(doc, tabId, segmentId, matched.startIndex);
+  const at = table ? (table.startIndex ?? 1) - 1 : matched.startIndex;
+  return { startIndex: at, endIndex: at };
+}
+
+async function applyBlockEdit(context: BlockEditContext, matched: DocRange, revisionId: string | undefined) {
+  const { clients, documentId, doc, markdown, tabId, segmentId, baseDir } = context;
+  const { startIndex, endIndex } = blockInsertionRange(context, matched);
+  const startsAParagraph = paragraphEdgesAt(doc, tabId, segmentId, startIndex).atStart;
+  const endsAtParagraphMark = paragraphEdgesAt(doc, tabId, segmentId, endIndex).atMark;
+  const preRequests: docs_v1.Schema$Request[] = [
+    ...(endIndex > startIndex ? [{ deleteContentRange: { range: { startIndex, endIndex, tabId, segmentId } } }] : []),
+    ...(startsAParagraph ? [] : [{ insertText: { location: { index: startIndex, tabId, segmentId }, text: '\n' } }]),
+  ];
+  return renderMarkdownInto(clients, documentId, markdown, {
+    tabId,
+    segmentId,
+    baseDir,
+    preRequests,
+    requiredRevisionId: revisionId,
+    startIndex: startsAParagraph ? startIndex : startIndex + 1,
+    resetParagraphStyles: true,
+    startsParagraph: true,
+    endsInExistingParagraphMark: endsAtParagraphMark,
+  });
+}
+
+const EMPTY_CONTENT_MESSAGE = 'There is nothing here to anchor an edit: the doc, tab or header/footer is empty. Use write_doc to write it.';
+
 export async function editDoc(
   clients: GoogleClients,
   documentId: string,
   oldString: string,
   newString: string,
-  opts: { replaceAll?: boolean; tabId?: string; segment?: SegmentKind; page?: SegmentPage } = {},
+  opts: { replaceAll?: boolean; tabId?: string; segment?: SegmentKind; page?: SegmentPage; baseDir?: string } = {},
 ): Promise<EditResult> {
   const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
   const revisionId = res.data.revisionId ?? undefined;
   const tabId = resolveTabId(res.data, opts.tabId);
-  const target = await resolveSegmentTarget(clients, documentId, res.data, { segment: opts.segment, page: opts.page, tabId });
+  const target = resolveSegmentTarget(res.data, { segment: opts.segment, page: opts.page, tabId });
   if (target.error) return { status: 'no_segment', message: target.error };
   const segmentId = target.segmentId;
   const proj = project(res.data, tabId, segmentId);
@@ -322,6 +405,7 @@ export async function editDoc(
   if (targetsStyleBlock(oldString, block, proj.text)) {
     return editStyleBlock(clients, documentId, block, oldString, newString, tabId, revisionId);
   }
+  if (isEmptyContent(res.data, tabId, segmentId)) throw new Error(EMPTY_CONTENT_MESSAGE);
 
   const { needle, positions } = locate(proj.text, oldString);
   if (positions.length === 0) {
@@ -335,19 +419,35 @@ export async function editDoc(
     };
   }
 
-  const { lines: newLines, breaksAfterLines, issues: problems } = partitionNewString(newString);
+  const anchor = unchangedAnchorOf(oldString, newString);
+  const written = anchor ? anchor.added : newString;
+  const highestIndexFirst = (opts.replaceAll ? positions : [positions[0]]).sort((x, y) => y - x);
+
+  if (anchor || holdsBlockMarkdown(written)) {
+    parseBlocks(written);
+    const context: BlockEditContext = { clients, documentId, doc: res.data, markdown: written, anchor, tabId, segmentId, baseDir: opts.baseDir };
+    const warnings: string[] = [];
+    const images: { src: string; objectId: string }[] = [];
+    for (const [n, a] of highestIndexFirst.entries()) {
+      const done = await applyBlockEdit(context, rangeFor(proj, a, a + needle.length), n === 0 ? revisionId : undefined);
+      warnings.push(...done.warnings);
+      images.push(...done.images);
+    }
+    return { status: 'ok', replaced: highestIndexFirst.length, ...(warnings.length ? { warnings } : {}), ...(images.length ? { images } : {}) };
+  }
+
+  const { lines: newLines, breaksAfterLines, issues: problems } = partitionNewString(written);
   if (problems.length) throw new StyleSyntaxError(problems);
   const segments = parseInline(newLines.map((l) => l.inner).join('\n'));
   const plain = segments.map((s) => s.text).join('');
   const lineTexts = plain.split('\n');
   const replacement: Replacement = { newLines, lineTexts, segments, plain, breakOffsets: pageBreakOffsets(breaksAfterLines, lineTexts) };
 
-  const highestIndexFirst = (opts.replaceAll ? positions : [positions[0]]).sort((x, y) => y - x);
   const sameWords = plain === needle && replacement.breakOffsets.length === 0;
   const requests = highestIndexFirst.flatMap((a) =>
     sameWords
       ? styleOnlyRequestsFor(proj, a, needle.length, oldString, replacement, tabId, segmentId)
-      : replacementRequestsFor(res.data, proj, a, needle.length, replacement, tabId, segmentId),
+      : replacementRequestsFor(res.data, rangeFor(proj, a, a + needle.length), replacement, tabId, segmentId),
   );
 
   if (requests.length) {

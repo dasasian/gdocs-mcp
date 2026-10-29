@@ -56,12 +56,13 @@ function pointsAtBookmarkOrHeading(link: docs_v1.Schema$Link | null | undefined)
  * What replacing this tab's body would take with it that a markdown read cannot
  * carry. `doc` must come from a SUGGESTIONS_INLINE read, or suggestions are
  * invisible. `comments` is passed in because Drive holds them, not the doc.
- * A bookmark is not in the Docs API at all — only links that point at one are,
+ * For a header or footer (`segmentId`), comments and suggestions are not counted:
+ * they cannot be anchored there. A bookmark is not in the Docs API at all — only links that point at one are,
  * so a bookmark nothing links to is not counted.
  */
-export function measureLoss(doc: docs_v1.Schema$Document, tabId: string | undefined, comments: number): Loss {
-  const loss: Loss = { paragraphs: 0, comments, suggestions: parseSuggestions(doc, tabId).length, tabStops: 0, tabStopLines: [], people: 0, dates: 0, richLinks: 0, bookmarkLinks: 0, sectionBreaks: 0, columnBreaks: 0 };
-  const content = contentOf(doc, tabId);
+export function measureLoss(doc: docs_v1.Schema$Document, tabId: string | undefined, comments: number, segmentId?: string): Loss {
+  const loss: Loss = { paragraphs: 0, comments: segmentId ? 0 : comments, suggestions: segmentId ? 0 : parseSuggestions(doc, tabId).length, tabStops: 0, tabStopLines: [], people: 0, dates: 0, richLinks: 0, bookmarkLinks: 0, sectionBreaks: 0, columnBreaks: 0 };
+  const content = contentOf(doc, tabId, segmentId);
   loss.sectionBreaks = content.slice(1).filter((el) => el.sectionBreak).length;
   for (const paragraph of paragraphsIn(content)) {
     const text = textOf(paragraph);

@@ -4,7 +4,7 @@ import type { GoogleClients } from '../src/google/clients.js';
 import { renderMarkdown } from '../src/docs/transformer.js';
 import { styleRulesOf, renderStyleBlock } from '../src/docs/style-block.js';
 import { parseBlocks, markdownToRequests } from '../src/docs/write.js';
-import { writeDoc, insertContent } from '../src/docs/document.js';
+import { writeDoc } from '../src/docs/document.js';
 import { StyleSyntaxError } from '../src/docs/css.js';
 
 const pt = (magnitude: number): docs_v1.Schema$Dimension => ({ magnitude, unit: 'PT' });
@@ -249,16 +249,10 @@ describe('the whole write is refused before any request is sent', () => {
     await expect(writeDoc(clients, 'existing', bad)).rejects.toThrow(StyleSyntaxError);
     expect(calls[1]).not.toHaveBeenCalled();
   });
-
-  it('insert_content sends no batchUpdate', async () => {
-    const { clients, calls } = clientsWith();
-    await expect(insertContent(clients, 'd', bad, {})).rejects.toThrow(StyleSyntaxError);
-    expect(calls[1]).not.toHaveBeenCalled();
-  });
 });
 
 describe('overwrite clears the paragraph style the new text would inherit', () => {
-  it('only when asked, since insert_content must not touch its neighbours', () => {
+  it('only when asked, since an edit must not touch its neighbours', () => {
     const plain = markdownToRequests('x', 1).requests;
     const reset = markdownToRequests('x', 1, undefined, undefined, { resetParagraphStyles: true }).requests;
     const clears = (rs: docs_v1.Schema$Request[]) => rs.filter((r) => r.updateParagraphStyle?.paragraphStyle?.namedStyleType === 'NORMAL_TEXT');

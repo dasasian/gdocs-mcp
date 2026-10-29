@@ -14,7 +14,7 @@ type Block =
   | { type: 'style'; rules: StyleRule[] }
   | { type: 'list'; ordered: boolean; items: { level: number; text: string }[] }
   | { type: 'table'; rows: string[][]; aligns: (CellAlign | null)[] }
-  | { type: 'image'; alt: string; src: string; width?: number; height?: number }
+  | { type: 'image'; alt: string; src: string; width?: number; height?: number; css?: ParagraphCss }
   | { type: 'pageBreak' };
 
 // Every direct character-formatting field, cleared by listing it in `fields`
@@ -46,9 +46,9 @@ const ATTR_RE = /([a-z-]+)\s*=\s*"([^"]*)"/gi;
 const STYLE_OPEN_RE = /^<style>/i;
 const STYLE_CLOSE_RE = /<\/style>/i;
 
-const isTableRow = (l: string): boolean => l.trim().startsWith('|');
+export const isTableRow = (l: string): boolean => l.trim().startsWith('|');
 // A separator line is only dashes/colons/pipes/spaces, with at least one dash.
-const isTableSep = (l: string): boolean => l.includes('-') && /^[\s|:-]+$/.test(l.trim());
+export const isTableSep = (l: string): boolean => l.includes('-') && /^[\s|:-]+$/.test(l.trim());
 
 export const unescapePipes = (cell: string): string => cell.replace(/\\\|/g, '|');
 
@@ -60,7 +60,7 @@ export function cellContent(rawCell: string): string {
   return WRAPPED_CELL_RE.exec(trimmed)?.[1] ?? trimmed;
 }
 
-function splitRow(line: string): string[] {
+export function splitRow(line: string): string[] {
   let t = line.trim();
   if (t.startsWith('|')) t = t.slice(1);
   if (t.endsWith('|')) t = t.slice(0, -1);
@@ -103,7 +103,7 @@ function positiveNumber(v: string | undefined): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
-function parseImgTag(line: string): Block | undefined {
+function parseImgTag(line: string): Extract<Block, { type: 'image' }> | undefined {
   const attrs: Record<string, string> = {};
   for (const a of line.matchAll(ATTR_RE)) attrs[a[1].toLowerCase()] = a[2];
   if (!attrs.src) return undefined;
@@ -148,6 +148,17 @@ function parseStyleBlockAt(lines: string[], from: number, issues: string[]): num
     return lines.length;
   }
   return end + 1;
+}
+
+const WRAPPED_IMAGE_LINE_RE = /^<p\b[^>]*>\s*<img\b/i;
+
+/** True when the markdown holds more than inline text: a block construct, or a blank line between paragraphs. */
+export function holdsBlockMarkdown(markdown: string): boolean {
+  const hasBlockLine = markdown.split('\n').some((line) => {
+    const trimmed = line.trim();
+    return HEADING_RE.test(line) || LIST_RE.test(line) || isTableRow(line) || IMAGE_RE.test(trimmed) || IMG_TAG_RE.test(trimmed) || WRAPPED_IMAGE_LINE_RE.test(trimmed) || STYLE_OPEN_RE.test(trimmed);
+  });
+  return hasBlockLine || /\n[ \t]*\n/.test(markdown);
 }
 
 export function parseBlocks(md: string): Block[] {
@@ -214,6 +225,12 @@ export function parseBlocks(md: string): Block[] {
       report(i, [...wrapped.issues, ...inlineStyleIssues(wrapped.inner)]);
       const { markup } = wrapped;
       const css = Object.keys(markup.css).length ? markup.css : undefined;
+      const wrappedImage = css && !markup.heading && IMG_TAG_RE.test(wrapped.inner.trim()) ? parseImgTag(wrapped.inner.trim()) : undefined;
+      if (wrappedImage) {
+        blocks.push({ ...wrappedImage, css });
+        i++;
+        continue;
+      }
       blocks.push(
         markup.heading
           ? { type: 'heading', level: markup.heading, text: wrapped.inner, css }
@@ -278,6 +295,8 @@ export interface BuildOptions {
   resetParagraphStyles?: boolean;
   /** false when `startIndex` is inside a paragraph's text, so a page break first in the content follows that text instead of starting a paragraph. Default true. */
   startsParagraph?: boolean;
+  /** true when the paragraph mark after `startIndex` already exists, so the content's last paragraph ends with it instead of a mark of its own. */
+  endsInExistingParagraphMark?: boolean;
 }
 
 const RESET_PARAGRAPH_FIELDS = [
@@ -392,7 +411,9 @@ export function buildContentRequests(
     } else if (block.type === 'table') {
       tables.push({ index: addPlaceholderParagraph(), rows: block.rows, aligns: block.aligns });
     } else if (block.type === 'image') {
+      const lineStart = text.length;
       images.push({ index: addPlaceholderParagraph(), alt: block.alt, src: block.src, width: block.width, height: block.height });
+      if (block.css) paragraphOps.push({ start: abs(lineStart), end: abs(lineStart + 1), css: block.css });
     } else {
       const listStart = text.length;
       for (const item of block.items) {
@@ -412,9 +433,15 @@ export function buildContentRequests(
     images: images.map((im) => ({ ...im, index: afterBreaks(im.index) })),
   };
   if (!text) return { requests: [...requests, ...pageBreakRequests(pageBreaks(), tabId, segmentId)], text, ...placed };
-  requests.push({ insertText: { location: { index: startIndex, tabId, segmentId }, text } });
-  requests.push(clearDirectRunStyling(startIndex, text.length, tabId, segmentId));
-  if (opts.resetParagraphStyles) requests.push(clearDirectParagraphStyling(startIndex, text.length, tabId, segmentId));
+  const insertedText = opts.endsInExistingParagraphMark ? text.slice(0, -1) : text;
+  if (insertedText) {
+    requests.push({ insertText: { location: { index: startIndex, tabId, segmentId }, text: insertedText } });
+    requests.push(clearDirectRunStyling(startIndex, insertedText.length, tabId, segmentId));
+  }
+  if (opts.resetParagraphStyles) {
+    requests.push(clearDirectParagraphStyling(startIndex, text.length, tabId, segmentId));
+    requests.push({ deleteParagraphBullets: { range: { startIndex, endIndex: startIndex + text.length, tabId, segmentId } } });
+  }
   for (const op of paragraphOps) {
     const update = paragraphStyleUpdate(op.css);
     const fields = [...(op.namedStyleType ? ['namedStyleType'] : []), ...update.fields];

@@ -128,8 +128,8 @@ const toolBlocks = SRC.split(/  (?:const \w+ = )?server\.registerTool\(\n/).slic
 
 describe('every doc tool takes one path (#55)', () => {
   const docTools = [
-    'read_doc', 'edit_doc', 'write_doc', 'insert_content', 'export_doc', 'get_page_setup', 'set_page_setup', 'insert_image', 'download_images',
-    'insert_table', 'edit_table', 'set_table_style', 'get_table_style', 'list_suggestions', 'apply_suggestions', 'list_comments', 'add_comment',
+    'read_doc', 'edit_doc', 'write_doc', 'export_doc', 'get_page_setup', 'set_page_setup', 'download_images',
+    'edit_table', 'set_table_style', 'get_table_style', 'list_suggestions', 'apply_suggestions', 'list_comments', 'add_comment',
     'resolve_comment', 'list_permissions', 'share_doc', 'unshare_doc',
   ];
 

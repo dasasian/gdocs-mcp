@@ -12,134 +12,6 @@ import { hexToRgb, rgbToHex } from './color.js';
 // Objects markdown can't size/place: images (and tables). Position is `top`,
 // `end`, or a unique text anchor (insert right after the matched text).
 
-function tabEndIndex(doc: docs_v1.Schema$Document, tabId?: string, segmentId?: string): number {
-  const content = contentOf(doc, tabId, segmentId);
-  const last = content[content.length - 1];
-  return last?.endIndex ?? 2;
-}
-
-export interface InsertResult {
-  status: 'ok' | 'not_found' | 'ambiguous' | 'no_segment';
-  objectId?: string;
-  message?: string;
-  matches?: { context: string }[];
-  /** set when the call had to create the header/footer it wrote into. */
-  createdSegment?: string;
-}
-
-// Resolve an `at` selector to a Docs insertion index.
-export function resolveIndex(
-  doc: docs_v1.Schema$Document,
-  tabId: string | undefined,
-  at: string,
-  segmentId?: string,
-): { index: number } | { error: InsertResult } {
-  // A header/footer segment starts at index 0, not 1 (the body's leading
-  // section break doesn't exist there) — verified live.
-  if (at === 'top') return { index: segmentId ? 0 : 1 };
-  if (at === 'end') return { index: tabEndIndex(doc, tabId, segmentId) - 1 };
-  const proj = project(doc, tabId, segmentId);
-  const { needle, positions } = locate(proj.text, at);
-  if (positions.length === 0) return { error: { status: 'not_found', message: `anchor "${at}" not found` } };
-  if (positions.length > 1) {
-    return {
-      error: {
-        status: 'ambiguous',
-        message: `${positions.length} matches for anchor — add context.`,
-        matches: positions.map((p) => ({ context: contextAround(proj.text, p, p + needle.length) })),
-      },
-    };
-  }
-  const p = positions[0];
-  return { index: rangeFor(proj, p, p + needle.length).endIndex };
-}
-
-export async function insertImage(
-  clients: GoogleClients,
-  documentId: string,
-  uri: string,
-  opts: {
-    at?: string;
-    width?: number;
-    height?: number;
-    align?: 'left' | 'center' | 'right';
-    tabId?: string;
-    segment?: SegmentKind;
-    page?: SegmentPage;
-    createSegment?: boolean;
-    /** resolve a relative local `uri` against this directory. */
-    baseDir?: string;
-  } = {},
-): Promise<InsertResult> {
-  const first = await clients.docs.documents.get({ documentId, includeTabsContent: true });
-  const tabId = resolveTabId(first.data, opts.tabId);
-  // The letterhead case (#23): a logo belongs in the page header, where it
-  // repeats and stays sized — not pasted into the body of page 1.
-  const seg = await resolveSegmentTarget(clients, documentId, first.data, {
-    segment: opts.segment,
-    page: opts.page,
-    create: opts.createSegment,
-    tabId,
-  });
-  if (seg.error) return { status: 'no_segment', message: seg.error };
-  const segmentId = seg.segmentId;
-  const res = { data: seg.doc };
-  const resolved = resolveIndex(res.data, tabId, opts.at ?? 'top', segmentId);
-  if ('error' in resolved) return resolved.error;
-  const index = resolved.index;
-
-  const source = resolveImageSource(uri, opts.baseDir);
-  if ('error' in source) return { status: 'not_found', message: source.error };
-
-  const objectSize =
-    opts.width || opts.height
-      ? {
-          width: opts.width ? { magnitude: opts.width, unit: 'PT' } : undefined,
-          height: opts.height ? { magnitude: opts.height, unit: 'PT' } : undefined,
-        }
-      : undefined;
-
-  // A local file has to become a fetchable URL first — Docs embeds from a URL,
-  // never from bytes. Same upload-embed-delete dance the markdown renderer does
-  // for `![](./logo.png)`; it was previously reachable only from that path (#29).
-  const upload = source.kind === 'local' ? await uploadImageForInsert(clients, source.path) : undefined;
-  const uriToEmbed = upload ? upload.uri : (source as { kind: 'url'; uri: string }).uri;
-
-  const requests: docs_v1.Schema$Request[] = [
-    { insertInlineImage: { location: { index, tabId, segmentId }, uri: uriToEmbed, objectSize } },
-  ];
-  // To align, isolate the image on its own paragraph (newline after it) and set
-  // that paragraph's alignment. The image occupies one index unit at `index`.
-  if (opts.align) {
-    requests.push({ insertText: { location: { index: index + 1, tabId, segmentId }, text: '\n' } });
-    requests.push({
-      updateParagraphStyle: {
-        range: { startIndex: index, endIndex: index + 1, tabId, segmentId },
-        paragraphStyle: { alignment: ALIGN_BY_CSS[opts.align] },
-        fields: 'alignment',
-      },
-    });
-  }
-
-  let objectId: string | undefined;
-  try {
-    const r = await clients.docs.documents.batchUpdate({
-      documentId,
-      requestBody: { requests, writeControl: writeControlFor(res.data.revisionId) },
-    });
-    const reply = r.data.replies?.[0] as { insertInlineImage?: { objectId?: string } } | undefined;
-    objectId = reply?.insertInlineImage?.objectId ?? undefined;
-  } finally {
-    await upload?.cleanup();
-  }
-
-  return {
-    status: 'ok',
-    objectId,
-    ...(seg.created ? { createdSegment: `${opts.segment}` } : {}),
-  };
-}
-
 // Segment targeting is uniform across the table ops (#28): a table can live in a
 // header/footer just as easily as the body (a letterhead is the common case), so
 // they all take the same segment/page pair the text tools use.
@@ -147,19 +19,6 @@ export interface SegmentOpts {
   segment?: SegmentKind;
   page?: SegmentPage;
 }
-
-export interface TableOptions extends SegmentOpts {
-  at?: string;
-  tabId?: string;
-  data?: string[][];
-  columnWidths?: number[]; // points per column
-  headerShade?: string; // hex bg color for row 0, e.g. "#f1f3f4"
-  /** per-column text alignment; null/'left' leaves the column at the default. */
-  align?: (CssAlign | null)[];
-  /** when segment is header/footer and the doc has none, create it first. */
-  createSegment?: boolean;
-}
-
 
 // ---- Shared table-fill primitives -----------------------------------------
 //
@@ -276,7 +135,7 @@ async function tableOp(
   const tabId = resolveTabId(doc, opts.tabId);
   // create:false — you can't restructure a table in a header that doesn't exist,
   // so an absent segment is an error to report, not something to conjure up.
-  const seg = await resolveSegmentTarget(clients, documentId, doc, { segment: opts.segment, page: opts.page, tabId });
+  const seg = resolveSegmentTarget(doc, { segment: opts.segment, page: opts.page, tabId });
   if (seg.error) return { status: 'no_segment', message: seg.error };
   const loc = locateTable(seg.doc, cellText, tabId, seg.segmentId);
   if (!loc) return { status: 'not_found', message: `no table cell containing "${cellText}"${seg.segmentId ? ` in the ${opts.segment}` : ''}` };
@@ -427,7 +286,7 @@ export async function getTableStyle(
 ): Promise<TableStyleInfo> {
   const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
   const tabId = resolveTabId(res.data, opts.tabId);
-  const seg = await resolveSegmentTarget(clients, documentId, res.data, { segment: opts.segment, page: opts.page, tabId });
+  const seg = resolveSegmentTarget(res.data, { segment: opts.segment, page: opts.page, tabId });
   if (seg.error) return { status: 'no_segment', message: seg.error };
   const loc = locateTable(seg.doc, cellText, tabId, seg.segmentId);
   if (!loc) return { status: 'not_found', message: `no table cell containing "${cellText}"${seg.segmentId ? ` in the ${opts.segment}` : ''}` };
@@ -486,7 +345,7 @@ export async function setTableStyle(
 ): Promise<TableStyleResult> {
   const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
   const tabId = resolveTabId(res.data, opts.tabId);
-  const seg = await resolveSegmentTarget(clients, documentId, res.data, { segment: opts.segment, page: opts.page, tabId });
+  const seg = resolveSegmentTarget(res.data, { segment: opts.segment, page: opts.page, tabId });
   if (seg.error) return { status: 'no_segment', message: seg.error };
   const loc = locateTable(seg.doc, cellText, tabId, seg.segmentId);
   if (!loc) return { status: 'not_found', message: `no table cell containing "${cellText}"${seg.segmentId ? ` in the ${opts.segment}` : ''}` };
@@ -589,104 +448,4 @@ export async function setTableStyle(
     applied,
     table: { rows: loc.rows, columns: loc.cols, matchedCell: { rowIndex: loc.rowIndex, columnIndex: loc.columnIndex } },
   };
-}
-
-export async function insertTable(
-  clients: GoogleClients,
-  documentId: string,
-  rows: number,
-  columns: number,
-  opts: TableOptions = {},
-): Promise<InsertResult> {
-  const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
-  const tabId = resolveTabId(res.data, opts.tabId);
-  // Unlike the structure ops, inserting may legitimately need the segment made
-  // first — same createSegment flag insert_image uses for the letterhead case.
-  const seg = await resolveSegmentTarget(clients, documentId, res.data, {
-    segment: opts.segment,
-    page: opts.page,
-    create: opts.createSegment,
-    tabId,
-  });
-  if (seg.error) return { status: 'no_segment', message: seg.error };
-  const segmentId = seg.segmentId;
-  const resolved = resolveIndex(seg.doc, tabId, opts.at ?? 'end', segmentId);
-  if ('error' in resolved) return resolved.error;
-  const insertIndex = resolved.index;
-
-  // 1. Insert the empty table.
-  await clients.docs.documents.batchUpdate({
-    documentId,
-    requestBody: {
-      requests: [{ insertTable: { location: { index: insertIndex, tabId, segmentId }, rows, columns } }],
-      writeControl: writeControlFor(seg.doc.revisionId),
-    },
-  });
-
-  const needsPass2 = opts.data || opts.columnWidths || opts.headerShade || opts.align?.some((a) => a && a !== 'left');
-  if (!needsPass2) return { status: 'ok' };
-
-  // 2. Re-fetch (the table now exists) and fill data + styling. Cell text inserts
-  // go descending so earlier inserts don't shift later cell indices; width/shade
-  // use logical table locations (stable regardless of text).
-  const after = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
-  const tableEl = tableInsertedAt(after, insertIndex, tabId, segmentId);
-  const tableStart = tableEl?.startIndex;
-  if (!tableEl?.table?.tableRows || tableStart == null) return { status: 'ok' };
-
-  const requests: docs_v1.Schema$Request[] = [];
-
-  // Cell text goes through the same markdown-aware fill the markdown renderer
-  // uses. Raw insertText here meant `data: [["**x**"]]` wrote literal asterisks
-  // into the document — and since read_doc renders real bold as `**x**` too, the
-  // round-trip looked correct while the text was corrupt (#29).
-  if (opts.data) requests.push(...fillCellRequests(tableEl, opts.data, { tabId, segmentId }));
-
-  if (opts.columnWidths) {
-    opts.columnWidths.forEach((w, i) => {
-      if (i < columns) {
-        requests.push({
-          updateTableColumnProperties: {
-            tableStartLocation: { index: tableStart, tabId, segmentId },
-            columnIndices: [i],
-            tableColumnProperties: { widthType: 'FIXED_WIDTH', width: { magnitude: w, unit: 'PT' } },
-            fields: 'width,widthType',
-          },
-        });
-      }
-    });
-  }
-
-  if (opts.headerShade) {
-    requests.push({
-      updateTableCellStyle: {
-        tableRange: {
-          tableCellLocation: { tableStartLocation: { index: tableStart, tabId, segmentId }, rowIndex: 0, columnIndex: 0 },
-          rowSpan: 1,
-          columnSpan: columns,
-        },
-        tableCellStyle: { backgroundColor: { color: { rgbColor: hexToRgb(opts.headerShade) } } },
-        fields: 'backgroundColor',
-      },
-    });
-  }
-
-  if (requests.length) {
-    await clients.docs.documents.batchUpdate({
-      documentId,
-      requestBody: {
-        requests,
-        writeControl: writeControlFor(after.revisionId),
-      },
-    });
-  }
-
-  // Column alignment needs the post-fill indices, so it re-fetches — same shape
-  // as the markdown renderer's alignment pass.
-  if (opts.align?.some((a) => a && a !== 'left')) {
-    const aligned = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
-    const alignReqs = columnAlignRequests(tableInsertedAt(aligned, insertIndex, tabId, segmentId), opts.align, { tabId, segmentId });
-    if (alignReqs.length) await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests: alignReqs } });
-  }
-  return { status: 'ok' };
 }
