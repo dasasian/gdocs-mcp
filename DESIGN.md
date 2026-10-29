@@ -26,7 +26,7 @@ There is no canonical local copy and no continuous sync in the core model. The G
 The agent reads and writes **GitHub-flavored markdown with inline HTML**:
 
 - **Content & inline emphasis** → markdown (`#`, `**bold**`, lists, tables, links).
-- **Docs-only formatting** markdown can't express (alignment, color, font, size, spacing, indent, image dimensions) → CSS, in the two places a web page puts it (§2a): a `<style>` block for the document's defaults, and `style="…"` on a `<p>` or `<span>` that differs from them. `<img width="400">` for images. A table with any style reads as an HTML `<table>` carrying the same CSS (§2d).
+- **Docs-only formatting** markdown can't express (alignment, color, font, size, spacing, indent, image dimensions) → CSS, in the two places a web page puts it (§2a): a `<style>` block for the document's defaults, and `style="…"` on a `<p>` or `<span>` that differs from them. `<img width="400">` for images. A table with any style reads as an HTML `<table>` carrying the same CSS (§2d). Line breaks, code blocks and quotes follow CommonMark (§2e).
 - **Suggestions / tracked changes** → HTML `<ins>` / `<del>` with an ID marker (`data-sug` attribute or `<!-- sug:id -->`).
 
 This single format does both jobs: formatting is **visible in the read** (so the agent can perceive *and* verify style changes), and it is a format the agent authors natively. It replaces an earlier "clean markdown + separate formatting sidecar" idea.
@@ -125,8 +125,9 @@ markup. It renders the line, parses it the way the writer will (`parseBlocks`,
 `parseInline`), and marks only if the result is not one plain paragraph of the
 same words; the escape set is then the smallest set of punctuation kinds that
 restores the same parse. So `file_name_here`, a signature line of underscores,
-`<Client Name>`, `---`, and a lone `>` (the writer has no blockquote) already
-round-trip and stay clean, and a new construct taught to the writer is marked
+`<Client Name>`, and `---` already round-trip and stay clean; a paragraph of
+text that starts with `> ` is marked, because the writer reads that as a quote
+(§2e). A new construct taught to the writer is marked
 by the reader with no second edit. Table cells and header/footer segments use the
 same path; a cell also accounts for the `\|` pipe step its row goes through.
 
@@ -318,6 +319,32 @@ left after the table, an empty paragraph in the previous paragraph's style, is
 deleted in the same batch. Two empty paragraphs stay because Docs requires them:
 one before a table at the very top of a doc or segment, and one after a table
 that ends it.
+
+### 2e. Line breaks, code blocks and quotes follow CommonMark
+
+Long markdown is usually hard-wrapped at 80 columns, and `contentFile` is the
+path for long markdown, so the writer reads lines the way CommonMark does (#59).
+
+- **A single newline inside a paragraph, list item or quote is a space.**
+  `This quote covers the website\nrebuild for Acme.` is one paragraph. A list
+  item that wraps onto an indented (or unindented) next line stays one item. A
+  blank line ends a paragraph, as the read already shows it. `<br>` forces a
+  line break, and reads back as `<br>`.
+- **A code block,** fenced or indented four spaces, is one Courier New
+  paragraph with a line break between its lines, and every space kept, so
+  aligned columns survive. A paragraph that is Courier New throughout reads back
+  as a fence. Two code blocks in a row are two paragraphs and read back as two
+  fences. A language tag (```` ```js ````) has nowhere to live in Docs and is
+  dropped. A paragraph someone set wholly in Courier New in Docs reads as a
+  fence too, and writes back the same.
+- **A blockquote** is a paragraph indented 36pt with a thin gray left border
+  (`paragraphStyle.borderLeft`, 1.5pt, #cccccc); that border is the mark the
+  read finds, and it reads back as `> `. A bare `>` line separates paragraphs
+  inside one quote, so a three-paragraph quote stays three paragraphs. Paragraph
+  borders stay outside the CSS of §2a: the border is the quote's marker, not a
+  style the agent sets.
+- **A quote inside a quote (`>>`) and a list or code block inside a quote are
+  refused,** naming the line, rather than flattened.
 
 ---
 
@@ -535,7 +562,10 @@ Four rules make blocks behave:
 - **A new block carries its own style, not its anchor's.** A paragraph added
   after a heading is Normal text unless the markdown says otherwise (a Title
   leaking into what followed is how #48 found this). Text added inside an
-  existing paragraph keeps that paragraph's style.
+  existing paragraph keeps that paragraph's style. What counts as a new block
+  is CommonMark's answer (§2e): `Scope` → `Scope\nNew para` adds a paragraph,
+  because a heading ends at its line, but `Intro` → `Intro\nMore` joins "More"
+  onto Intro's paragraph with a space.
 - **An anchor in the middle of a paragraph splits it.** `old: "within 30 days"`,
   `new: "within 30 days\n\n| A | B |…"` ends the paragraph at "days", puts the
   table next, and makes the rest of the sentence a paragraph after it — what the
@@ -574,7 +604,8 @@ or footer is written without asking, like a new one. Replacing content
 is refused on the first call, and the refusal is a loss summary: the paragraphs
 of text, and everything a read cannot carry that the replace would take with it
 — comments, suggestions, tab stops (the Docs API cannot write them back),
-smart chips, bookmarks, section and column breaks.
+smart chips, bookmarks, section and column breaks, page-number fields (the
+API can read one but cannot make one).
 
 ```
 write_doc("/Work/Contract", …)
