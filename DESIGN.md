@@ -151,8 +151,8 @@ instead; a bare `<hr>` is a visible rule wherever the style is stripped, so the
 read does not use it.
 
 The writer accepts the common spellings — that `<div>`, Google's `<hr>`, and the
-modern `break-before: page` / `break-after: page` — in `write_doc`, `edit_doc`
-and `insert_content`, and sends `insertPageBreak`. There is no page-break tool.
+modern `break-before: page` / `break-after: page` — in `write_doc` and
+`edit_doc`, and sends `insertPageBreak`. There is no page-break tool.
 A `<div>` or `<hr>` on its own line that is anything else is refused the way §2a
 refuses unsupported CSS: a bare `<hr>` or `<div style="color:red">` is an error,
 not text. Text that really spells the line reads as `<p>…</p>` (§2b), since the
@@ -204,13 +204,11 @@ only when the vocabulary/return-shape differs; destructive verbs stay distinct).
 | Tool | Role |
 |---|---|
 | `read_doc(path, mode, segment?)` | Read as markdown+HTML — a `<style>` block of the named styles, `style="…"` where a paragraph or run differs, images as `<img src="image:…" width height>` (§2, §2a). `mode`: `clean` (default) · `tracked` (`<ins>/<del>`+IDs) · `accepted` · `rejected`. `segment`: `body`/`header`/`footer`/`all` (§3a) |
-| `edit_doc(path, old_string, new_string, replace_all?, strict?, segment?)` | String-anchored edit (the workhorse). Also the only style writer: a `style`, a class, or a `<style>` rule (§2a, §4) |
-| `write_doc(path, content\|contentFile, confirmLoss?)` | The local `Write`: creates the doc or tab when the path names nothing, replaces it when it names something — **guarded** (§4) |
-| `insert_content(path, content\|contentFile, at?)` | Insert new content at a structural position (`end`/`top`/anchor) — the non-anchored counterpart to `edit_doc` (§4) |
+| `edit_doc(path, old_string, new_string\|contentFile, replace_all?, strict?, segment?, baseDir?)` | The local `Edit` (the workhorse). `new_string` is the full markdown `write_doc` takes, tables and images included, so inserting is an edit that keeps its anchor and adds to it. Also the only style writer: a `style`, a class, or a `<style>` rule (§2a, §4) |
+| `write_doc(path, content\|contentFile, confirmLoss?, segment?, baseDir?)` | The local `Write`: creates the doc, tab, header or footer when the path names nothing or something empty, replaces it when it holds content — **guarded** (§4) |
 | `export_doc(path, dir, format?, filename?)` | Server-side render to pdf/docx/odt/rtf/txt/html/epub/md. A doc path (or a one-tab doc) goes through Drive `files.export`, which renders every tab; a tab path of a multi-tab doc goes through the Docs UI's `export?tab=` endpoint — undocumented and throttled, so a failure is refused, never widened to the whole doc (`docs/limitations.md`) |
 | `set_page_setup / get_page_setup(path)` | Document page setup: margins, page size, orientation |
-| `insert_image(path, at, uri, width?, height?, align?, baseDir?, segment?)` | Images from a URL or a local file (markdown can't size/place them) |
-| `insert_table(path, rows, cols, data?, align?, segment?)` · `edit_table(path, cell, op, side?, segment?)` · `set_table_style / get_table_style(path, cell, segment?)` | Tables: create (cells take inline markdown), insert/delete row-or-column, style and read style back. `segment` reaches a letterhead table (§3a) |
+| `edit_table(path, cell, op, side?, segment?)` · `set_table_style / get_table_style(path, cell, segment?)` | Tables: insert/delete row-or-column, style and read style back. A new table is markdown in `edit_doc` or `write_doc`. `segment` reaches a letterhead table (§3a) |
 | `list_suggestions(path, segment?)` | Suggestions as before→after diffs |
 | `apply_suggestions(path, resolutions[], segment?)` | Resolve one or more suggestions atomically (§6) |
 | `list_comments / add_comment(replyTo?) / resolve_comment` | Drive comments (`add_comment` also replies) |
@@ -356,9 +354,13 @@ Two rules this design enforces:
    rather than falling back to the body. This is also why indices are always
    paired with their segmentId on the way out: offsets are per-segment, so a
    range read from a header but written without its id would land at the same
-   numeric offset in the body. `createSegment: true` opts in to
-   creating it (default header/footer only — the API cannot create a
-   first-page/even-page one).
+   numeric offset in the body. Creating one is `write_doc` with `segment`:
+   a header or footer that doesn't exist is created and written, the way a
+   path that names nothing is (§4). Only the default one can be. The API
+   cannot create a first-page or even-page header, so that call is refused
+   with "Turn on Different first page in Docs (Format → Headers & footers),
+   then retry." No other tool creates a segment, and nothing deletes one:
+   writing empty content leaves an empty footer.
 
 ---
 
@@ -375,7 +377,40 @@ Two rules this design enforces:
 - **>1 matches** → error listing each with surrounding context; agent retries with more context (same escape hatch as local `Edit`). This is also how disambiguation works without polluting reads with anchor IDs.
 - **`replace_all`** flag, same semantics as local `Edit`.
 
-**Output (`new_string`):** interpreted as **markdown + inline HTML** for inline constructs (bold/italic/code/links + `<span style>`), plus a paragraph's own `<p style="…">` / `<p class="…">`. Inserted text inherits the paragraph style of the match location. Block-level restructuring (new tables, headings from scratch) goes through dedicated insert tools, not `edit_doc`.
+**Output (`new_string`):** the same **markdown + inline HTML** `write_doc` takes —
+inline constructs (bold/italic/code/links + `<span style>`), a paragraph's own
+`<p style="…">` / `<p class="…">`, and whole blocks: headings, lists, tables,
+images (`<img width height>`; a centered one is
+`<p style="text-align:center"><img …></p>`, the form the read shows), page
+breaks. Long text goes in `contentFile`; relative image paths resolve against
+`baseDir`. There is no insert tool. Inserting is an edit whose `new_string`
+keeps the anchor and adds to it:
+
+```
+old_string: | Total | $4,200 |
+new_string: | Total | $4,200 |
+
+            Payment due within 30 days.
+```
+
+Four rules make blocks behave:
+
+- **What comes back unchanged is kept.** Text in `old_string` that reappears
+  unchanged in `new_string` is not deleted and re-inserted, so its style,
+  comments and suggestions stay. This is the style-only rule below, applied to
+  the whole edit. It is also how a paragraph goes after a table that ends the
+  doc: the Docs API cannot insert across a cell edge, so the agent quotes the
+  table's last row, writes it back, and adds the paragraph after it, as above.
+- **A new block carries its own style, not its anchor's.** A paragraph added
+  after a heading is Normal text unless the markdown says otherwise (a Title
+  leaking into what followed is how #48 found this). Text added inside an
+  existing paragraph keeps that paragraph's style.
+- **An anchor in the middle of a paragraph splits it.** `old: "within 30 days"`,
+  `new: "within 30 days\n\n| A | B |…"` ends the paragraph at "days", puts the
+  table next, and makes the rest of the sentence a paragraph after it — what the
+  same edit does to a local markdown file.
+- **An empty doc, tab or segment has no anchor.** `write_doc` writes it, without
+  asking, because there is nothing to lose (below).
 
 Design asymmetry, deliberate: **locate by loose plain-text match, author with markdown/HTML formatting.**
 
@@ -401,7 +436,10 @@ it follows.
 
 **`write_doc` — creating is free, replacing is asked for once.** `write_doc`
 mirrors the local `Write`: a path that names nothing is created (a doc in a
-folder, a tab in a doc), and a path that names something is replaced. Replacing
+folder, a tab in a doc), and a path that names something is replaced. `segment`
+writes a header or footer the same way, creating it when the doc has none (§3a).
+Asking is only for when there is something to lose: an empty doc, tab, header
+or footer is written without asking, like a new one. Replacing content
 is refused on the first call, and the refusal is a loss summary: the paragraphs
 of text, and everything a read cannot carry that the replace would take with it
 — comments, suggestions, tab stops (the Docs API cannot write them back),
