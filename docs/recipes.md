@@ -171,8 +171,8 @@ add a row under 'Deposit' and widen the first column."*
 
 **What happens:** `edit_doc` (or `write_doc`) renders the markdown table;
 `edit_table` inserts the row (located by the cell text "Deposit", no indices);
-`set_table_style` shades the header and adjusts padding / background / column
-widths on the existing table.
+`edit_doc` shades the header and widens the column by giving the table back as HTML
+with the same words and a `style` on the row and the `<col>`, which sends only style requests.
 
 ---
 

@@ -8,6 +8,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Breaking
 
+> **Two tools are removed (#61): `get_table_style` and `set_table_style`. A table's style is CSS on the table `read_doc` shows, and `edit_doc` changes it.** 22 tools become 20. `edit_table` stays.
+
+| Removed | Use instead |
+|---|---|
+| `get_table_style(path, cell)` | `read_doc`. A table with nothing but Docs defaults still reads as a pipe table. Any other table reads, whole, as `<table style>` with `<col style="width:120pt">`, `<tr style="height:40pt">`, `<thead>` (exactly the pinned rows, `<th>` inside it), `<td style>` (`border`, `padding`, `background`, `vertical-align`), `colspan` and `rowspan`, one row per line |
+| `set_table_style(path, cell, scope, padding, backgroundColor, border, columnWidths, headerRows)` | `edit_doc`: old_string `<td>Client</td>`, new_string `<td style="background:#eeeeee">Client</td>` sends only `updateTableCellStyle`. The first style on a pipe table is the same edit with the whole table given back as HTML; its cell words come back unchanged, so nothing is retyped. Pin a row by putting it in `<thead>`; set a column width with `<col style="width:200pt">`; hide a border with `border:0` |
+
+`write_doc` and `edit_doc` accept the same table, with markdown in the cells (a cell holding blocks, paragraphs or a list, has them on their own lines between `<td>` and `</td>`) and style at `<table>`, `<col>`, `<tr>`, then `<td>`, the narrowest of which wins. An unsupported property is refused before any request is sent. Style written at a wider level than it was read is the same table: the read puts a value on the narrowest element every cell under it shares, so a table read and written back reads the same. The writer also stops leaving an empty paragraph on each side of an inserted table: it inserts at the end of the paragraph before and deletes the paragraph mark left after the table, in the same batch, keeping the empty paragraph Docs requires at the very top or bottom of a doc, tab, header or footer. `read_doc` stops reading a table's text with a cell's paragraphs run together: a cell with more than one paragraph, a list, a heading or a paragraph style reads as HTML. A pipe table cell's line break reads as `<br>`, as it does in the body.
+
 > **Three tools are removed and two change shape (#60): inserting becomes an edit.** `insert_content`, `insert_table` and `insert_image` go, and `createSegment` goes from every tool. `edit_doc`'s `new_string` takes the full markdown, and `write_doc` takes `segment`. 25 tools become 22.
 
 | Removed | Use instead |

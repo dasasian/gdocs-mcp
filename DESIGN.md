@@ -245,6 +245,17 @@ A style change is an `edit_doc` whose words stay the same (§4):
 the table written back as HTML; its cells come back unchanged, so nothing is
 retyped.
 
+Details the checks against Docs settled (#61):
+
+- **The Docs defaults are the same set or unset.** `insertTable` and a table made in the Docs UI report padding 5pt, top alignment, no border and an empty background on every cell, no row height and evenly distributed columns; a cell reset in the API reports none of them. Both read as defaults. A border of 1pt solid black counts as the default too.
+- **A cell's paragraphs inherit from the table, not from Normal text.** Docs gives a cell paragraph a line spacing of 100% whatever Normal text says (115% in a new doc), so a cell's `line-height` is read against 100%. Without that every cell of every table would read as styled.
+- **The pipe form carries one thing per column besides words: alignment.** A column whose cells disagree on alignment, or a cell with more than one paragraph, a list, a heading or any other paragraph style, makes the table HTML.
+- **A merged cell keeps its far borders on the cells it covers.** A cell spanning columns stores its right border on the last cell it covers, and one spanning rows its bottom border on the last row; the read takes them from there, and the covered cells are not in the markup.
+- **Docs gives a merged row a height of its own** (21pt for one line of text). The writer sets it back, so a table written with a merge reads with the heights it was written with.
+- **A row or column takes a style only when two or more cells under it share it.** One cell's style is that cell's.
+- **A table edit compares whole tables.** `edit_doc` finds old_string in the markup of the tables it reads (exact text, so quote it from `read_doc`), applies the replacement, reads the result as a table and sends the difference: style for what changed in style, a retyped cell for a cell whose words changed, a restyle of the cell's text when the words are the same and only its markup differs, and a new table for a change of rows, columns or merges. Table tags in new_string with no table in old_string are an error, not text. Blocks added before `<table` or after `</table>` are not part of the table: the table is kept, and they are inserted next to it by the ordinary insertion of §4 (Normal text, no empty paragraph between). `</table>`, or a last row and `</table>`, is a valid anchor for the table it closes; more than one table matching is the usual ambiguity. A table edit that cannot be read as one table is refused with a plain message that names what to quote, and lists no CSS: the supported-CSS lists belong to unsupported CSS alone.
+- **A dash style HTML has no word for** (long dash, dash-dot) reads as `dashed`.
+
 **No stray empty paragraphs.** `insertTable` adds a paragraph before the table,
 and the API refuses to delete it afterwards ("Invalid deletion range", checked
 live). So the writer inserts the table at the end of the text of the paragraph

@@ -9,7 +9,7 @@ import { readDoc } from './docs/read.js';
 import { editDoc } from './docs/edit.js';
 import { writeDoc, resolveContentSource } from './docs/document.js';
 import { setPageSetup, getPageSetup } from './docs/page.js';
-import { insertRow, deleteRow, insertColumn, deleteColumn, setTableStyle, getTableStyle } from './docs/objects.js';
+import { insertRow, deleteRow, insertColumn, deleteColumn } from './docs/objects.js';
 import { listPermissions, shareDoc, unshareDoc, setLinkAccess } from './drive/sharing.js';
 import { driveShell } from './drive/shell.js';
 import { downloadImages } from './drive/images.js';
@@ -126,7 +126,7 @@ export function createServer(options: ServerOptions = {}): McpServer {
     {
       title: 'Edit a Google Doc',
       description:
-        'Replace an exact unique snippet of text in a Google Doc (like a local file Edit). old_string is matched markup-tolerantly; ambiguous matches return surrounding context to disambiguate; a table is matched as its markdown rows. INSERTING IS AN EDIT: quote the text to add after (or before), write it back in new_string, and add the new content to it. Text from old_string that comes back unchanged is kept as it is, with its style, comments and suggestions, so old_string `| Total | $4,200 |` and new_string `| Total | $4,200 |\\n\\nPayment due within 30 days.` leaves the table alone and adds the paragraph after it; a match that ends in a table puts the new blocks after the whole table. An anchor in the middle of a paragraph splits the paragraph there. A new block carries its own style, not its anchor’s: a paragraph added after a heading, a Title or a list item is Normal text with no bullet unless the markdown says otherwise, while text added inside an existing paragraph keeps that paragraph’s style. An empty doc, tab, header or footer has nothing to anchor on: use write_doc. new_string is the same markdown and inline HTML write_doc takes: headings, lists, tables, images (`<img src width height>` or `![alt](src)`; a centered one is `<p style="text-align:center"><img …></p>`, local files resolve against baseDir), page breaks, and inline constructs (**bold**, *italic*, `code`, [text](url), `<u>`, `<span style="color:…;font-size:…pt">`, `<p style="…">`, `<p class="title">`, and a page break as a line of its own: `<div style="page-break-after:always"></div>`, so new_string `Title page\\n<div style="page-break-after:always"></div>` puts what follows on a new page; old_string can span a break) — the same spelling read_doc emits, so a read can be edited and written back. STYLE IS CSS, and this is the only way to change it. Restyle text you are not otherwise changing by giving the same words with different markup: old_string `<p>4. Term`, new_string `<p style="margin-left:36pt; text-indent:-18pt">4. Term` sends only style requests — no delete, no insert, so a long paragraph is never retyped and its words cannot change; markup missing from new_string is cleared (drop the wrapper to remove an indent). To restyle a whole named style, edit its rule in read_doc’s <style> block: old_string `p { font-family: Arial; font-size: 11pt`, new_string `p { font-family: Arial; font-size: 12pt` becomes one updateNamedStyle and every paragraph that does not override it follows. An unsupported property (border, float, a px length, a typo) fails the edit before any request is sent, listing every offending line and the supported set. NOTE: this is a direct edit — the change is applied as live text, not a tracked suggestion (the Docs API cannot create suggestions). If the doc has pending suggestions from other reviewers, flag to the user that your edit will sit alongside them as an accepted change.',
+        'Replace an exact unique snippet of text in a Google Doc (like a local file Edit). old_string is matched markup-tolerantly; ambiguous matches return surrounding context to disambiguate; a table is matched as its rows, in the form read_doc shows it (a pipe table, or the HTML <table> of a styled one). INSERTING IS AN EDIT: quote the text to add after (or before), write it back in new_string, and add the new content to it. Text from old_string that comes back unchanged is kept as it is, with its style, comments and suggestions, so old_string `| Total | $4,200 |` and new_string `| Total | $4,200 |\\n\\nPayment due within 30 days.` leaves the table alone and adds the paragraph after it; a match that ends in a table puts the new blocks after the whole table. An anchor in the middle of a paragraph splits the paragraph there. A new block carries its own style, not its anchor’s: a paragraph added after a heading, a Title or a list item is Normal text with no bullet unless the markdown says otherwise, while text added inside an existing paragraph keeps that paragraph’s style. An empty doc, tab, header or footer has nothing to anchor on: use write_doc. new_string is the same markdown and inline HTML write_doc takes: headings, lists, tables, images (`<img src width height>` or `![alt](src)`; a centered one is `<p style="text-align:center"><img …></p>`, local files resolve against baseDir), page breaks, and inline constructs (**bold**, *italic*, `code`, [text](url), `<u>`, `<span style="color:…;font-size:…pt">`, `<p style="…">`, `<p class="title">`, and a page break as a line of its own: `<div style="page-break-after:always"></div>`, so new_string `Title page\\n<div style="page-break-after:always"></div>` puts what follows on a new page; old_string can span a break) — the same spelling read_doc emits, so a read can be edited and written back. STYLE IS CSS, and this is the only way to change it. Restyle text you are not otherwise changing by giving the same words with different markup: old_string `<p>4. Term`, new_string `<p style="margin-left:36pt; text-indent:-18pt">4. Term` sends only style requests — no delete, no insert, so a long paragraph is never retyped and its words cannot change; markup missing from new_string is cleared (drop the wrapper to remove an indent). To restyle a whole named style, edit its rule in read_doc’s <style> block: old_string `p { font-family: Arial; font-size: 11pt`, new_string `p { font-family: Arial; font-size: 12pt` becomes one updateNamedStyle and every paragraph that does not override it follows. An unsupported property (border, float, a px length, a typo) fails the edit before any request is sent, listing every offending line and the supported set. TABLE STYLE is CSS on the table’s HTML, changed the same way: read_doc shows a table with any cell or row style, wide or short columns, pinned rows or merged cells as <table style> with <col style="width:120pt">, <tr style="height:40pt"> (a minimum), <thead> (exactly the pinned rows), <td style> (border, padding, background, vertical-align) and colspan or rowspan, one row per line, while a table with nothing but Docs defaults stays a pipe table. old_string `<td>Client</td>`, new_string `<td style="background:#eeeeee">Client</td>` sends only the style request, and every cell whose words come back unchanged is kept, not retyped; styling a pipe table is giving the whole table back as HTML with the same words. A table edit that changes rows, columns or merges replaces the table (edit_table adds or deletes one row or column and keeps the rest). NOTE: this is a direct edit — the change is applied as live text, not a tracked suggestion (the Docs API cannot create suggestions). If the doc has pending suggestions from other reviewers, flag to the user that your edit will sit alongside them as an accepted change.',
       inputSchema: {
         path: tabPathArg,
         old_string: z.string().describe('exact text to replace (quote a unique slice from read_doc)'),
@@ -413,80 +413,6 @@ export function createServer(options: ServerOptions = {}): McpServer {
       }
     },
   );
-
-  server.registerTool(
-    'get_table_style',
-    {
-      title: 'Read an existing table’s style',
-      description:
-        'Read the style of the table containing the given cell text: per-column widths (points), how many header rows are pinned, and the matched cell’s padding, background and per-side borders. The read counterpart to set_table_style — use it to check a change took, to preserve a table’s look while rewriting it, or to copy one table’s layout onto another. Column widths come back in the exact shape set_table_style accepts. Table-wide facts (widths, header rows) are reported for the whole table; padding/background/borders are reported for the MATCHED cell, since cells in one table can differ and a table-wide answer would have to guess. Note Docs gives every cell 5pt padding by default, so padding is reported even on a table nobody has styled.',
-      inputSchema: {
-        path: tabPathArg,
-        cell: z.string().describe('text of any cell in the target table (locates the table)'),
-        ...segmentArg,
-        ...accountArg,
-      },
-    },
-    async ({ path, cell, segment, page, account }) => {
-      const clients = await clientsForAccount(account);
-      const target = await resolveTab(clients, path);
-      return json(await getTableStyle(clients, target.documentId, cell, { segment, page, tabId: target.tabId }));
-    },
-  );
-
-  server.registerTool(
-    'set_table_style',
-    {
-      title: 'Style an existing table',
-      description:
-        'Edit style/layout of an existing table (located by any cell’s text): cell padding (pt), background color (hex), cell borders, column widths (pt), and pinned header rows. scope selects which cells padding/background/border hit — table (default), row, column, or cell (the row/column of the matched cell). Fixes e.g. thin left padding that clips the first letter of cells; border {width:0} makes a table borderless; headerRows repeats the top rows on every page. A direct edit, not a tracked suggestion.',
-      inputSchema: {
-        path: tabPathArg,
-        cell: z.string().describe('text of any cell in the target table (locates the table)'),
-        scope: z.enum(['table', 'row', 'column', 'cell']).optional().describe('default table'),
-        padding: z
-          .object({
-            left: z.number().optional(),
-            right: z.number().optional(),
-            top: z.number().optional(),
-            bottom: z.number().optional(),
-          })
-          .optional()
-          .describe('cell padding in points'),
-        backgroundColor: z.string().optional().describe('hex, e.g. #f1f3f4'),
-        border: z
-          .object({
-            width: z.number().optional().describe('points; 0 hides the border (borders cannot be transparent)'),
-            color: z.string().optional().describe('hex, e.g. #cccccc (default #000000)'),
-            dashStyle: z.enum(['SOLID', 'DOT', 'DASH']).optional(),
-            sides: z
-              .array(z.enum(['top', 'bottom', 'left', 'right']))
-              .optional()
-              .describe('which edges to set (default all four)'),
-          })
-          .optional()
-          .describe('cell borders, over the same scope as padding/background'),
-        columnWidths: z
-          .array(z.object({ index: z.number(), width: z.number() }))
-          .optional()
-          .describe('set specific column widths (points) by column index'),
-        headerRows: z
-          .number()
-          .optional()
-          .describe('repeat the top N rows on every page (Docs’ "pin header rows"); 0 unpins. Independent of scope.'),
-        ...segmentArg,
-        ...accountArg,
-      },
-    },
-    async ({ path, cell, scope, padding, backgroundColor, border, columnWidths, headerRows, segment, page, account }) => {
-      const clients = await clientsForAccount(account);
-      const target = await resolveTab(clients, path);
-      return json(await setTableStyle(clients, target.documentId, cell, { scope, padding, backgroundColor, border, columnWidths, headerRows, segment, page, tabId: target.tabId }));
-    },
-  );
-
-
-
 
   server.registerTool(
     'drive',
