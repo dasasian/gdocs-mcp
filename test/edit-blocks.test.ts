@@ -207,3 +207,12 @@ describe('an empty doc has no anchor (#60 rule 7)', () => {
     await expect(editDoc(clients, 'd', 'x', 'y', { segment: 'header' })).rejects.toThrow(/write_doc/);
   });
 });
+
+describe('an anchor copied from the read across two paragraphs is found (#60)', () => {
+  it('edits text under a heading quoted with a blank line between', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: 'Scope', namedStyleType: 'HEADING_2' }, { text: 'This project covers the work.' }]));
+    const result = await editDoc(clients, 'd', '## Scope\n\nThis project covers', '## Scope\n\nThis project includes');
+    expect(result.status).toBe('ok');
+    expect(batchUpdate).toHaveBeenCalled();
+  });
+});

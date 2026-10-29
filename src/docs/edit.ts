@@ -54,30 +54,47 @@ function findAll(haystack: string, needle: string): number[] {
   return out;
 }
 
-function tableRowsAsCellText(s: string): string {
-  return s
-    .split('\n')
-    .filter((line) => !(isTableRow(line) && isTableSep(line)))
-    .map((line) => (isTableRow(line) ? splitRow(line).join('\n') : line))
-    .join('\n');
+type LineNormalizer = (line: string) => string[];
+
+const keepLine: LineNormalizer = (line) => [line];
+const stripLine: LineNormalizer = (line) => [stripMarkdown(line)];
+const cellLine: LineNormalizer = (line) => {
+  if (!isTableRow(line)) return [stripMarkdown(line)];
+  return isTableSep(line) ? [] : splitRow(line).map(stripMarkdown);
+};
+
+const isBlank = (line: string): boolean => line.trim() === '';
+
+export interface Located {
+  needle: string;
+  positions: number[];
+  /** turns a slice of old_string into the text it matched, the way the whole of old_string became `needle`. */
+  normalize: (text: string) => string;
 }
 
-/** Resolves old_string to its match positions: exact first, then markup-tolerant, with a markdown table matching as its cells' text. */
-export function locate(text: string, oldString: string): { needle: string; positions: number[] } {
-  let positions = findAll(text, oldString);
-  if (positions.length) return { needle: oldString, positions };
-  const cellText = tableRowsAsCellText(oldString);
-  if (cellText !== oldString) {
-    const needle = stripMarkdown(cellText);
-    positions = findAll(text, needle);
-    if (positions.length) return { needle, positions };
+/**
+ * Resolves old_string to its match positions: exact first, then markup-tolerant
+ * (a markdown table matches as its cells' text), then with each blank line taken
+ * as the single paragraph break the read shows between paragraphs.
+ */
+export function locate(text: string, oldString: string): Located {
+  const tried = new Set<string>();
+  for (const dropBlankLines of [false, true]) {
+    for (const normalizeLine of [keepLine, cellLine, stripLine]) {
+      const normalize = (part: string): string =>
+        part
+          .split('\n')
+          .filter((line) => !(dropBlankLines && isBlank(line)))
+          .flatMap(normalizeLine)
+          .join('\n');
+      const needle = normalize(oldString);
+      if (tried.has(needle)) continue;
+      tried.add(needle);
+      const positions = findAll(text, needle);
+      if (positions.length) return { needle, positions, normalize };
+    }
   }
-  const stripped = stripMarkdown(oldString);
-  if (stripped !== oldString) {
-    positions = findAll(text, stripped);
-    if (positions.length) return { needle: stripped, positions };
-  }
-  return { needle: oldString, positions: [] };
+  return { needle: oldString, positions: [], normalize: (part) => part };
 }
 
 export function contextAround(text: string, start: number, end: number): string {

@@ -76,3 +76,29 @@ describe('locate', () => {
     expect(r.needle).toBe('3 weeks');
   });
 });
+
+describe('a blank line in old_string matches a paragraph break (#60)', () => {
+  const text = 'Scope\nThis project covers the work.\nTail';
+  it('finds an anchor copied from the read across two paragraphs', () => {
+    expect(locate(text, 'Scope\n\nThis project covers').positions).toEqual([0]);
+  });
+  it('composes with the markup-tolerant step', () => {
+    const r = locate(text, '## Scope\n\nThis project covers');
+    expect(r.positions).toEqual([0]);
+    expect(r.needle).toBe('Scope\nThis project covers');
+  });
+  it('strips markup on every line, not only the first', () => {
+    expect(locate('Scope\nSub heading', '## Scope\n\n### Sub heading').positions).toEqual([0]);
+  });
+  it('composes with a table anchor', () => {
+    const r = locate('a\nb\n1\n2\nAfter', '| a | b |\n|---|---|\n| 1 | 2 |\n\nAfter');
+    expect(r.positions).toEqual([0]);
+  });
+  it('keeps the exact match first: a real empty paragraph still matches as written', () => {
+    const r = locate('A\n\nB', 'A\n\nB');
+    expect(r).toMatchObject({ needle: 'A\n\nB', positions: [0] });
+  });
+  it('does not add a second match where the exact one was already unique', () => {
+    expect(locate('A\n\nB\nA\nB', 'A\n\nB').positions).toEqual([0]);
+  });
+});
