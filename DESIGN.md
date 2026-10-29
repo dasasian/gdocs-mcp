@@ -291,9 +291,9 @@ quote are not touched, so their comments and style stay.
   cell's text if its words changed.
 - **A moved row is a delete and an insert,** because the API has no move. The
   inserted copy is retyped, so comments on the old row are lost. Before moving,
-  the server counts the comments whose quoted text appears in the row (Drive
-  anchors are opaque, §4, so the quote is the only link, and it can overcount
-  but never miss). If there are any, the first call is refused with the count
+  the server counts the comments whose range falls in the row, and those with
+  no range (§7) whose quoted text appears in it, which can overcount but never
+  miss. If there are any, the first call is refused with the count
   and a `confirmLoss` string, as `write_doc` does. A row with none moves without
   asking.
 - **Anything the comparison cannot read as one clean set of changes is refused,**
@@ -309,7 +309,7 @@ Details the checks against Docs settled (#62):
 - **Lines still unpaired after the shared-cell pairing, with as many old as new in the same gap, are paired in order.** That is an edit of every cell of the line (the only way to change a one-row table's header cell, or a column of prices), not a delete and an insert. A line that has an identical twin among the unpaired lines on the other side is left out of this: it is a move.
 - **Rows and columns the edit leaves no match for are refused:** a table that shares no row, or no column, with the old one cannot be compared, because a table cannot lose all its rows or columns. The comparison does not guess between two equally good pairings; it says so and asks for one change at a time.
 - **Pipe rows are a table edit too.** An old_string of nothing but pipe rows, with a new_string of nothing but pipe rows or empty, is read as a change to the table, not as text: that is how `read_doc` shows a table with no style.
-- **The Drive API takes `quotedFileContent` on a new comment with or without an anchor and lists it back** (the quote is not checked against the doc), so a comment quoting a cell can be made through the API and the count is testable live. A quote is matched to a moved line when it is inside one of its cells or when one of its cells is inside the quote, which can overcount and does not miss a quote that spans cells. Comments in a header or footer cannot be anchored (§4), so a move there never asks.
+- **The Drive API takes `quotedFileContent` on a new comment with or without an anchor and lists it back** (the quote is not checked against the doc), so a comment quoting a cell can be made through the API and the count is testable live. A quote is matched to a moved line when it is inside one of its cells or when one of its cells is inside the quote, which can overcount and does not miss a quote that spans cells. A comment with a range (§7) is matched by its range instead, in a header or footer too.
 
 **No stray empty paragraphs.** `insertTable` adds a paragraph before the table,
 and the API refuses to delete it afterwards ("Invalid deletion range", checked
@@ -375,18 +375,19 @@ How far each rule reaches, where the issue left room:
 The canonical, always-current list is the table in `README.md`; this is the
 conceptual map. The surface is kept deliberately small (~25 tools) — see
 `CLAUDE.md` for the add-vs-enhance discipline (merge symmetric verbs; a new tool
-only when the vocabulary/return-shape differs; destructive verbs stay distinct).
+only when the vocabulary/return-shape differs; destructive verbs stay distinct;
+a guard is `expect` plus the name of the field it echoes).
 
 | Tool | Role |
 |---|---|
 | `read_doc(path, mode, segment?)` | Read as markdown+HTML — a `<style>` block of the named styles, `style="…"` where a paragraph or run differs, images as `<img src="image:…" width height>` (§2, §2a). `mode`: `clean` (default) · `tracked` (`<ins>/<del>`+IDs) · `accepted` · `rejected`. `segment`: `body`/`header`/`footer`/`all` (§3a) |
-| `edit_doc(path, old_string, new_string\|contentFile, replace_all?, strict?, segment?, baseDir?)` | The local `Edit` (the workhorse). `new_string` is the full markdown `write_doc` takes, tables and images included, so inserting is an edit that keeps its anchor and adds to it. Also the only style writer: a `style`, a class, or a `<style>` rule (§2a, §4) |
-| `write_doc(path, content\|contentFile, confirmLoss?, segment?, baseDir?)` | The local `Write`: creates the doc, tab, header or footer when the path names nothing or something empty, replaces it when it holds content — **guarded** (§4) |
+| `edit_doc(path, old_string, new_string\|contentFile, replace_all?, strict?, suggest?, segment?, baseDir?)` | The local `Edit` (the workhorse). `new_string` is the full markdown `write_doc` takes, tables and images included, so inserting is an edit that keeps its anchor and adds to it. Also the only style writer: a `style`, a class, or a `<style>` rule (§2a, §4) |
+| `write_doc(path, content\|contentFile, confirmLoss?, suggest?, segment?, baseDir?)` | The local `Write`: creates the doc, tab, header or footer when the path names nothing or something empty, replaces it when it holds content — **guarded** (§4), or suggests the replace with `suggest` (§6) |
 | `export_doc(path, dir, format?, filename?)` | Server-side render to pdf/docx/odt/rtf/txt/html/epub/md. A doc path (or a one-tab doc) goes through Drive `files.export`, which renders every tab; a tab path of a multi-tab doc goes through the Docs UI's `export?tab=` endpoint — undocumented and throttled, so a failure is refused, never widened to the whole doc (`docs/limitations.md`) |
 | `set_page_setup / get_page_setup(path)` | Document page setup: margins, page size, orientation |
-| `list_suggestions(path, segment?)` | Suggestions as before→after diffs |
-| `apply_suggestions(path, resolutions[], segment?)` | Resolve one or more suggestions atomically (§6) |
-| `list_comments / add_comment(replyTo?) / resolve_comment` | Drive comments (`add_comment` also replies) |
+| `list_suggestions(path, segment?)` | Each suggestion's Docs summary, its `context`, author and time (§6) |
+| `apply_suggestions(path, expectTitle, resolutions[], segment?)` | Accept or reject one or more suggestions in one batch, each on its own as in Docs (§6) |
+| `list_comments / add_comment(quotedText, replyTo?) / resolve_comment(expectQuotedText)` | Comments on the range they are about (§7); `add_comment` also replies |
 | `drive(cmd, args, expectName?, index?, acceptOwnershipTransfer?)` | Drive as a shell: `ls` · `find` · `mkdir` · `cp` · `mv` over paths (`~`, `/shared/<drive>`, `/shared-with-me`, `/lost+found`) or ids, down into a doc's tabs (§3c, §3d). `mv` covers rename and move, and on a tab rename, nest and un-nest; `index` (tab `mv` only) is the position among its new siblings, because a shell `mv` has no way to say it; `cp` is Drive `files.copy`. Collapsed from five bespoke tools (#44) |
 | `list_permissions / share_doc(email?|link) / unshare_doc(email?|permissionId?, expectRole)` | Sharing (person, group, domain, or anyone-with-link). A grant with no email is addressed by the `permissionId` the read returns; `expectRole` is required because a revocation is recorded nowhere (§4) |
 | `add_account / list_accounts` | Multi-account (§9) |
@@ -651,10 +652,10 @@ two levels short is refused, since there is no `mkdir -p` for tabs. A path with
 one tab means that tab, so replacing a one-tab doc asks like any other.
 
 Two items are counted less exactly than the summary reads, and it says so.
-**Comments** live in Drive and their anchor (`kix.…`) is opaque — it appears
-nowhere in the Docs API, so which tab a comment belongs to cannot be told;
-a tab replace counts the whole doc's comments and says so when the doc has
-several tabs. **Bookmarks** are not exposed by the Docs API at all, only links
+**Comments** with a range are counted in the tab their range is in (§7); a
+comment added through Drive has only a quote, so which tab it belongs to
+cannot be told, and a tab replace counts those for the whole doc and says so
+when the doc has several tabs. **Bookmarks** are not exposed by the Docs API at all, only links
 that point at one (`textStyle.link.bookmark`, `.heading`); the summary counts
 those, and a bookmark nothing links to is invisible (checked live, #55). The text is always on the list, so a
 path that matched an existing doc by accident (Drive folds case) is never
@@ -680,49 +681,103 @@ touches only what its anchor covers and keeps everything else.
 
 ## 6. Suggestions — the headline feature
 
-No existing server surfaces suggestion **content** as a diff, and all repeat that the API "can't accept/reject." Both gaps are addressable.
+The Docs API writes, reads and resolves suggestions itself (generally available
+since 2026-09-30, no new scope). Every suggestion tool sits on that API.
 
-**Reading (`list_suggestions`):** read the doc in `SUGGESTIONS_INLINE` (the only view mode that returns batchUpdate-valid indices), walk the content, group insertion/deletion-tagged runs by suggestion ID, emit clean diffs:
+**Writing (`suggest: true` on `edit_doc` and `write_doc`).** The same edit, sent
+as one `batchUpdate` with `writeControl.writeMode: "SUGGEST"`, becomes a
+suggestion for a person to accept or reject in Docs. `suggest` defaults to false:
+the call says what it does, and nothing depends on who owns the doc. The
+description tells the model to pass it when the user wants to review the change
+or the doc is not theirs.
 
-```json
-{ "id": "suggest.abc", "type": "replacement",
-  "context": "The timeline is 3 weeks.",
-  "before": "3 weeks", "after": "2 weeks" }
+```
+edit_doc("/Work/Contract", "within 30 days", "within 45 days", suggest: true)
+→ { suggestions: ["suggest.qfm833r2i6yr"] }
 ```
 
-In `read_doc(mode: "tracked")` the same suggestions render inline as `<ins>/<del>` + IDs, so reviewing them is just reading the doc.
+- **The reply lists the ids of the suggestions made,** so the caller can hand
+  them to `apply_suggestions` (to withdraw them, say). Docs folds a new change
+  into a touching suggestion by the same person, so the list can be shorter
+  than the edits sent, and an id can be one that already existed.
+- **A suggested replace does not ask for `confirmLoss`.** Nothing is lost until
+  a person accepts: rejecting a suggested replace of a whole doc brings back
+  its text, images, tables and comments as they were (checked live). The guard
+  exists for a loss that cannot be undone, and this one can.
+- **Requests Docs cannot suggest are refused before anything is sent,** naming
+  them: a new tab, deleting a header or footer, a named range, a table column
+  width (`UpdateTableColumnProperties`), and some document-style fields. An
+  edit is never split into a suggested part and a direct part. A suggested
+  edit in a header or footer works.
+- `set_page_setup` has no `suggest`: page geometry is a document-style change.
 
-**Acting (`apply_suggestions`):** the API cannot create suggestions or write *in* suggestion mode, but existing suggestions **can** be resolved by operating on the raw tagged ranges with normal (direct) edits:
+**Reading (`list_suggestions`).** The doc is read with
+`commentsViewMode: COMMENTS_VIEW_MODE_INCLUDED` and `SUGGESTIONS_INLINE`, which
+returns a `SuggestionThread` per suggestion beside the tagged runs. Each
+suggestion is listed in document order as:
 
-| Decision | Mechanism | Clean? |
-|---|---|---|
-| Accept insertion | delete suggested range, re-insert as plain text | ✓ tag gone |
-| Reject insertion | delete suggested range | ✓ |
-| Accept deletion | actually delete the marked range | ✓ |
-| Reject deletion | delete + re-insert same text plain (strips tag) | ✓ |
-| Style-change suggestion | reapply chosen style | ⚠️ partial — maps, fiddlier |
+```
+id:      suggest.qfm833r2i6yr
+summary: Replace: "30" with "45"             ← Google's, the words the Docs sidebar shows
+context: Pay within [30→45] days of invoice.  ← ours, the change in its sentence
+by:      Sam Lee · 2026-10-29T23:38:45Z       ← the thread's head post
+```
 
-The trick: **to clear a suggestion tag, delete the tagged content and reinsert the chosen final text as a normal edit.** No "ghost" suggestion remains (revision history still preserves it). This requires operating on the raw suggestion ranges, not string-editing the preview.
+Each field has a job. `summary` is what the user sees in Docs, so the model
+can say it back in words the user recognises. `context` is what tells two
+identical summaries apart (a contract with two 30s), so it is the one
+`apply_suggestions` checks, as `expectContext`. For a style-only suggestion
+`context` shows the styled words unchanged and `summary` says what changed
+("Format: bold"). In `read_doc(mode: "tracked")` the same suggestions render
+inline as `<ins>/<del>` + ids, so reviewing them is just reading the doc.
 
-> **Validated by spike** (now removed; logic ported to `src/` + `test/`). (1) A live ACCEPT of a replacement suggestion (`"3 weeks"`→`"2 weeks"`) via direct `deleteContentRange` + `insertText` over the tagged span resolved cleanly: suggestion gone, no ghost — the API does **not** reject direct edits over suggested ranges. (2) Two **adjacent** suggestions resolved in a single `batchUpdate` with descending-index ordering: both gone, correct text, no index corruption. Lower-risk variants still unexercised: reject path, pure-insertion/deletion *suggestions*, style-only.
-
-**Caveats:**
-- Text suggestions are clean; **style-change** suggestions are partial.
-- **Overlapping** suggestions need descending-index application.
-- **Attribution has no clean API path — confirmed by spike + research.** `documents.get` carries only `suggestedInsertionIds`/`suggestedDeletionIds` (no author/time). Investigated alternatives: Drive **Revisions** = dead end (a pending suggestion isn't a revision; on accept `lastModifyingUser` is the *acceptor*); Drive **Activity API v2** = partial (gives actor+timestamp but its `Suggestion` event has no `suggestionId`/range, so it can't be linked to a specific suggestion); Drive **Comments** = also a dead end for the common case. **Spike-disproven:** a *bare* suggestion (a tracked change with no attached comment) does **not** appear in the Drive comments API at all — only explicit user comments do. So there's no comment thread to correlate to unless the suggester *also* typed a comment (uncommon). The "fuzzy-match suggestion text ↔ comment quoted text" route therefore doesn't apply to typical suggestions.
-  - **Decision — v1 (final): no attribution.** Present suggestions in **document order** (the natural review order; serves "go through them" fully). Author and "latest by time" are simply not available via any API for typical suggestions. Not revisited unless Google adds first-class support.
-
-**Edit-the-markup-to-act** (accept by editing `<ins>/<del>` in a `tracked` read) is a tempting v2: it needs an intent-inference/reconciliation engine and is fragile to marker drift, so the discrete `apply_suggestions(id, decision)` stays the reliable path; ID references come naturally from what was just read.
+**Acting (`apply_suggestions`).** Each resolution is one `acceptSuggestion` or
+`rejectSuggestion`, all in one `batchUpdate`, after `expectTitle` and every
+`expectContext` match the live doc. Each suggestion is resolved on its
+own, exactly as clicking ✓ or ✗ in Docs: there is no cluster rule and no merge
+of our own. Two touching suggestions by different people can be resolved one at
+a time, and the text comes out as Docs makes it. Accept "add ' business'"
+then reject "30 → 45" in `Pay within [30→45][ business] days` and the text is
+`Pay within  business30 days.` (checked live); a caller who wants both
+decided together passes both. Style-only suggestions resolve like any other.
 
 ---
 
 ## 7. Comments
 
-Drive API v3 `comments`/`replies`. Full read/reply/resolve/add. Resolve = `replies.create` with `action: "resolve"`. `fields` parameter is mandatory on every call.
+Comments are written through the Docs API and read from the document, so a
+comment is tied to the range it is about, not to a quote.
 
-> **Validated by spike.** Reading comments works: `author.displayName`, `createdTime`, `quotedFileContent.value` (anchored text), `content`, `resolved`, and `replies` all return. **Caveat:** `author.emailAddress` comes back empty — Drive returns the **display name only, not the email** (privacy default). So comment attribution is name-only. (Reply/resolve/add are standard Drive writes — not yet spiked.)
+- **`add_comment(quotedText)` is `insertComment`** on the range `quotedText`
+  matches, found the way `edit_doc` finds `old_string`: a quote that matches
+  twice is refused with context, as an edit is. It is the name `list_comments`
+  returns for the same text. It is required: `insertComment` refuses a comment
+  with no range ("must specify a range to anchor to", checked live), and Docs
+  itself has no comment on the whole doc, so overall feedback goes on the
+  title. The tab comes from the path and a header
+  or footer from `segment`; there the range carries its `segmentId` (checked
+  live). `replyTo` is `addCommentReply`.
+- **`resolve_comment(expectQuotedText)`** is `addCommentReply` with
+  `commentAction: RESOLVE` (or `REOPEN`), which Drive shows as resolved (checked
+  live).
+- **`list_comments` reads `documents.get` with `COMMENTS_VIEW_MODE_INCLUDED`.**
+  Each `CommentThread` has its quote, author, time, status and replies; its
+  `anchorId` points into the tab's `commentAnchors`, which hold the live range.
+  The range moves with the text: a comment on characters 1–6 was at 19–24 after
+  a suggestion inserted text above it, and back at 1–6 after the reject. A
+  comment is listed with the sentence it sits in as `context`, as a suggestion
+  is.
+- **A comment added through Drive has no range,** only its quote: Drive cannot
+  anchor a comment programmatically, and comments left before this change, or
+  by other tools, are like that. They are still listed (the Docs API returns
+  them too), with their quote as `context`. The server never writes one.
+- **Author is a display name,** never an email (`PostAuthor` has a People API
+  resource name, not an address).
 
-Limitation: programmatic text-selection anchoring is opaque/undocumented (only line-based anchoring is documented). Reading comments + quoted text and reply/resolve work well; **creating** a new comment pinned to a specific phrase may render orphaned in the UI — treat comment creation as best-effort.
+What the ranges change elsewhere: `write_doc`'s loss summary counts a tab's
+comments by their anchors in that tab, and an `edit_doc` table move counts the
+comments whose ranges fall in the moved row (§2d, §4). A comment with no range
+is counted as before, by its quote, and for the whole doc.
 
 ---
 
@@ -845,7 +900,8 @@ The agent maintains these (writes on publish/pull, compares on demand): local dr
 | Capability | Best existing | This server |
 |---|---|---|
 | Read suggestions as a diff | nobody | ✓ |
-| Accept/reject suggestions | nobody ("API can't") | ✓ range-reconstruction |
+| Make suggestions | nobody | ✓ `suggest: true` on any edit |
+| Accept/reject suggestions | nobody | ✓ native, with Docs' own summary and author |
 | Editing model | index-based (all) | string-anchored, indices hidden |
 | Formatting visible on read | lossy markdown / plain | markdown + inline HTML |
 | Suggestions inline in read | nobody | `<ins>/<del>` tracked view |
@@ -879,7 +935,7 @@ Security posture is first-class: token files `0600`, scope justification documen
 ## 13. Risks
 
 The three differentiators are unproven *because* nobody has done them:
-1. **Suggestion accept/reject via range-reconstruction** — ✅ **validated** (spike): clean ACCEPT of a replacement (no ghost) *and* multi-suggestion batch resolve with descending-index ordering (no corruption). Remaining cases (reject path, insertion/deletion-only, style) are lower-risk variants of the same proven mechanism.
+1. **Suggestions** — ✅ **settled by the Docs API** (GA 2026-09-30): writing in `SUGGEST` mode, `acceptSuggestion`/`rejectSuggestion`, and author and time per suggestion, all checked live (§6).
 2. **markdown + HTML + `<ins>/<del>` round-trip** — ✅ **read validated**; ✅ **style-write validated** (paragraph, text and named styles, §2a); ✅ **inline `new_string` markdown *and* HTML validated** in `edit_doc`; ✅ **block-level markdown→Docs validated** (`write.ts`: headings, paragraphs, inline, bullet/ordered nested lists → `write_doc`, with a **lossless live round-trip** md→Docs→md). Reader/writer share `markdown-spec` constants + round-trip tests (the "extend in pairs" discipline) instead of a bidirectional spec engine. Tables, images, code blocks and quotes render (§2d, §2e).
 3. **String-anchored editing over batchUpdate** — ✅ **validated in code**: plain-text projection + index map across runs, exact + markup-tolerant match, ambiguity→context, optimistic revision, delete+insert. Live round-trip edit confirmed. Open: whitespace-normalized matching; new_string formatting.
 
@@ -900,7 +956,6 @@ later  Tier-2 block rendering (tables/images/code in the markdown writer)
         over the primitives; see §10b)
 ```
 
-De-risk first: spike the **suggestion accept/reject round-trip** (smallest, highest-uncertainty novel bet) before committing to the full tool surface.
 
 ### `gcloud` setup script (v1 onboarding)
 The Google Cloud project is the #1 onboarding friction (§11). A `scripts/setup.sh` wrapping the `gcloud` CLI reduces a ~15-minute console slog to a few commands:

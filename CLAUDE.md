@@ -46,12 +46,16 @@ one, do this review and record the trade-off in the PR/commit:
    safe tool must not be allowlisting a destructive one with it (#47). No tool
    deletes a doc, folder or tab.
    **A guard must be a fact the caller had to fetch, not one they supplied.**
-   `confirmLoss` comes from `write_doc`'s own refusal, `expectQuote` from `list_comments`,
-   `expectedChange`/`documentTitle` from `list_suggestions`, `expectRole` from
+   `confirmLoss` comes from `write_doc`'s own refusal, `expectQuotedText` from `list_comments`,
+   `expectContext`/`expectTitle` from `list_suggestions`, `expectRole` from
    `list_permissions` — echoing one back proves the caller looked, and that the
    thing hasn't changed since. A guard over something they typed proves nothing:
    `unshare_doc` takes `expectRole` and NOT `expectEmail`, because the email is
    the selector (#43).
+   **A guard is named `expect` plus the name of the field it echoes:** `role` is
+   checked as `expectRole`, `quotedText` as `expectQuotedText`. A parameter that
+   places something by a read's field takes that field's name as it is:
+   `add_comment(quotedText)`.
 5. **Uniform-vocabulary targets can merge; target-dependent style can't.** A tool
    is clearest to the model when its style/param fields don't change based on the
    target. Paragraph, run and table style go through `edit_doc` as CSS because
