@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-10-29
+
 ### Breaking
 
 > **`edit_table` is removed (#62). `edit_doc` adds, deletes and moves rows and columns and merges cells by comparison.** 20 tools become 19.
