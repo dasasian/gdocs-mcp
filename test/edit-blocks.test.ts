@@ -129,11 +129,25 @@ describe('an anchor mid-paragraph splits it (#60 rule 3)', () => {
     await editDoc(clients, 'd', 'within 30 days', 'within 30 days\n\n| A | B |\n|---|---|\n| 1 | 2 |');
     const anchorEnd = 1 + sentence.indexOf(' of receipt.');
     const first = requestsOf(batchUpdate);
-    expect(first.some((r) => r.deleteContentRange)).toBe(false);
+    expect(first.filter((r) => r.deleteContentRange).map((r) => r.deleteContentRange!.range)).toEqual([{ startIndex: anchorEnd, endIndex: anchorEnd + 1 }]);
     expect(inserted(first)[0]).toEqual({ location: { index: anchorEnd }, text: '\n' });
     expect(inserted(first)[1]).toMatchObject({ location: { index: anchorEnd + 1 }, text: '\n' });
     const tableCall = batchUpdate.mock.calls.map((c) => c[0].requestBody.requests as docs_v1.Schema$Request[]).find((rs) => rs.some((r) => r.insertTable));
     expect(tableCall![0].insertTable!.location!.index).toBe(anchorEnd + 1);
+  });
+
+  it('drops the spaces on both sides of the split, as a local markdown file would', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: 'We pay  within 30 days  of receipt.' }]));
+    await editDoc(clients, 'd', 'within 30 days', 'within 30 days\n\nNext');
+    const end = 1 + 'We pay  within 30 days'.length;
+    expect(requestsOf(batchUpdate).find((r) => r.deleteContentRange)!.deleteContentRange!.range).toEqual({ startIndex: end, endIndex: end + 2 });
+  });
+
+  it('trims the spaces before the split when the new blocks go before the anchor', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: 'We pay within 30 days.' }]));
+    await editDoc(clients, 'd', 'within 30 days', 'Intro\n\nwithin 30 days');
+    const start = 1 + 'We pay'.length;
+    expect(requestsOf(batchUpdate).find((r) => r.deleteContentRange)!.deleteContentRange!.range).toEqual({ startIndex: start, endIndex: start + 1 });
   });
 
   it('at the end of a paragraph there is no empty paragraph left behind', async () => {

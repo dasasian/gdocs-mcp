@@ -213,6 +213,24 @@ export function paragraphEdgesAt(doc: docs_v1.Schema$Document, tabId: string | u
   };
 }
 
+const isSpaceOrTab = (ch: string): boolean => ch === ' ' || ch === '\t';
+
+/** How many spaces and tabs sit immediately before and after `index` within its paragraph. */
+export function spacesAround(doc: docs_v1.Schema$Document, tabId: string | undefined, segmentId: string | undefined, index: number): { before: number; after: number } {
+  const paragraph = paragraphsWithin(contentOf(doc, tabId, segmentId)).find((el) => (el.startIndex ?? 0) <= index && index < (el.endIndex ?? 0));
+  const charAt = new Map<number, string>();
+  for (const element of paragraph?.paragraph?.elements ?? []) {
+    const start = element.startIndex ?? 0;
+    const content = element.textRun?.content;
+    for (let i = start; i < (element.endIndex ?? start); i++) charAt.set(i, content ? (content[i - start] ?? '') : '\u0000');
+  }
+  let before = 0;
+  while (isSpaceOrTab(charAt.get(index - before - 1) ?? '')) before++;
+  let after = 0;
+  while (isSpaceOrTab(charAt.get(index + after) ?? '')) after++;
+  return { before, after };
+}
+
 /** The top-level table whose range holds `index`. */
 export function tableHolding(doc: docs_v1.Schema$Document, tabId: string | undefined, segmentId: string | undefined, index: number): docs_v1.Schema$StructuralElement | undefined {
   return contentOf(doc, tabId, segmentId).find((el) => el.table && (el.startIndex ?? 0) <= index && index < (el.endIndex ?? 0));

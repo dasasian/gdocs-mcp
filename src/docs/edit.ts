@@ -1,7 +1,7 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
 import { project, type Projection } from './transformer.js';
-import { resolveTabId, writeControlFor, startsParagraph, paragraphEdgesAt, tableHolding, isEmptyContent, type SegmentKind, type SegmentPage } from './structure.js';
+import { resolveTabId, writeControlFor, startsParagraph, paragraphEdgesAt, spacesAround, tableHolding, isEmptyContent, type SegmentKind, type SegmentPage } from './structure.js';
 import { resolveSegmentTarget } from './segments.js';
 import { parseInline, segmentTextStyle, inlineStyleIssues, type Segment } from './inline.js';
 import { HEADING_BY_LEVEL, NAMED_STYLE_BY_CLASS } from './markdown-spec.js';
@@ -376,10 +376,13 @@ async function applyBlockEdit(context: BlockEditContext, matched: DocRange, revi
   const { clients, documentId, doc, markdown, tabId, segmentId, baseDir } = context;
   const { startIndex, endIndex } = blockInsertionRange(context, matched);
   const startsAParagraph = paragraphEdgesAt(doc, tabId, segmentId, startIndex).atStart;
-  const endsAtParagraphMark = paragraphEdgesAt(doc, tabId, segmentId, endIndex).atMark;
+  const trimmed = startsAParagraph ? { before: 0, after: 0 } : { before: spacesAround(doc, tabId, segmentId, startIndex).before, after: spacesAround(doc, tabId, segmentId, endIndex).after };
+  const from = startIndex - trimmed.before;
+  const to = endIndex + trimmed.after;
+  const endsAtParagraphMark = paragraphEdgesAt(doc, tabId, segmentId, to).atMark;
   const preRequests: docs_v1.Schema$Request[] = [
-    ...(endIndex > startIndex ? [{ deleteContentRange: { range: { startIndex, endIndex, tabId, segmentId } } }] : []),
-    ...(startsAParagraph ? [] : [{ insertText: { location: { index: startIndex, tabId, segmentId }, text: '\n' } }]),
+    ...(to > from ? [{ deleteContentRange: { range: { startIndex: from, endIndex: to, tabId, segmentId } } }] : []),
+    ...(startsAParagraph ? [] : [{ insertText: { location: { index: from, tabId, segmentId }, text: '\n' } }]),
   ];
   return renderMarkdownInto(clients, documentId, markdown, {
     tabId,
@@ -387,7 +390,7 @@ async function applyBlockEdit(context: BlockEditContext, matched: DocRange, revi
     baseDir,
     preRequests,
     requiredRevisionId: revisionId,
-    startIndex: startsAParagraph ? startIndex : startIndex + 1,
+    startIndex: startsAParagraph ? startIndex : from + 1,
     resetParagraphStyles: true,
     startsParagraph: true,
     endsInExistingParagraphMark: endsAtParagraphMark,
