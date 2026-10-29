@@ -373,7 +373,7 @@ How far each rule reaches, where the issue left room:
 ## 3. Tool surface
 
 The canonical, always-current list is the table in `README.md`; this is the
-conceptual map. The surface is kept deliberately small (~25 tools) — see
+conceptual map. The surface is kept deliberately small (19 tools) — see
 `CLAUDE.md` for the add-vs-enhance discipline (merge symmetric verbs; a new tool
 only when the vocabulary/return-shape differs; destructive verbs stay distinct;
 a guard is `expect` plus the name of the field it echoes).
@@ -759,7 +759,9 @@ comment is tied to the range it is about, not to a quote.
   live). `replyTo` is `addCommentReply`.
 - **`resolve_comment(expectQuotedText)`** is `addCommentReply` with
   `commentAction: RESOLVE` (or `REOPEN`), which Drive shows as resolved (checked
-  live).
+  live). `expectQuotedText` is required, as `apply_suggestions`' guards are: a
+  guard the caller may leave out proves nothing when they do, and a stale id
+  would resolve whatever comment it names.
 - **`list_comments` reads `documents.get` with `COMMENTS_VIEW_MODE_INCLUDED`.**
   Each `CommentThread` has its quote, author, time, status and replies; its
   `anchorId` points into the tab's `commentAnchors`, which hold the live range.
@@ -773,6 +775,9 @@ comment is tied to the range it is about, not to a quote.
   them too), with their quote as `context`. The server never writes one.
 - **Author is a display name,** never an email (`PostAuthor` has a People API
   resource name, not an address).
+
+All comment reads come from that one `documents.get`: `list_comments`, and the
+counts `write_doc` and `edit_doc` take from the doc they have already read.
 
 What the ranges change elsewhere: `write_doc`'s loss summary counts a tab's
 comments by their anchors in that tab, and an `edit_doc` table move counts the
@@ -788,7 +793,7 @@ A Doc can change between read and edit (collaborators, a human resolving a sugge
 | Operation | Strategy |
 |---|---|
 | `edit_doc` | optimistic: re-read live + re-match `old_string` at write time (self-heals index shifts); `requiredRevisionId` closes the tiny internal read→write window; on match-loss/ambiguity return current surrounding text + "re-read" |
-| `write_doc` (replace), `accept_all` | **strict**: pin `requiredRevisionId` to last read; fail on any concurrent change |
+| `write_doc` (replace) | **strict**: pin `requiredRevisionId` to last read; fail on any concurrent change |
 | `apply_suggestions` | re-resolve by ID; if gone, report "already resolved" |
 
 > **Validated by spike.** A `batchUpdate` with a stale `requiredRevisionId` is rejected (`"The required revision ID ... does not match the latest revision."`), while the current revision succeeds. Optimistic locking is enforceable as designed.

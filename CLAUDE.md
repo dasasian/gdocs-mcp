@@ -22,7 +22,7 @@ canonical tool list is the table in `README.md`; known API dead-ends are in
 
 The tool count is a **budget, not a free-for-all** — every tool's schema costs
 context on every call and enlarges the model's selection space, which measurably
-lowers accuracy. We deliberately keep the surface small (~25 tools). Before adding
+lowers accuracy. We deliberately keep the surface small (19 tools). Before adding
 one, do this review and record the trade-off in the PR/commit:
 
 1. **Default to enhancing an existing tool.** Can this be a new parameter or a
@@ -95,7 +95,8 @@ why enhancing an existing tool was rejected.
   task. Every task's grader must fail on its untouched setup doc
   (`--check-graders`), or it grades nothing.
 - **Commits:** one concern per commit, reference the issue (`(#NN)`), and note the
-  live verification in the body. `git add -A` before committing.
+  live verification in the body. Stage by path; when a change deletes files,
+  `git add -A <folder>`. Never a bare `git add -A`: other sessions leave work in the tree.
 - **Keep the docs in sync** when the tool surface changes: `README.md` table,
   `CHANGELOG.md`, `DESIGN.md` §3, and `docs/limitations.md`.
 
