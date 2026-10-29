@@ -7,7 +7,53 @@ export const DOCS_MIME_TYPE = 'application/vnd.google-apps.document';
 
 export const createdDocIds = new Set();
 
-export const evalClients = () => clientsForAccount(EVAL_ACCOUNT);
+export const QUOTA_RETRY_DELAY_MS = 60_000;
+export const QUOTA_RETRIES = 3;
+
+export const isQuotaError = (error) =>
+  error?.code === 429 || error?.status === 429 || /Quota exceeded/.test(error?.message ?? '');
+
+const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Calls `call`, and on a quota error waits `delayMs` and calls again, up to `retries` times. Rethrows the quota error when the retries run out. */
+export async function retryOnQuota(call, { retries = QUOTA_RETRIES, delayMs = QUOTA_RETRY_DELAY_MS, sleep = realSleep } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await call();
+    } catch (error) {
+      if (!isQuotaError(error) || attempt >= retries) throw error;
+      await sleep(delayMs);
+    }
+  }
+}
+
+/** Wraps a googleapis client so every call it makes goes through retryOnQuota. */
+export function quotaRetrying(api, options = {}) {
+  return new Proxy({}, {
+    get(_unused, property) {
+      const member = Reflect.get(api, property);
+      if (typeof member === 'function') {
+        return (...args) => {
+          const call = () => member.apply(api, args);
+          const first = call();
+          if (typeof first?.then !== 'function') return first;
+          return first.catch((error) => {
+            if (!isQuotaError(error)) throw error;
+            const sleep = options.sleep ?? realSleep;
+            return sleep(options.delayMs ?? QUOTA_RETRY_DELAY_MS).then(() =>
+              retryOnQuota(call, { ...options, retries: (options.retries ?? QUOTA_RETRIES) - 1 }));
+          });
+        };
+      }
+      return typeof member === 'object' && member !== null ? quotaRetrying(member, options) : member;
+    },
+  });
+}
+
+export async function evalClients() {
+  const clients = await clientsForAccount(EVAL_ACCOUNT);
+  return { ...clients, docs: quotaRetrying(clients.docs), drive: quotaRetrying(clients.drive) };
+}
 
 export const docUrl = (documentId) => `https://docs.google.com/document/d/${documentId}/edit`;
 

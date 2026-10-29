@@ -198,7 +198,10 @@ account. Each run creates its docs through the API, runs `claude -p` from a temp
 folder with only the gdocs tools and no skills, reads the result through the API,
 and trashes every doc it made, even after a failure. A run that hits Google's
 per-minute write quota is retried once on its own and reported as a quota hit, not
-a failure.
+a failure. Every Google call the harness itself makes (setup, grading, trashing) waits
+60 s and retries up to 3 times on a quota error; a run whose harness call still fails is
+reported as "could not run", apart from passes and failures, and still exits non-zero.
+`--full` runs 3 at a time (5 by default) to keep that rare.
 
 See [DESIGN.md](DESIGN.md) for the full architecture and the empirical findings behind it.
 

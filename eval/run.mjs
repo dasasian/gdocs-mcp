@@ -10,14 +10,16 @@ import {
   createdDocIds,
   evalClients,
   findUntrashedEvalDocs,
+  isQuotaError,
+  QUOTA_RETRY_DELAY_MS,
   trashDocById,
 } from './lib.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER_ENTRY = path.join(REPO_ROOT, 'dist', 'index.js');
 const TASKS_DIR = path.join(REPO_ROOT, 'eval', 'tasks');
-const CONCURRENCY = 5;
-const QUOTA_RETRY_DELAY_MS = 60_000;
+const DEFAULT_CONCURRENCY = 5;
+const FULL_CONCURRENCY = 3;
 const QUOTA_MARKER = 'Quota exceeded';
 const DEFAULT_MODELS = ['haiku'];
 const FULL_MODELS = ['sonnet', 'haiku'];
@@ -56,9 +58,9 @@ function selectTasks(tasks) {
   return selected;
 }
 
-async function runPool(items, work) {
+async function runPool(items, work, concurrency) {
   const queue = [...items];
-  const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
+  const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
     while (queue.length && !interrupted) {
       const inFlight = work(queue.shift());
       inFlightWork.add(inFlight);
@@ -126,7 +128,8 @@ function summariseLog(output) {
 
 async function attemptRun({ task, model, runNumber }, { clients, workDir, mcpConfigPath }) {
   const docName = `${DOC_NAME_PREFIX}${task.name} ${model} ${runNumber}`;
-  let failures;
+  let failures = [];
+  let blocked = null;
   let summary = { toolCalls: [], errorResults: [], costUsd: 0, finalText: '' };
   let hitQuota = false;
   try {
@@ -138,10 +141,12 @@ async function attemptRun({ task, model, runNumber }, { clients, workDir, mcpCon
     failures = await task.grade(clients, context);
     if (exitCode !== 0) failures.push(`claude exited ${exitCode}`);
   } catch (error) {
-    failures = [`harness error: ${error.message}`];
+    blocked = { kind: isQuotaError(error) ? 'quota' : 'harness error', message: error.message };
   }
-  return { failures, hitQuota, ...summary };
+  return { failures, blocked, hitQuota, ...summary };
 }
+
+const outcomeOf = (result) => (result.blocked ? 'could not run' : result.failures.length ? 'fail' : 'pass');
 
 async function executeRun(run, environment) {
   const first = await attemptRun(run, environment);
@@ -175,36 +180,43 @@ async function checkGraders(tasks, clients) {
       console.log(`${failures.length ? 'ok    ' : 'BROKEN'} ${task.name}${failures.length ? `  (fails on untouched doc: ${failures[0]})` : '  (passes on an untouched doc)'}`);
       if (!failures.length) broken.push(task.name);
     } catch (error) {
-      console.log(`BROKEN ${task.name}  (threw: ${error.message})`);
+      console.log(`BROKEN ${task.name}  (${isQuotaError(error) ? 'could not run, quota: ' : 'threw: '}${error.message})`);
       broken.push(task.name);
     }
-  });
+  }, DEFAULT_CONCURRENCY);
   return broken;
 }
 
 function printReport(results, tasks, models) {
   const cell = (task, model) => {
     const mine = results.filter((result) => result.task.name === task.name && result.model === model);
-    const passed = mine.filter((result) => !result.failures.length).length;
+    const passed = mine.filter((result) => outcomeOf(result) === 'pass').length;
     const quotaCount = mine.filter((result) => result.quota).length;
-    return `${passed}/${mine.length}${quotaCount ? ` (${quotaCount} quota)` : ''}`;
+    const blockedCount = mine.filter((result) => result.blocked).length;
+    return `${passed}/${mine.length}${quotaCount ? ` (${quotaCount} quota)` : ''}${blockedCount ? ` (${blockedCount} could not run)` : ''}`;
   };
   const nameWidth = Math.max(...tasks.map((task) => task.name.length), 4);
   console.log(`\n${'task'.padEnd(nameWidth)}  ${models.map((model) => model.padEnd(12)).join('')}`);
   for (const task of tasks) console.log(`${task.name.padEnd(nameWidth)}  ${models.map((model) => cell(task, model).padEnd(12)).join('')}`);
 
-  const failed = results.filter((result) => result.failures.length);
+  const failed = results.filter((result) => outcomeOf(result) === 'fail');
+  const blocked = results.filter((result) => result.blocked);
   for (const result of failed) {
     console.log(`\nFAIL ${result.task.name} / ${result.model} / run ${result.runNumber}${result.quota ? ' [quota retry]' : ''}`);
     for (const failure of result.failures) console.log(`  grader: ${failure}`);
     console.log(`  tools: ${result.toolCalls.length ? result.toolCalls.join(' -> ') : '(none)'}`);
     for (const errorResult of result.errorResults) console.log(`  error result: ${errorResult}`);
   }
-  const quotaPassed = results.filter((result) => result.quota && !result.failures.length);
+  for (const result of blocked) {
+    console.log(`\nCOULD NOT RUN ${result.task.name} / ${result.model} / run ${result.runNumber}: ${result.blocked.kind}`);
+    console.log(`  the harness's own Google call failed, not the server: ${result.blocked.message.slice(0, 300)}`);
+  }
+  const quotaPassed = results.filter((result) => result.quota && outcomeOf(result) === 'pass');
   if (quotaPassed.length) console.log(`\nquota: ${quotaPassed.length} run(s) hit Google's write quota and passed on retry`);
   const totalCost = results.reduce((sum, result) => sum + result.costUsd, 0);
-  console.log(`\ntotal cost: $${totalCost.toFixed(4)}`);
-  return failed.length;
+  console.log(`\n${results.length - failed.length - blocked.length} passed, ${failed.length} failed, ${blocked.length} could not run (harness Google call failed after retries)`);
+  console.log(`total cost: $${totalCost.toFixed(4)}`);
+  return { failedCount: failed.length, blockedCount: blocked.length };
 }
 
 async function main() {
@@ -253,22 +265,28 @@ async function main() {
       await runPool(runs, async (run) => {
         const result = await executeRun(run, environment);
         results.push(result);
-        console.log(`${result.failures.length ? 'FAIL' : 'pass'}  ${run.task.name} / ${run.model} / ${run.runNumber}${result.quota ? ' [quota]' : ''}`);
-      });
+        console.log(`${{ pass: 'pass', fail: 'FAIL', 'could not run': 'NORUN' }[outcomeOf(result)]}  ${run.task.name} / ${run.model} / ${run.runNumber}${result.quota ? ' [quota]' : ''}`);
+      }, options.full ? FULL_CONCURRENCY : DEFAULT_CONCURRENCY);
       for (const quotaRun of results.filter((result) => result.quota)) {
         console.log(`retrying alone after ${QUOTA_RETRY_DELAY_MS / 1000}s: ${quotaRun.task.name} / ${quotaRun.model} / ${quotaRun.runNumber}`);
         results[results.indexOf(quotaRun)] = await retryQuotaRun(quotaRun, environment);
       }
-      const failedCount = printReport(results, tasks, models);
-      exitCode = failedCount ? 1 : 0;
-      if (failedCount) console.log(`logs of the failed runs: ${workDir}`);
+      const { failedCount, blockedCount } = printReport(results, tasks, models);
+      exitCode = failedCount || blockedCount ? 1 : 0;
+      if (failedCount || blockedCount) console.log(`logs of the failed runs: ${workDir}`);
     }
   } finally {
     const trashFailures = await cleanUp();
     for (const failure of trashFailures) console.error(`could not trash ${failure}`);
     if (trashFailures.length) exitCode = 1;
     if (interrupted) exitCode = 130;
-    const strays = await findUntrashedEvalDocs(clients);
+    let strays = [];
+    try {
+      strays = await findUntrashedEvalDocs(clients);
+    } catch (error) {
+      console.error(`could not scan for stray eval docs: ${error.message}`);
+      exitCode = exitCode || 1;
+    }
     if (strays.length) {
       console.log(`\nstray eval docs still in Drive (not trashed by this tool):`);
       for (const stray of strays) console.log(`  ${stray.id}  ${stray.name}`);
