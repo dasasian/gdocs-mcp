@@ -78,7 +78,9 @@ export function tableElement(spec: TableSpec, startIndex: number): docs_v1.Schem
 const NAMED_STYLES: docs_v1.Schema$NamedStyles = { styles: [{ namedStyleType: 'NORMAL_TEXT', paragraphStyle: { lineSpacing: 115 } }] };
 
 export function bodyDocWithTable(spec: TableSpec): docs_v1.Schema$Document {
-  return { revisionId: 'r1', namedStyles: NAMED_STYLES, body: { content: [tableElement(spec, 1), { startIndex: 100, endIndex: 101, paragraph: { elements: [{ textRun: { content: '\n' } }] } }] } };
+  const table = tableElement(spec, 1);
+  const end = table.endIndex ?? 1;
+  return { revisionId: 'r1', namedStyles: NAMED_STYLES, body: { content: [table, { startIndex: end, endIndex: end + 1, paragraph: { elements: [{ textRun: { content: '\n' } }] } }] } };
 }
 
 export function headerDocWithTable(spec: TableSpec): docs_v1.Schema$Document {

@@ -106,36 +106,46 @@ const HTML_TABLE_END_RE = /<\/table\s*>/i;
 export type CellBlock = Extract<Block, { type: 'heading' | 'paragraph' | 'list' }>;
 
 /** What a cell of an HTML table holds. Anything a cell cannot carry (an image, a page break, a table) is a problem, not a block. */
-export function cellBlocksOf(cell: LayoutCell): { blocks: CellBlock[]; issues: string[] } {
+export function cellBlocksOf(cell: LayoutCell): { blocks: CellBlock[]; issues: string[]; refused: string[] } {
   if (!cell.asBlocks) {
     const inline = cell.markdown === '' ? [] : [{ type: 'paragraph' as const, text: cell.markdown }];
-    return { blocks: inline, issues: inlineStyleIssues(cell.markdown) };
+    return { blocks: inline, issues: inlineStyleIssues(cell.markdown), refused: [] };
   }
   try {
     const parsed = parseBlocks(cell.markdown);
     const blocks = parsed.filter((b): b is CellBlock => b.type === 'heading' || b.type === 'paragraph' || b.type === 'list');
     const refused = parsed.filter((b) => !blocks.includes(b as CellBlock)).map((b) => `a table cell cannot hold a ${b.type}`);
-    return { blocks, issues: refused };
+    return { blocks, issues: refused, refused };
   } catch (error) {
-    if (error instanceof StyleSyntaxError) return { blocks: [], issues: error.issues };
+    if (error instanceof StyleSyntaxError) return { blocks: [], issues: error.issues, refused: [] };
     throw error;
   }
 }
 
-function parseHtmlTableAt(lines: string[], from: number, report: (lineIndex: number, found: string[]) => void): { block: Block; next: number } {
+const CSS_ISSUE = /<[a-z]+ style> /;
+
+function parseHtmlTableAt(
+  lines: string[],
+  from: number,
+  report: (lineIndex: number, found: string[], structure?: boolean) => void,
+): { block: Block; next: number } {
   let last = from;
   while (last < lines.length && !HTML_TABLE_END_RE.test(lines[last])) last++;
   if (last === lines.length) {
-    report(from, ['<table> is never closed']);
+    report(from, ['<table> is never closed'], true);
     return { block: { type: 'table', rows: [], aligns: [] }, next: lines.length };
   }
   const { layout, issues } = parseHtmlTable(lines.slice(from, last + 1).join('\n'));
   const placement = placeCells(layout);
-  report(from, [...issues, ...placement.issues]);
+  report(from, issues.filter((issue) => CSS_ISSUE.test(issue)));
+  report(from, [...issues.filter((issue) => !CSS_ISSUE.test(issue)), ...placement.issues], true);
   const rows = Array.from({ length: placement.rowCount }, () => Array.from({ length: placement.columnCount }, () => ''));
   for (const { row, column, cell } of placement.cells) {
     rows[row][column] = cell.markdown;
-    report(from, cellBlocksOf(cell).issues.map((issue) => `row ${row + 1}, column ${column + 1}: ${issue}`));
+    const { issues: cellIssues, refused } = cellBlocksOf(cell);
+    const where = (issue: string): string => `row ${row + 1}, column ${column + 1}: ${issue}`;
+    report(from, cellIssues.filter((issue) => !refused.includes(issue)).map(where));
+    report(from, refused.map(where), true);
   }
   return { block: { type: 'table', rows, aligns: [], layout }, next: last + 1 };
 }
@@ -207,8 +217,12 @@ export function parseBlocks(md: string): Block[] {
   const lines = md.replace(/\r\n/g, '\n').split('\n');
   const blocks: Block[] = [];
   const issues: string[] = [];
-  const report = (lineIndex: number, found: string[]): void => {
-    for (const issue of found) issues.push(`line ${lineIndex + 1}: ${issue}`);
+  const structure = new Set<string>();
+  const report = (lineIndex: number, found: string[], aboutTableShape = false): void => {
+    for (const issue of found) {
+      issues.push(`line ${lineIndex + 1}: ${issue}`);
+      if (aboutTableShape) structure.add(`line ${lineIndex + 1}: ${issue}`);
+    }
   };
   let i = 0;
   while (i < lines.length) {
@@ -292,7 +306,7 @@ export function parseBlocks(md: string): Block[] {
     blocks.push(parsed.block);
     i = parsed.next;
   }
-  if (issues.length) throw new StyleSyntaxError(issues);
+  if (issues.length) throw new StyleSyntaxError(issues, structure);
   return blocks;
 }
 

@@ -15,6 +15,8 @@ const CONTEXT = 30;
 
 export const mentionsTableMarkup = (text: string): boolean => TABLE_MARKUP_TAG.test(text);
 
+export type BlockSide = 'before' | 'after';
+
 export interface TableEditInput {
   oldString: string;
   newString: string;
@@ -22,6 +24,8 @@ export interface TableEditInput {
   tabId?: string;
   segmentId?: string;
   baseDir?: string;
+  /** puts markdown blocks before or after a table, as an insertion next to it, in Normal text. */
+  insertBlocks: (side: BlockSide, table: docs_v1.Schema$StructuralElement, markdown: string, revisionId: string | undefined) => Promise<unknown>;
 }
 
 interface TableInDoc {
@@ -81,11 +85,34 @@ function pipeLayout(rows: string[][], aligns: (string | null)[]): TableLayout {
   };
 }
 
+function structureError(message: string): StyleSyntaxError {
+  return new StyleSyntaxError([message], new Set([message]));
+}
+
+const TABLE_CLOSE = /<\/table\s*>/gi;
+
+interface TableAndNeighbours {
+  table: string;
+  before: string;
+  after: string;
+}
+
+function splitAroundTable(edited: string): TableAndNeighbours {
+  const start = edited.search(/<table\b/i);
+  const closes = [...edited.matchAll(TABLE_CLOSE)];
+  const last = closes[closes.length - 1];
+  if (start < 0 || !last) return { table: edited, before: '', after: '' };
+  const end = last.index + last[0].length;
+  return { table: edited.slice(start, end), before: edited.slice(0, start).trim(), after: edited.slice(end).trim() };
+}
+
 function layoutAfterEdit(markup: string): TableLayout {
   const blocks = parseBlocks(markup);
   const [only] = blocks;
   if (blocks.length !== 1 || only.type !== 'table') {
-    throw new StyleSyntaxError([`after the edit the table must still be exactly one table, but it reads as ${blocks.map((b) => b.type).join(', ') || 'nothing'}. Quote and write back the whole table to replace it.`]);
+    throw structureError(
+      `old_string and new_string must stay inside one table. The edit leaves ${blocks.map((b) => b.type).join(', ') || 'nothing'} where the table was. Quote the table markup from read_doc: a row, </table>, or the whole table.`,
+    );
   }
   return only.layout ?? pipeLayout(only.rows, only.aligns);
 }
@@ -193,26 +220,44 @@ export async function editTableMarkup(clients: GoogleClients, documentId: string
     return { status: 'ambiguous', message: `${total} matches — add surrounding context, or set replace_all.`, matches: contexts };
   }
   const edits = matches
-    .map((match) => ({ match, after: layoutAfterEdit(editedMarkup(match, input.replaceAll)) }))
+    .map((match) => {
+      const around = splitAroundTable(editedMarkup(match, input.replaceAll));
+      parseBlocks(`${around.before}\n\n${around.after}`);
+      return { match, around, after: layoutAfterEdit(around.table) };
+    })
     .sort((a, b) => (b.match.found.element.startIndex ?? 0) - (a.match.found.element.startIndex ?? 0));
+  if (edits.length > 1 && edits.some(({ around }) => around.before || around.after)) {
+    throw structureError('replace_all cannot add blocks next to a table: it matches more than one table. Quote one table with enough context to be unique.');
+  }
   let changed = 0;
   let revisionId = doc.revisionId ?? undefined;
-  for (const { match, after } of edits) {
+  const insertNextToTable = async (side: BlockSide, found: TableInDoc, markdown: string): Promise<void> => {
+    if (!markdown) return;
+    await input.insertBlocks(side, found.element, markdown, revisionId);
+    revisionId = undefined;
+    changed++;
+  };
+  for (const { match, around, after } of edits) {
     const { found } = match;
+    await insertNextToTable('after', found, around.after);
     const before = readTableLayout(doc, found.table, { tabId });
     const placements = { before: placeCells(before), after: placeCells(after) };
     if (sameShape(placements.before, placements.after)) {
       const requests = surgicalRequests(found, before, after, placements, tabId, segmentId);
-      if (requests.length === 0) continue;
-      await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests, writeControl: writeControlFor(revisionId) } });
+      if (requests.length > 0) {
+        await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests, writeControl: writeControlFor(revisionId) } });
+        revisionId = undefined;
+        changed++;
+      }
     } else {
-      const replacement = editedMarkup(match, input.replaceAll);
+      const replacement = around.table;
       const start = found.element.startIndex ?? 0;
       const preRequests: docs_v1.Schema$Request[] = [{ deleteContentRange: { range: { startIndex: start, endIndex: found.element.endIndex ?? start, tabId, segmentId } } }];
       await renderMarkdownInto(clients, documentId, replacement, { tabId, segmentId, baseDir: input.baseDir, preRequests, requiredRevisionId: revisionId, startIndex: start, resetParagraphStyles: true, startsParagraph: true });
+      revisionId = undefined;
+      changed++;
     }
-    revisionId = undefined;
-    changed++;
+    await insertNextToTable('before', found, around.before);
   }
   return { status: 'ok', replaced: changed };
 }

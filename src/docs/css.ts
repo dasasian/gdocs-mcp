@@ -44,14 +44,18 @@ export type CssContext = 'paragraph' | 'text' | 'rule';
 
 /** Thrown before any request is sent; `issues` holds one entry per offending line. */
 export class StyleSyntaxError extends Error {
-  constructor(readonly issues: string[]) {
-    super(styleSyntaxMessage(issues));
+  /** `structure` holds the issues that are about the shape of a table, not about CSS: a message of those alone leaves the CSS lists out. */
+  constructor(readonly issues: string[], readonly structure: ReadonlySet<string> = new Set()) {
+    super(styleSyntaxMessage(issues, structure));
     this.name = 'StyleSyntaxError';
   }
 }
 
-function styleSyntaxMessage(issues: string[]): string {
+function styleSyntaxMessage(issues: string[], structure: ReadonlySet<string>): string {
   const list = issues.map((i) => `  ${i}`).join('\n');
+  if (issues.every((issue) => structure.has(issue))) {
+    return [`Nothing was written: the table cannot be written (${issues.length} problem${issues.length === 1 ? '' : 's'}).`, list].join('\n');
+  }
   return [
     `Nothing was written: ${issues.length} style problem${issues.length === 1 ? '' : 's'}.`,
     list,
