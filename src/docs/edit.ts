@@ -14,12 +14,13 @@ import { parsePageBreakLine } from './page-break.js';
 import { editTableMarkup, mentionsTableMarkup, type TableEditInput } from './table-edit.js';
 
 export interface EditResult {
-  status: 'ok' | 'not_found' | 'ambiguous' | 'no_segment';
+  status: 'ok' | 'not_found' | 'ambiguous' | 'no_segment' | 'confirm_required';
   replaced?: number;
   warnings?: string[];
   images?: { src: string; objectId: string }[];
   matches?: { context: string }[];
   message?: string;
+  confirmLoss?: string;
 }
 
 const CONTEXT = 30;
@@ -507,7 +508,7 @@ export async function editDoc(
   documentId: string,
   oldString: string,
   newString: string,
-  opts: { replaceAll?: boolean; tabId?: string; segment?: SegmentKind; page?: SegmentPage; baseDir?: string } = {},
+  opts: { replaceAll?: boolean; tabId?: string; segment?: SegmentKind; page?: SegmentPage; baseDir?: string; confirmLoss?: string } = {},
 ): Promise<EditResult> {
   const res = await clients.docs.documents.get({ documentId, includeTabsContent: true });
   const revisionId = res.data.revisionId ?? undefined;
@@ -528,7 +529,7 @@ export async function editDoc(
       const inside = (table.startIndex ?? 0) + 1;
       return applyBlockEdit({ clients, documentId, doc: res.data, markdown, tabId, segmentId, baseDir: opts.baseDir }, { startIndex: inside, endIndex: inside + 1 }, side, revisionId);
     };
-    return editTableMarkup(clients, documentId, res.data, { oldString, newString, replaceAll: opts.replaceAll, tabId, segmentId, baseDir: opts.baseDir, insertBlocks });
+    return editTableMarkup(clients, documentId, res.data, { oldString, newString, replaceAll: opts.replaceAll, tabId, segmentId, baseDir: opts.baseDir, confirmLoss: opts.confirmLoss, insertBlocks });
   }
   if (mentionsTableMarkup(newString) && !holdsBlockMarkdown(newString)) {
     throw new StyleSyntaxError(['new_string holds table tags, but old_string does not quote a table. Quote the table markup from read_doc in old_string, or write a whole <table> block.']);

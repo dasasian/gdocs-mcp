@@ -346,6 +346,59 @@ describe('merges (#62 rule 5)', () => {
   });
 });
 
+describe('a moved row asks once when comments quote its text (#62 rule 6)', () => {
+  const OLD = `${pipe('Design', '$1,200')}\n${pipe('Build', '$3,000')}`;
+  const NEW = `${pipe('Build', '$3,000')}\n${pipe('Design', '$1,200')}`;
+  const moved = (): docs_v1.Schema$Document => withRows(PRICES[0], PRICES[2], BLANK, PRICES[3]);
+  const TOKEN = '1 comment on text in a moved row or column [revision r1]';
+
+  it('with no comments it moves without asking', async () => {
+    const { clients, batchUpdate } = clientsFor(withRows(...PRICES), { afterStructure: moved(), quotes: [] });
+    const result = await editDoc(clients, 'd', OLD, NEW);
+    expect(result.status).toBe('ok');
+    expect(batchKinds(batchUpdate)[0]).toEqual(['deleteTableRow', 'insertTableRow']);
+  });
+
+  it('with a comment quoting the moved row, the first call is refused with the count and the revision, and nothing is sent', async () => {
+    const { clients, batchUpdate } = clientsFor(withRows(...PRICES), { afterStructure: moved(), quotes: ['$1,200'] });
+    const result = await editDoc(clients, 'd', OLD, NEW);
+    expect(result.status).toBe('confirm_required');
+    expect(result.confirmLoss).toBe(TOKEN);
+    expect(result.message).toMatch(/^Ask the user before doing anything else/);
+    expect(batchUpdate).not.toHaveBeenCalled();
+  });
+
+  it('the same call with that string goes through', async () => {
+    const { clients, batchUpdate } = clientsFor(withRows(...PRICES), { afterStructure: moved(), quotes: ['$1,200'] });
+    const result = await editDoc(clients, 'd', OLD, NEW, { confirmLoss: TOKEN });
+    expect(result.status).toBe('ok');
+    expect(batchKinds(batchUpdate)[0]).toEqual(['deleteTableRow', 'insertTableRow']);
+  });
+
+  it('a string from an older revision is refused again with a fresh one', async () => {
+    const { clients, batchUpdate } = clientsFor(withRows(...PRICES), { afterStructure: moved(), quotes: ['$1,200'] });
+    const result = await editDoc(clients, 'd', OLD, NEW, { confirmLoss: TOKEN.replace('r1', 'r0') });
+    expect(result.status).toBe('confirm_required');
+    expect(result.message).toContain('fresh one');
+    expect(batchUpdate).not.toHaveBeenCalled();
+  });
+
+  it('comments that quote other rows, or none of the table, do not ask', async () => {
+    const { clients } = clientsFor(withRows(...PRICES), { afterStructure: moved(), quotes: ['the intro paragraph', '$4,200'] });
+    expect((await editDoc(clients, 'd', OLD, NEW)).status).toBe('ok');
+  });
+
+  it('a quote that spans the moved row and its neighbour still counts', async () => {
+    const { clients } = clientsFor(withRows(...PRICES), { afterStructure: moved(), quotes: ['Design\n$1,200\nBuild'] });
+    expect((await editDoc(clients, 'd', OLD, NEW)).status).toBe('confirm_required');
+  });
+
+  it('a row that is only deleted does not ask even when a comment quotes it', async () => {
+    const { clients } = clientsFor(withRows(...PRICES), { afterStructure: withRows(PRICES[0], PRICES[1], PRICES[3]), quotes: ['$3,000'] });
+    expect((await editDoc(clients, 'd', `${pipe('Build', '$3,000')}\n`, '')).status).toBe('ok');
+  });
+});
+
 describe('a change that cannot be read cleanly is refused and nothing is sent (#62 rule 7)', () => {
   it('a row that could be an edit of two different new rows', async () => {
     const { clients, batchUpdate } = clientsFor(withRows(PRICES[0], PRICES[1], PRICES[3]));
@@ -376,5 +429,14 @@ describe('a table in a header behaves the same (#62 rule 9)', () => {
     expect(allRequests(batchUpdate)[0].insertTableRow).toMatchObject({ tableCellLocation: { tableStartLocation: { index: 0, segmentId: 'h1' }, rowIndex: 1 }, insertBelow: true });
     expect(allRequests(batchUpdate).filter((r) => r.insertText).map((r) => r.insertText!.location!.segmentId)).toEqual(['h1', 'h1']);
     expect(allRequests(batchUpdate).some((r) => r.deleteContentRange)).toBe(false);
+  });
+
+  it('a moved row asks nothing, because a comment cannot be anchored in a header', async () => {
+    const before = headerDocWithTable({ rows: [plain('Ann', '1'), plain('Bob', '2'), plain('Cy', '3')], columns: TWO_FIXED });
+    const after = headerDocWithTable({ rows: [plain('Bob', '2'), plain('', ''), plain('Cy', '3')], columns: TWO_FIXED });
+    const { clients, list } = clientsFor(before, { afterStructure: after, quotes: ['Ann'] });
+    const result = await editDoc(clients, 'd', '<tr><td>Ann</td><td>1</td></tr>\n<tr><td>Bob</td><td>2</td></tr>', '<tr><td>Bob</td><td>2</td></tr>\n<tr><td>Ann</td><td>1</td></tr>', { segment: 'header' });
+    expect(result.status).toBe('ok');
+    expect(list).not.toHaveBeenCalled();
   });
 });

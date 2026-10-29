@@ -99,6 +99,15 @@ export function confirmLossToken(loss: Loss, revisionId: string | null | undefin
   return `${lossSummary(loss)} [revision ${revisionId ?? 'unknown'}]`;
 }
 
+/**
+ * The string a caller must echo back as `confirmLoss` to move a row or column
+ * whose text comments quote. Like `confirmLossToken` it carries the revision, so
+ * any edit between the two calls makes it stop matching.
+ */
+export function movedCommentsToken(comments: number, revisionId: string | null | undefined): string {
+  return `${comments} ${comments === 1 ? 'comment' : 'comments'} on text in a moved row or column [revision ${revisionId ?? 'unknown'}]`;
+}
+
 export function lossDetails(loss: Loss, docHasSeveralTabs: boolean): string[] {
   const shown = loss.tabStopLines.slice(0, TAB_STOP_LINES_SHOWN).map((line) => `"${line.slice(0, 30)}"`);
   const more = loss.tabStopLines.length - shown.length;

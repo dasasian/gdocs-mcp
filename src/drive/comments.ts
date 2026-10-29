@@ -108,3 +108,15 @@ export async function listComments(
     })),
   }));
 }
+
+/** The quoted text of every comment on the file that has any, whether resolved or not. Paged to the end. */
+export async function quotedTexts(clients: GoogleClients, fileId: string): Promise<string[]> {
+  const quotes: string[] = [];
+  let pageToken: string | undefined;
+  do {
+    const res = await clients.drive.comments.list({ fileId, pageSize: 100, pageToken, includeDeleted: false, fields: 'nextPageToken,comments(quotedFileContent(value),deleted)' });
+    quotes.push(...(res.data.comments ?? []).filter((c) => !c.deleted).flatMap((c) => (c.quotedFileContent?.value ? [c.quotedFileContent.value] : [])));
+    pageToken = res.data.nextPageToken ?? undefined;
+  } while (pageToken);
+  return quotes;
+}

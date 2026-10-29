@@ -3,10 +3,12 @@ import type { GoogleClients } from '../google/clients.js';
 import type { EditResult } from './edit.js';
 import { contentOf, writeControlFor } from './structure.js';
 import { renderTableMarkup, readTableLayout } from './transformer.js';
+import { quotedTexts } from '../drive/comments.js';
+import { movedCommentsToken } from './loss.js';
 import { parseBlocks, buildContentRequests, cellBlocksOf, clearDirectRunStyling, type CellBlock } from './write.js';
 import { placeCells, effectiveGrid, type LayoutCell, type Placement, type TableLayout } from './table-layout.js';
 import { lookOf, lookRequests, structureRequests } from './table-write.js';
-import { compareTables, plainTextOf, type TableComparison } from './table-compare.js';
+import { compareTables, plainTextOf, type MovedLine, type TableComparison } from './table-compare.js';
 import { refusal } from './table-pairing.js';
 import { parseInline, segmentTextStyle } from './inline.js';
 import { paragraphCssChange, paragraphStyleUpdate } from './css.js';
@@ -25,6 +27,8 @@ export interface TableEditInput {
   tabId?: string;
   segmentId?: string;
   baseDir?: string;
+  /** the string from an earlier refusal of this same edit, to go ahead with a move that loses comments. */
+  confirmLoss?: string;
   /** puts markdown blocks before or after a table, as an insertion next to it, in Normal text. */
   insertBlocks: (side: BlockSide, table: docs_v1.Schema$StructuralElement, markdown: string, revisionId: string | undefined) => Promise<unknown>;
 }
@@ -242,6 +246,25 @@ function requireExpectedShape(read: TableLayout, expected: TableLayout): void {
   }
 }
 
+const quoteMatches = (quote: string, word: string): boolean => word !== '' && (word.includes(quote) || quote.includes(word));
+
+const commentsQuoting = (moved: MovedLine[], quotes: string[]): number =>
+  quotes.map((quote) => quote.trim()).filter((quote) => quote !== '' && moved.some((line) => line.cells.some((cell) => quoteMatches(quote, cell.trim())))).length;
+
+async function movedCommentsRefusal(clients: GoogleClients, documentId: string, doc: docs_v1.Schema$Document, moved: MovedLine[], input: TableEditInput): Promise<EditResult | undefined> {
+  if (moved.length === 0 || input.segmentId) return undefined;
+  const comments = commentsQuoting(moved, await quotedTexts(clients, documentId));
+  if (comments === 0) return undefined;
+  const token = movedCommentsToken(comments, doc.revisionId);
+  if (input.confirmLoss === token) return undefined;
+  const changed = input.confirmLoss !== undefined;
+  return {
+    status: 'confirm_required',
+    message: `Ask the user before doing anything else: nothing has been changed, and the user has not agreed to this yet. ${changed ? 'The doc changed since the earlier summary, or the summary was not passed back as given, so this is a fresh one. ' : ''}The API cannot move a row or column, so this edit deletes it and types it again, and the ${token.split(' [')[0]} would be lost. Show the user that and wait for a yes. Only after a yes, call edit_doc again with the same old_string and new_string and confirmLoss set to the string below, exactly.`,
+    confirmLoss: token,
+  };
+}
+
 interface PreparedEdit {
   match: Match;
   around: TableAndNeighbours;
@@ -262,7 +285,7 @@ function prepareEdit(doc: docs_v1.Schema$Document, match: Match, input: TableEdi
  * An edit whose old_string quotes a table's markup. The edited markup is read as
  * a table and compared with the table as it is, and only the difference is sent:
  * rows, columns and merges by their own requests (a row or column the edit moves
- * is a delete and an insert), then
+ * is a delete and an insert, and asks first when comments quote its text), then
  * the text and style of the cells that differ. A cell whose words are unchanged
  * is never retyped, and no table is ever rewritten whole.
  */
@@ -283,6 +306,8 @@ export async function editTableMarkup(clients: GoogleClients, documentId: string
   if (edits.length > 1 && edits.some(({ around }) => around.before || around.after)) {
     throw refusal('replace_all cannot add blocks next to a table: it matches more than one table. Quote one table with enough context to be unique.');
   }
+  const refused = await movedCommentsRefusal(clients, documentId, doc, edits.flatMap(({ comparison }) => comparison.moved), input);
+  if (refused) return refused;
   let changed = 0;
   let revisionId = doc.revisionId ?? undefined;
   const send = async (requests: docs_v1.Schema$Request[]): Promise<void> => {
