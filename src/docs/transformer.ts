@@ -1,8 +1,10 @@
 import type { docs_v1 } from 'googleapis';
 import { contentOf, listsOf, inlineObjectsOf } from './structure.js';
-import { LEVEL_BY_HEADING, CLASS_BY_NAMED_STYLE, CODE_FONT, PAGE_BREAK_LINE } from './markdown-spec.js';
+import { LEVEL_BY_HEADING, CLASS_BY_NAMED_STYLE, CODE_FONT, PAGE_BREAK_LINE, type CssAlign } from './markdown-spec.js';
+import { tableMarkup, tableLayoutOf, type CellReader } from './table-read.js';
+import type { TableLayout } from './table-layout.js';
 import { declarationsFor, styleAttribute } from './css.js';
-import { paragraphCssOf, effectiveStylesFor } from './style-block.js';
+import { paragraphCssOf, effectiveStylesFor, type EffectiveStyles } from './style-block.js';
 import { rgbToHex } from './color.js';
 import { literalTextEscaper, needsParagraphTag, cellNeedsParagraphTag, type Escaper } from './literal-text.js';
 import { unescapePipes } from './write.js';
@@ -80,9 +82,34 @@ export interface RenderOpts {
   segmentId?: string;
 }
 
+interface ReadContext {
+  doc: docs_v1.Schema$Document;
+  opts: RenderOpts;
+  lists: Record<string, docs_v1.Schema$List>;
+  objects: Record<string, docs_v1.Schema$InlineObject>;
+  inTableCell: boolean;
+}
+
+function readContextFor(doc: docs_v1.Schema$Document, opts: RenderOpts): ReadContext {
+  return { doc, opts, lists: listsOf(doc, opts.tabId), objects: inlineObjectsOf(doc, opts.tabId), inTableCell: false };
+}
+
 export function renderMarkdown(doc: docs_v1.Schema$Document, opts: RenderOpts = {}): string {
-  const lists = listsOf(doc, opts.tabId);
-  const objects = inlineObjectsOf(doc, opts.tabId);
+  return renderBlocks(contentOf(doc, opts.tabId, opts.segmentId), readContextFor(doc, opts)).join('\n\n');
+}
+
+/** The markup of one table the way `renderMarkdown` reads it, for an edit that quotes it. */
+export function renderTableMarkup(doc: docs_v1.Schema$Document, table: docs_v1.Schema$Table, opts: RenderOpts = {}): string {
+  return tableMarkup(table, cellReaderFor(readContextFor(doc, opts)));
+}
+
+/** The same table as the HTML form spells it, whether or not it reads as a pipe table. */
+export function readTableLayout(doc: docs_v1.Schema$Document, table: docs_v1.Schema$Table, opts: RenderOpts = {}): TableLayout {
+  return tableLayoutOf(table, cellReaderFor(readContextFor(doc, opts)));
+}
+
+function renderBlocks(content: docs_v1.Schema$StructuralElement[], context: ReadContext): string[] {
+  const { lists } = context;
   const blocks: string[] = [];
   let listBuf: string[] = [];
   let lastListId: string | null = null;
@@ -97,7 +124,7 @@ export function renderMarkdown(doc: docs_v1.Schema$Document, opts: RenderOpts = 
   };
 
   const addParagraph = (para: docs_v1.Schema$Paragraph): void => {
-    const line = renderParagraph(para, opts, objects, doc);
+    const line = renderParagraph(para, context);
     if (para.bullet) {
       const listId = para.bullet.listId ?? null;
       const startsDistinctList = listBuf.length > 0 && listId !== lastListId;
@@ -119,10 +146,10 @@ export function renderMarkdown(doc: docs_v1.Schema$Document, opts: RenderOpts = 
     }
   };
 
-  for (const el of contentOf(doc, opts.tabId, opts.segmentId)) {
+  for (const el of content) {
     if (!el.paragraph) {
       flushList();
-      if (el.table) blocks.push(renderTable(el.table, opts));
+      if (el.table && !context.inTableCell) blocks.push(renderTableMarkup(context.doc, el.table, context.opts));
       continue;
     }
     for (const piece of splitAtPageBreaks(el.paragraph)) {
@@ -135,7 +162,7 @@ export function renderMarkdown(doc: docs_v1.Schema$Document, opts: RenderOpts = 
     }
   }
   flushList();
-  return blocks.join('\n\n');
+  return blocks;
 }
 
 const PAGE_BREAK = Symbol('page break');
@@ -190,20 +217,30 @@ const escapeAttr = (s: string): string => s.replace(/&/g, '&amp;').replace(/"/g,
 const withoutParagraphMark = (s: string): string => s.replace(/\n$/, '');
 const lineBreaksAsBr = (s: string): string => s.replace(/\x0b/g, '<br>');
 
-function renderParagraph(
-  para: docs_v1.Schema$Paragraph,
-  opts: RenderOpts,
-  objects: Record<string, docs_v1.Schema$InlineObject>,
-  doc: docs_v1.Schema$Document,
-): string {
+const DOCS_TABLE_CELL_LINE_SPACING = 100;
+
+const inCellLineSpacing = (style: docs_v1.Schema$NamedStyle | undefined): docs_v1.Schema$NamedStyle | undefined =>
+  style && { ...style, paragraphStyle: { ...style.paragraphStyle, lineSpacing: DOCS_TABLE_CELL_LINE_SPACING } };
+
+function baselineStyles(context: ReadContext, namedStyleType: string): EffectiveStyles {
+  const styles = effectiveStylesFor(context.doc, namedStyleType, context.opts.tabId);
+  return context.inTableCell ? { named: inCellLineSpacing(styles.named), normal: inCellLineSpacing(styles.normal) } : styles;
+}
+
+const escapeTableTags =(text: string): string =>
+  text.replace(/(\\*)<(?=\/?(?:table|thead|tbody|tr|td|th|col|p|h[1-6])\b)/gi, (whole, slashes: string) => (slashes.length % 2 === 1 ? whole : `${slashes}\\<`));
+
+function renderParagraph(para: docs_v1.Schema$Paragraph, context: ReadContext): string {
+  const { opts, objects } = context;
   const named = para.paragraphStyle?.namedStyleType ?? 'NORMAL_TEXT';
-  const eff = effectiveStylesFor(doc, named, opts.tabId);
+  const eff = baselineStyles(context, named);
   const paragraphFamily = eff.named?.textStyle?.weightedFontFamily?.fontFamily ?? eff.normal?.textStyle?.weightedFontFamily?.fontFamily ?? undefined;
   const inlineWith = (escape: Escaper): string => {
+    const safe: Escaper = context.inTableCell ? (text) => escapeTableTags(escape(text)) : escape;
     let joined = '';
     for (const pe of para.elements ?? []) {
-      if (pe.textRun) joined += renderRun(pe.textRun, opts, paragraphFamily, escape);
-      else if (pe.inlineObjectElement?.inlineObjectId) {
+      if (pe.textRun) joined += renderRun(pe.textRun, opts, paragraphFamily, safe);
+      else if (pe.inlineObjectElement?.inlineObjectId && !context.inTableCell) {
         joined += renderImage(pe.inlineObjectElement.inlineObjectId, objects);
       }
     }
@@ -221,59 +258,52 @@ function renderParagraph(
   if (level) return style ? `<h${level}${styleAttr}>${inline}</h${level}>` : `${'#'.repeat(level)} ${inline}`;
   const className = CLASS_BY_NAMED_STYLE[named as keyof typeof CLASS_BY_NAMED_STYLE];
   if (className) return `<p class="${className}"${styleAttr}>${inline}</p>`;
-  const holdsImage = (para.elements ?? []).some((pe) => pe.inlineObjectElement);
+  const holdsImage = !context.inTableCell && (para.elements ?? []).some((pe) => pe.inlineObjectElement);
   if (style || (!holdsImage && needsParagraphTag(inline))) return `<p${styleAttr}>${inline}</p>`;
   return inline;
 }
 
-function renderCell(cell: docs_v1.Schema$TableCell, opts: RenderOpts): string {
-  const runs = (cell.content ?? []).flatMap((el) => el.paragraph?.elements ?? []).flatMap((pe) => (pe.textRun ? [pe.textRun] : []));
+const textRunsOf = (cell: docs_v1.Schema$TableCell): docs_v1.Schema$TextRun[] =>
+  (cell.content ?? []).flatMap((el) => el.paragraph?.elements ?? []).flatMap((pe) => (pe.textRun ? [pe.textRun] : []));
+
+function plainAlignmentOf(cell: docs_v1.Schema$TableCell, context: ReadContext): CssAlign | null | undefined {
+  const content = cell.content ?? [];
+  const paragraphs = content.flatMap((el) => (el.paragraph ? [el.paragraph] : []));
+  if (paragraphs.length !== 1 || content.some((el) => el.table)) return undefined;
+  const [paragraph] = paragraphs;
+  const named = paragraph.paragraphStyle?.namedStyleType ?? 'NORMAL_TEXT';
+  if (paragraph.bullet || named !== 'NORMAL_TEXT') return undefined;
+  const { align, ...other } = paragraphCssOf(paragraph.paragraphStyle, baselineStyles(context, named));
+  return Object.keys(other).length ? undefined : (align ?? null);
+}
+
+function pipeCellText(cell: docs_v1.Schema$TableCell, context: ReadContext): string {
+  const runs = textRunsOf(cell);
   const inlineWith = (escape: Escaper): string => {
     const escapeWithPipes: Escaper = (text) => escape(text).replace(/\|/g, '\\|');
-    return withoutParagraphMark(runs.map((run) => renderRun(run, opts, undefined, escapeWithPipes)).join('')).replace(/\n/g, ' ');
+    return lineBreaksAsBr(withoutParagraphMark(runs.map((run) => renderRun(run, context.opts, undefined, escapeWithPipes)).join('')));
   };
   const literalText = runs.map((run) => run.content ?? '').join('').replace(/\|/g, '');
   const inline = inlineWith(literalTextEscaper(literalText, inlineWith, unescapePipes));
   return cellNeedsParagraphTag(inline) ? `<p>${inline}</p>` : inline;
 }
 
-function cellAlign(cell: docs_v1.Schema$TableCell): 'center' | 'right' | null {
-  const a = cell.content?.[0]?.paragraph?.paragraphStyle?.alignment;
-  if (a === 'CENTER') return 'center';
-  if (a === 'END') return 'right';
-  return null;
+function htmlCellText(cell: docs_v1.Schema$TableCell, context: ReadContext): string {
+  const runs = textRunsOf(cell);
+  const inlineWith = (escape: Escaper): string =>
+    lineBreaksAsBr(withoutParagraphMark(runs.map((run) => renderRun(run, context.opts, undefined, (text) => escapeTableTags(escape(text)))).join('')));
+  const inline = inlineWith(literalTextEscaper(runs.map((run) => run.content ?? '').join(''), inlineWith));
+  return cellNeedsParagraphTag(inline) ? `<p>${inline}</p>` : inline;
 }
 
-// Docs table -> markdown pipe table. Row 0 is the header (markdown convention);
-// column alignment is emitted in the separator row (:--- / :---: / ---:).
-function renderTable(table: docs_v1.Schema$Table, opts: RenderOpts): string {
-  const tableRows = table.tableRows ?? [];
-  const rows = tableRows.map((row) => (row.tableCells ?? []).map((cell) => renderCell(cell, opts)));
-  if (!rows.length) return '';
-  const cols = Math.max(...rows.map((r) => r.length));
-  const pad = (r: string[]): string[] => [...r, ...Array(cols - r.length).fill('')];
-  const line = (cells: string[]): string => `| ${pad(cells).join(' | ')} |`;
-
-  // Per-column alignment: first non-default cell wins.
-  const seps: string[] = [];
-  for (let c = 0; c < cols; c++) {
-    let a: 'center' | 'right' | null = null;
-    for (const row of tableRows) {
-      const cell = row.tableCells?.[c];
-      if (cell) {
-        const ca = cellAlign(cell);
-        if (ca) {
-          a = ca;
-          break;
-        }
-      }
-    }
-    seps.push(a === 'center' ? ':---:' : a === 'right' ? '---:' : '---');
-  }
-
-  const out = [line(rows[0]), `| ${seps.join(' | ')} |`];
-  for (let i = 1; i < rows.length; i++) out.push(line(rows[i]));
-  return out.join('\n');
+function cellReaderFor(context: ReadContext): CellReader {
+  const inCell: ReadContext = { ...context, inTableCell: true };
+  return {
+    plainAlignment: (cell) => plainAlignmentOf(cell, inCell),
+    inPipeRow: (cell) => pipeCellText(cell, context),
+    inHtmlRow: (cell) => htmlCellText(cell, context),
+    asBlocks: (cell) => renderBlocks(cell.content ?? [], inCell).join('\n\n'),
+  };
 }
 
 function spanCssFor(s: docs_v1.Schema$TextStyle, isCode: boolean, paragraphFamily?: string): string[] {

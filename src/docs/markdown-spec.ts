@@ -104,3 +104,45 @@ export const CODE_FONT = 'Courier New';
 // A page break, on its own line: what the reader emits and the writer accepts
 // first among its spellings (page-break.ts). Markdown-to-PDF tools already read it.
 export const PAGE_BREAK_LINE = '<div style="page-break-after:always"></div>';
+
+export const TABLE_SIDES = ['top', 'right', 'bottom', 'left'] as const;
+
+export type TableSide = (typeof TABLE_SIDES)[number];
+
+export const TABLE_CELL_CSS_PROPERTIES = [
+  'background',
+  'border',
+  ...TABLE_SIDES.map((side) => `border-${side}`),
+  'padding',
+  ...TABLE_SIDES.map((side) => `padding-${side}`),
+  'vertical-align',
+] as const;
+
+export const BORDER_STYLE_BY_DASH: Record<string, 'solid' | 'dotted' | 'dashed'> = {
+  SOLID: 'solid',
+  DOT: 'dotted',
+  DASH: 'dashed',
+  LONG_DASH: 'dashed',
+  DASH_DOT: 'dashed',
+  LONG_DASH_DOT: 'dashed',
+};
+
+export const DASH_BY_BORDER_STYLE = {
+  solid: 'SOLID',
+  dotted: 'DOT',
+  dashed: 'DASH',
+} as const;
+
+export type BorderStyle = keyof typeof DASH_BY_BORDER_STYLE;
+
+export const ALIGNMENT_BY_VERTICAL_ALIGN = {
+  top: 'TOP',
+  middle: 'MIDDLE',
+  bottom: 'BOTTOM',
+} as const;
+
+export type VerticalAlign = keyof typeof ALIGNMENT_BY_VERTICAL_ALIGN;
+
+export const DOCS_DEFAULT_CELL_PADDING_PT = 5;
+
+export const DOCS_DEFAULT_BORDER = '1pt solid #000000';

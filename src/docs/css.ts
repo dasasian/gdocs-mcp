@@ -5,6 +5,7 @@ import {
   TEXT_CSS_PROPERTIES,
   NAMED_STYLE_BY_SELECTOR,
   PAGE_BREAK_LINE,
+  TABLE_CELL_CSS_PROPERTIES,
   type CssAlign,
 } from './markdown-spec.js';
 import { hexToRgb } from './color.js';
@@ -56,6 +57,7 @@ function styleSyntaxMessage(issues: string[]): string {
     list,
     `Supported in <p style> and <hN style>: ${PARAGRAPH_CSS_PROPERTIES.join(', ')}.`,
     `Supported in <span style>: ${TEXT_CSS_PROPERTIES.join(', ')}.`,
+    `Supported in <table>, <tr>, <td> and <col> style: ${TABLE_CELL_CSS_PROPERTIES.join(', ')}; <col> also takes width and <tr> also takes height.`,
     `A <style> rule takes both, on the selectors ${Object.keys(NAMED_STYLE_BY_SELECTOR).join(', ')}.`,
     'Lengths are in pt; line-height is a plain number (1.15); colors are #rrggbb.',
     `A <div> or <hr> on its own line is a page break, and only that: ${PAGE_BREAK_LINE}`,
@@ -67,7 +69,7 @@ const PX = /^(-?\d+(?:\.\d+)?)px$/i;
 const HEX_COLOR = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
 const RGB_COLOR = /^rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+/i;
 
-const parsePt = (v: string): number | undefined => {
+export const parsePt = (v: string): number | undefined => {
   if (v === '0') return 0;
   const m = PT.exec(v);
   return m ? Number(m[1]) : undefined;
@@ -144,7 +146,7 @@ const TEXT_ASSIGN: Record<string, Assign<TextCss>> = {
   },
 };
 
-function declarationsOf(body: string): { property: string; value: string }[] | string {
+export function declarationsOf(body: string): { property: string; value: string }[] | string {
   const out: { property: string; value: string }[] = [];
   for (const piece of body.split(';')) {
     const text = piece.trim();
