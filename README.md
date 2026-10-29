@@ -187,7 +187,17 @@ npm install
 npm run build      # tsc
 npm test           # vitest
 npm run typecheck
+npm run eval:agent              # a real agent does each task in eval/tasks/; graded from the doc
+npm run eval:agent -- --full    # Sonnet and Haiku, 3 runs each, before a merge
+npm run eval:agent -- --tag tables
 ```
+
+`eval:agent` is not part of `npm test`: it uses real model calls and a real Google
+account. Each run creates its docs through the API, runs `claude -p` from a temp
+folder with only the gdocs tools and no skills, reads the result through the API,
+and trashes every doc it made, even after a failure. A run that hits Google's
+per-minute write quota is retried once on its own and reported as a quota hit, not
+a failure.
 
 See [DESIGN.md](DESIGN.md) for the full architecture and the empirical findings behind it.
 

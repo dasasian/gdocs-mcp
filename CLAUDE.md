@@ -82,6 +82,14 @@ why enhancing an existing tool was rejected.
   anything non-trivial. This is how we caught the `weightedFontFamily`-clears-bold
   gotcha and the raw vertical-tab (U+000B) line-break artifact — neither showed up in unit
   tests. Use the `damith@dasasian.com` account for verification.
+- **Run `npm run eval:agent` when a tool, its description or the markdown format
+  changes.** It is the only check that a model picks the right tool and syntax from
+  the descriptions alone: a real agent does a plain-worded task, and the doc is
+  graded through the API, never the agent's reply. The default (Haiku, one run per
+  task) costs about $0.05; run `--full` (Sonnet and Haiku, three runs each) before
+  a merge. Tasks live in `eval/tasks/`, one file each, and a new construct gets a
+  task. Every task's grader must fail on its untouched setup doc
+  (`--check-graders`), or it grades nothing.
 - **Commits:** one concern per commit, reference the issue (`(#NN)`), and note the
   live verification in the body. `git add -A` before committing.
 - **Keep the docs in sync** when the tool surface changes: `README.md` table,
