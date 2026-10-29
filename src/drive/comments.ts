@@ -1,3 +1,4 @@
+import type { drive_v3 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
 
 // Spike-validated. `fields` is MANDATORY on Drive comments calls. Note:
@@ -20,8 +21,8 @@ export interface DocComment {
   replies: CommentReply[];
 }
 
-const FIELDS =
-  'comments(id,author(displayName),content,quotedFileContent(value),resolved,createdTime,replies(author(displayName),content,createdTime,action))';
+const LIST_FIELDS =
+  'nextPageToken,comments(id,author(displayName),content,quotedFileContent(value),resolved,createdTime,deleted,replies(author(displayName),content,createdTime,action))';
 
 export async function addComment(
   clients: GoogleClients,
@@ -83,17 +84,23 @@ export async function resolveComment(
   return { status: 'ok', id: res.data.id ?? '' };
 }
 
-export async function listComments(
-  clients: GoogleClients,
-  fileId: string,
-): Promise<DocComment[]> {
-  const res = await clients.drive.comments.list({
-    fileId,
-    pageSize: 100,
-    includeDeleted: false,
-    fields: FIELDS,
-  });
-  return (res.data.comments ?? []).map((c) => ({
+const COMMENTS_PAGE_SIZE = 100;
+
+/** Every live comment on the file, paged to the end. `fields` must name `nextPageToken` and `deleted`. */
+export async function allComments(clients: GoogleClients, fileId: string, fields: string): Promise<drive_v3.Schema$Comment[]> {
+  const comments: drive_v3.Schema$Comment[] = [];
+  let pageToken: string | undefined;
+  do {
+    const res = await clients.drive.comments.list({ fileId, pageSize: COMMENTS_PAGE_SIZE, pageToken, includeDeleted: false, fields });
+    comments.push(...(res.data.comments ?? []).filter((c) => !c.deleted));
+    pageToken = res.data.nextPageToken ?? undefined;
+  } while (pageToken);
+  return comments;
+}
+
+export async function listComments(clients: GoogleClients, fileId: string): Promise<DocComment[]> {
+  const comments = await allComments(clients, fileId, LIST_FIELDS);
+  return comments.map((c) => ({
     id: c.id ?? '',
     author: c.author?.displayName ?? null,
     createdTime: c.createdTime ?? null,
@@ -109,14 +116,13 @@ export async function listComments(
   }));
 }
 
-/** The quoted text of every comment on the file that has any, whether resolved or not. Paged to the end. */
+/** The quoted text of every comment on the file that has any, whether resolved or not. */
 export async function quotedTexts(clients: GoogleClients, fileId: string): Promise<string[]> {
-  const quotes: string[] = [];
-  let pageToken: string | undefined;
-  do {
-    const res = await clients.drive.comments.list({ fileId, pageSize: 100, pageToken, includeDeleted: false, fields: 'nextPageToken,comments(quotedFileContent(value),deleted)' });
-    quotes.push(...(res.data.comments ?? []).filter((c) => !c.deleted).flatMap((c) => (c.quotedFileContent?.value ? [c.quotedFileContent.value] : [])));
-    pageToken = res.data.nextPageToken ?? undefined;
-  } while (pageToken);
-  return quotes;
+  const comments = await allComments(clients, fileId, 'nextPageToken,comments(quotedFileContent(value),deleted)');
+  return comments.flatMap((c) => (c.quotedFileContent?.value ? [c.quotedFileContent.value] : []));
+}
+
+/** How many live comments the file has. */
+export async function countComments(clients: GoogleClients, fileId: string): Promise<number> {
+  return (await allComments(clients, fileId, 'nextPageToken,comments(id,deleted)')).length;
 }

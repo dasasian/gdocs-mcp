@@ -1,5 +1,4 @@
 import type { docs_v1 } from 'googleapis';
-import type { GoogleClients } from '../google/clients.js';
 import { contentOf } from './structure.js';
 import { parseSuggestions } from './suggestions.js';
 
@@ -117,15 +116,4 @@ export function lossDetails(loss: Loss, docHasSeveralTabs: boolean): string[] {
     ...(loss.sectionBreaks || loss.columnBreaks ? ['Section breaks and column breaks are not carried: a read does not show them, so a replace drops them, and the page setup and headers a section break holds go with it.'] : []),
     ...(loss.bookmarkLinks ? ['A bookmark itself is invisible to the API; only links that point at one are counted, so a bookmark nothing links to is not in this list.'] : []),
   ];
-}
-
-export async function countComments(clients: GoogleClients, documentId: string): Promise<number> {
-  let count = 0;
-  let pageToken: string | undefined;
-  do {
-    const res = await clients.drive.comments.list({ fileId: documentId, fields: 'nextPageToken,comments(id,deleted)', pageSize: 100, pageToken });
-    count += (res.data.comments ?? []).filter((c) => !c.deleted).length;
-    pageToken = res.data.nextPageToken ?? undefined;
-  } while (pageToken);
-  return count;
 }

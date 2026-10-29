@@ -8,7 +8,8 @@ import { readFile } from 'node:fs/promises';
 import nodePath from 'node:path';
 import { parseBlocks } from './write.js';
 import { resolveEntry, tabOfEntry, refusal, folderPathOf, parseDriveId, type Resolved, type TabRef } from '../drive/paths.js';
-import { measureLoss, confirmLossToken, lossSummary, lossDetails, countComments, type Loss } from './loss.js';
+import { measureLoss, confirmLossToken, lossSummary, lossDetails, type Loss } from './loss.js';
+import { countComments } from '../drive/comments.js';
 
 /**
  * Body from either `content` or a `contentFile` read server-side (so a long
