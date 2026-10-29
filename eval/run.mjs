@@ -20,6 +20,7 @@ const SERVER_ENTRY = path.join(REPO_ROOT, 'dist', 'index.js');
 const TASKS_DIR = path.join(REPO_ROOT, 'eval', 'tasks');
 const DEFAULT_CONCURRENCY = 5;
 const FULL_CONCURRENCY = 3;
+const RUN_TIMEOUT_MS = Number(process.env.GDOCS_EVAL_RUN_TIMEOUT_MS ?? 10 * 60_000);
 const QUOTA_MARKER = 'Quota exceeded';
 const DEFAULT_MODELS = ['haiku'];
 const FULL_MODELS = ['sonnet', 'haiku'];
@@ -40,6 +41,16 @@ const { values: options } = parseArgs({
 const liveChildren = new Set();
 const inFlightWork = new Set();
 let interrupted = false;
+
+const describeDuration = (ms) => (ms >= 60_000 ? `${ms / 60_000} min` : `${ms / 1000} s`);
+
+const killProcessGroup = (child) => {
+  try {
+    process.kill(-child.pid, 'SIGKILL');
+  } catch {
+    child.kill('SIGKILL');
+  }
+};
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -87,15 +98,21 @@ function runClaude({ prompt, model, mcpConfigPath, cwd }) {
     '--verbose',
   ];
   return new Promise((resolve, reject) => {
-    const child = spawn('claude', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('claude', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
     liveChildren.add(child);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killProcessGroup(child);
+    }, RUN_TIMEOUT_MS);
     let output = '';
     child.stdout.on('data', (chunk) => { output += chunk; });
     child.stderr.on('data', (chunk) => { output += chunk; });
     child.on('error', reject);
     child.on('close', (exitCode) => {
+      clearTimeout(timer);
       liveChildren.delete(child);
-      resolve({ output, exitCode });
+      resolve({ output, exitCode, timedOut });
     });
   });
 }
@@ -134,12 +151,13 @@ async function attemptRun({ task, model, runNumber }, { clients, workDir, mcpCon
   let hitQuota = false;
   try {
     const context = await task.setup(clients, docName);
-    const { output, exitCode } = await runClaude({ prompt: task.prompt(context), model, mcpConfigPath, cwd: workDir });
+    const { output, exitCode, timedOut } = await runClaude({ prompt: task.prompt(context), model, mcpConfigPath, cwd: workDir });
     await writeFile(path.join(workDir, `log ${task.name} ${model} ${runNumber}.jsonl`), output);
     summary = summariseLog(output);
     hitQuota = output.includes(QUOTA_MARKER);
     failures = await task.grade(clients, context);
-    if (exitCode !== 0) failures.push(`claude exited ${exitCode}`);
+    if (timedOut) failures.push(`timed out after ${describeDuration(RUN_TIMEOUT_MS)}`);
+    else if (exitCode !== 0) failures.push(`claude exited ${exitCode}`);
   } catch (error) {
     blocked = { kind: isQuotaError(error) ? 'quota' : 'harness error', message: error.message };
   }
@@ -150,7 +168,7 @@ const outcomeOf = (result) => (result.blocked ? 'could not run' : result.failure
 
 async function executeRun(run, environment) {
   const first = await attemptRun(run, environment);
-  return { ...run, ...first, quota: first.hitQuota };
+  return { ...run, ...first, quota: first.hitQuota && first.failures.length > 0 };
 }
 
 async function retryQuotaRun(result, environment) {
@@ -231,7 +249,7 @@ async function main() {
   const onSignal = async (signal) => {
     console.error(`\n${signal}: stopping runs and trashing created docs`);
     interrupted = true;
-    for (const child of liveChildren) child.kill('SIGTERM');
+    for (const child of liveChildren) killProcessGroup(child);
     await Promise.allSettled([...inFlightWork]);
     const trashFailures = await cleanUp();
     for (const failure of trashFailures) console.error(`could not trash ${failure}`);

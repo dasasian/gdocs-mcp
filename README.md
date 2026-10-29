@@ -196,9 +196,12 @@ npm run eval:agent -- --check-graders   # every grader must fail on an untouched
 `eval:agent` is not part of `npm test`: it uses real model calls and a real Google
 account. Each run creates its docs through the API, runs `claude -p` from a temp
 folder with only the gdocs tools and no skills, reads the result through the API,
-and trashes every doc it made, even after a failure. A run that hits Google's
-per-minute write quota is retried once on its own and reported as a quota hit, not
-a failure. Every Google call the harness itself makes (setup, grading, trashing) waits
+and trashes every doc it made, even after a failure. A run that fails
+with "Quota exceeded" in its log is retried once on its own after 60 s and reported as a
+quota hit, not a plain failure; a run that passed despite a quota error is a pass.
+Each `claude -p` is killed, process group included, after 10 minutes and reported as a
+failure ("timed out after 10 min"); `GDOCS_EVAL_RUN_TIMEOUT_MS` overrides that, for
+testing only. Every Google call the harness itself makes (setup, grading, trashing) waits
 60 s and retries up to 3 times on a quota error; a run whose harness call still fails is
 reported as "could not run", apart from passes and failures, and still exits non-zero.
 `--full` runs 3 at a time (5 by default) to keep that rare.
