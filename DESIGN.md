@@ -605,7 +605,10 @@ is refused on the first call, and the refusal is a loss summary: the paragraphs
 of text, and everything a read cannot carry that the replace would take with it
 — comments, suggestions, tab stops (the Docs API cannot write them back),
 smart chips, bookmarks, section and column breaks, page-number fields (the
-API can read one but cannot make one).
+API can read one but cannot make one). A page-number field is an `autoText` element of type
+`PAGE_NUMBER` or `PAGE_COUNT`. A body or tab replace counts the body of that
+tab only, because it deletes the body's range and leaves headers and footers
+standing (checked live, #63); a `segment` write counts that header or footer.
 
 ```
 write_doc("/Work/Contract", …)

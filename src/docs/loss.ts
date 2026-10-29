@@ -12,6 +12,7 @@ export interface Loss {
   dates: number;
   richLinks: number;
   bookmarkLinks: number;
+  pageNumberFields: number;
   sectionBreaks: number;
   columnBreaks: number;
 }
@@ -29,6 +30,7 @@ const LABELS: { key: Counted; one: string; many: string }[] = [
   { key: 'dates', one: 'date chip', many: 'date chips' },
   { key: 'richLinks', one: 'link chip', many: 'link chips' },
   { key: 'bookmarkLinks', one: 'link to a bookmark or heading', many: 'links to a bookmark or heading' },
+  { key: 'pageNumberFields', one: 'page-number field', many: 'page-number fields' },
   { key: 'sectionBreaks', one: 'section break', many: 'section breaks' },
   { key: 'columnBreaks', one: 'column break', many: 'column breaks' },
 ];
@@ -47,6 +49,12 @@ function textOf(paragraph: docs_v1.Schema$Paragraph): string {
   return (paragraph.elements ?? []).map((e) => e.textRun?.content ?? '').join('').trim();
 }
 
+const PAGE_NUMBER_FIELD_TYPES = ['PAGE_NUMBER', 'PAGE_COUNT'];
+
+function isPageNumberField(element: docs_v1.Schema$ParagraphElement): boolean {
+  return PAGE_NUMBER_FIELD_TYPES.includes(element.autoText?.type ?? '');
+}
+
 function pointsAtBookmarkOrHeading(link: docs_v1.Schema$Link | null | undefined): boolean {
   return Boolean(link?.bookmarkId || link?.bookmark || link?.headingId || link?.heading);
 }
@@ -55,12 +63,14 @@ function pointsAtBookmarkOrHeading(link: docs_v1.Schema$Link | null | undefined)
  * What replacing this tab's body would take with it that a markdown read cannot
  * carry. `doc` must come from a SUGGESTIONS_INLINE read, or suggestions are
  * invisible. `comments` is passed in because Drive holds them, not the doc.
- * For a header or footer (`segmentId`), comments and suggestions are not counted:
+ * A body or tab replace counts only that body: it deletes the body's range and leaves the
+ * headers and footers alone, so their page-number fields are counted only for a header or
+ * footer write. For a header or footer (`segmentId`), comments and suggestions are not counted:
  * they cannot be anchored there. A bookmark is not in the Docs API at all — only links that point at one are,
  * so a bookmark nothing links to is not counted.
  */
 export function measureLoss(doc: docs_v1.Schema$Document, tabId: string | undefined, comments: number, segmentId?: string): Loss {
-  const loss: Loss = { paragraphs: 0, comments: segmentId ? 0 : comments, suggestions: segmentId ? 0 : parseSuggestions(doc, tabId).length, tabStops: 0, tabStopLines: [], people: 0, dates: 0, richLinks: 0, bookmarkLinks: 0, sectionBreaks: 0, columnBreaks: 0 };
+  const loss: Loss = { paragraphs: 0, comments: segmentId ? 0 : comments, suggestions: segmentId ? 0 : parseSuggestions(doc, tabId).length, tabStops: 0, tabStopLines: [], people: 0, dates: 0, richLinks: 0, bookmarkLinks: 0, pageNumberFields: 0, sectionBreaks: 0, columnBreaks: 0 };
   const content = contentOf(doc, tabId, segmentId);
   loss.sectionBreaks = content.slice(1).filter((el) => el.sectionBreak).length;
   for (const paragraph of paragraphsIn(content)) {
@@ -76,6 +86,7 @@ export function measureLoss(doc: docs_v1.Schema$Document, tabId: string | undefi
       if (element.dateElement) loss.dates += 1;
       if (element.richLink) loss.richLinks += 1;
       if (element.columnBreak) loss.columnBreaks += 1;
+      if (isPageNumberField(element)) loss.pageNumberFields += 1;
       if (pointsAtBookmarkOrHeading(element.textRun?.textStyle?.link)) loss.bookmarkLinks += 1;
     }
   }
@@ -113,7 +124,8 @@ export function lossDetails(loss: Loss, docHasSeveralTabs: boolean): string[] {
   return [
     ...(loss.tabStops ? [`tab stops on ${loss.tabStopLines.length} line(s): ${shown.join(', ')}${more > 0 ? `, and ${more} more` : ''}. The Docs API cannot write tab stops, so they cannot be put back.`] : []),
     ...(loss.comments && docHasSeveralTabs ? ['The comment count is for the whole doc: the Drive API does not say which tab a comment is anchored to.'] : []),
-    ...(loss.sectionBreaks || loss.columnBreaks ? ['Section breaks and column breaks are not carried: a read does not show them, so a replace drops them, and the page setup and headers a section break holds go with it.'] : []),
+    ...(loss.pageNumberFields ? ['The Docs API can read a page-number field but cannot create one, so it cannot be put back. To keep it, add it by hand in Docs after the write.'] : []),
+    ...(loss.sectionBreaks ||loss.columnBreaks ? ['Section breaks and column breaks are not carried: a read does not show them, so a replace drops them, and the page setup and headers a section break holds go with it.'] : []),
     ...(loss.bookmarkLinks ? ['A bookmark itself is invisible to the API; only links that point at one are counted, so a bookmark nothing links to is not in this list.'] : []),
   ];
 }
