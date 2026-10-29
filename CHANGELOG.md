@@ -30,7 +30,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 | Removed | Use instead |
 |---|---|
 | `insert_content(path, content, at)` | `edit_doc` with the anchor written back and the new content after it: `old_string` `Scope`, `new_string` `Scope\n\nNew paragraph`. `contentFile` and `baseDir` work as in `write_doc`. Into an empty doc, tab, header or footer: `write_doc` |
-| `insert_table(path, rows, columns, data, …)` | a markdown table in `new_string`; later row and column changes stay with `edit_table` and `set_table_style` |
+| `insert_table(path, rows, columns, data, …)` | a markdown table in `new_string`; its rows, columns and style change through `edit_doc` too (#61, #62) |
 | `insert_image(path, uri, at, width, height, align, …)` | `<img src="…" width="…" height="…">` or `![alt](src)` in `new_string`; a centered image is `<p style="text-align:center"><img …></p>`, the form `read_doc` shows |
 | `createSegment: true` on any tool | `write_doc(path, content, segment: "header" \| "footer")` creates a missing default header or footer and writes it |
 
