@@ -7,12 +7,14 @@ import { parsePageBreakLine } from './page-break.js';
 import { parseStyleBlock, namedStyleRequests, type StyleRule } from './style-block.js';
 import { parseHtmlTable } from './table-html.js';
 import { placeCells, type LayoutCell, type TableLayout } from './table-layout.js';
+import { QUOTE_PARAGRAPH_FIELDS, QUOTE_PARAGRAPH_STYLE } from './quote.js';
 
 export type CellAlign = 'left' | 'center' | 'right';
 
 type Block =
   | { type: 'heading'; level: number; text: string; css?: ParagraphCss }
-  | { type: 'paragraph'; text: string; css?: ParagraphCss; className?: ParagraphClass }
+  | { type: 'paragraph'; text: string; css?: ParagraphCss; className?: ParagraphClass; quote?: true }
+  | { type: 'code'; text: string }
   | { type: 'style'; rules: StyleRule[] }
   | { type: 'list'; ordered: boolean; items: { level: number; text: string }[] }
   | { type: 'table'; rows: string[][]; aligns: (CellAlign | null)[]; layout?: TableLayout }
@@ -47,6 +49,10 @@ const IMG_TAG_RE = /^<img\s+[^>]*>$/i;
 const ATTR_RE = /([a-z-]+)\s*=\s*"([^"]*)"/gi;
 const STYLE_OPEN_RE = /^<style>/i;
 const STYLE_CLOSE_RE = /<\/style>/i;
+const FENCE_OPEN_RE = /^( {0,3})(`{3,}|~{3,})([^`]*)$/;
+const QUOTE_MARK_RE = /^ {0,3}>/;
+const INDENTED_CODE_RE = /^(?: {4}|\t)/;
+const INDENTED_CODE_STRIP_RE = /^(?: {1,4}|\t)/;
 
 export const isTableRow = (l: string): boolean => l.trim().startsWith('|');
 // A separator line is only dashes/colons/pipes/spaces, with at least one dash.
@@ -103,7 +109,7 @@ function parseTableAt(lines: string[], from: number): { block: Block; next: numb
 const HTML_TABLE_START_RE = /^<table\b/i;
 const HTML_TABLE_END_RE = /<\/table\s*>/i;
 
-export type CellBlock = Extract<Block, { type: 'heading' | 'paragraph' | 'list' }>;
+export type CellBlock = Extract<Block, { type: 'heading' | 'paragraph' | 'list' | 'code' }>;
 
 /** What a cell of an HTML table holds. Anything a cell cannot carry (an image, a page break, a table) is a problem, not a block. */
 export function cellBlocksOf(cell: LayoutCell): { blocks: CellBlock[]; issues: string[]; refused: string[] } {
@@ -113,7 +119,7 @@ export function cellBlocksOf(cell: LayoutCell): { blocks: CellBlock[]; issues: s
   }
   try {
     const parsed = parseBlocks(cell.markdown);
-    const blocks = parsed.filter((b): b is CellBlock => b.type === 'heading' || b.type === 'paragraph' || b.type === 'list');
+    const blocks = parsed.filter((b): b is CellBlock => b.type === 'heading' || b.type === 'paragraph' || b.type === 'list' || b.type === 'code');
     const refused = parsed.filter((b) => !blocks.includes(b as CellBlock)).map((b) => `a table cell cannot hold a ${b.type}`);
     return { blocks, issues: refused, refused };
   } catch (error) {
@@ -124,10 +130,12 @@ export function cellBlocksOf(cell: LayoutCell): { blocks: CellBlock[]; issues: s
 
 const CSS_ISSUE = /<[a-z]+ style> /;
 
+type Reporter = (lineIndex: number, found: string[], aboutTableShape?: boolean) => void;
+
 function parseHtmlTableAt(
   lines: string[],
   from: number,
-  report: (lineIndex: number, found: string[], structure?: boolean) => void,
+  report: Reporter,
 ): { block: Block; next: number } {
   let last = from;
   while (last < lines.length && !HTML_TABLE_END_RE.test(lines[last])) last++;
@@ -168,15 +176,26 @@ function parseImgTag(line: string): Extract<Block, { type: 'image' }> | undefine
   };
 }
 
+const startsOtherBlockLine = (line: string): boolean =>
+  isTableRow(line) || IMAGE_RE.test(line.trim()) || IMG_TAG_RE.test(line.trim()) || HTML_TABLE_START_RE.test(line.trim()) || STYLE_OPEN_RE.test(line.trim()) || line.trim().startsWith('<!--') || splitWrappedLine(line) !== undefined;
+
+const endsParagraphBeforeLine = (line: string): boolean =>
+  line.trim() === '' || HEADING_RE.test(line) || LIST_RE.test(line) || FENCE_OPEN_RE.test(line) || QUOTE_MARK_RE.test(line) || parsePageBreakLine(line) !== undefined;
+
 function parseListAt(lines: string[], from: number): { block: Block; next: number } {
   const ordered = /\d/.test(LIST_RE.exec(lines[from])![2]);
   const items: { level: number; text: string }[] = [];
   let i = from;
   while (i < lines.length) {
     const m = LIST_RE.exec(lines[i]);
-    if (!m) break;
-    const indent = m[1].replace(/\t/g, '  ').length;
-    items.push({ level: Math.floor(indent / 2), text: m[3].trim() });
+    if (m) {
+      const indent = m[1].replace(/\t/g, '  ').length;
+      items.push({ level: Math.floor(indent / 2), text: m[3].trim() });
+    } else if (endsParagraphBeforeLine(lines[i]) || startsOtherBlockLine(lines[i])) {
+      break;
+    } else {
+      items[items.length - 1].text += ` ${lines[i].trim()}`;
+    }
     i++;
   }
   return { block: { type: 'list', ordered, items }, next: i };
@@ -185,11 +204,72 @@ function parseListAt(lines: string[], from: number): { block: Block; next: numbe
 function parseSoftJoinedParagraphAt(lines: string[], from: number): { block: Block; next: number } {
   const para: string[] = [];
   let i = from;
-  while (i < lines.length && lines[i].trim() !== '' && !HEADING_RE.test(lines[i]) && !LIST_RE.test(lines[i]) && !parsePageBreakLine(lines[i])) {
+  while (i < lines.length && !endsParagraphBeforeLine(lines[i])) {
     para.push(lines[i].trim());
     i++;
   }
   return { block: { type: 'paragraph', text: para.join(' ') }, next: i };
+}
+
+const withoutLeadingSpaces = (line: string, most: number): string => line.replace(new RegExp(`^ {0,${most}}`), '');
+
+function parseFencedCodeAt(lines: string[], from: number, report: Reporter): { block: Block; next: number } {
+  const [, indent, fence] = FENCE_OPEN_RE.exec(lines[from])!;
+  const closeRe = new RegExp(`^ {0,3}${fence[0]}{${fence.length},}\\s*$`);
+  const code: string[] = [];
+  let i = from + 1;
+  while (i < lines.length && !closeRe.test(lines[i])) {
+    code.push(withoutLeadingSpaces(lines[i], indent.length));
+    i++;
+  }
+  if (i === lines.length) report(from, [`code fence ${fence} is never closed`], true);
+  return { block: { type: 'code', text: code.join('\n') }, next: i + 1 };
+}
+
+function parseIndentedCodeAt(lines: string[], from: number): { block: Block; next: number } {
+  let end = from;
+  let i = from;
+  while (i < lines.length && (lines[i].trim() === '' || INDENTED_CODE_RE.test(lines[i]))) {
+    if (lines[i].trim() !== '') end = i;
+    i++;
+  }
+  const code = lines.slice(from, end + 1).map((line) => (line.trim() === '' ? '' : line.replace(INDENTED_CODE_STRIP_RE, '')));
+  return { block: { type: 'code', text: code.join('\n') }, next: end + 1 };
+}
+
+function parseQuoteAt(lines: string[], from: number, report: Reporter): { blocks: Block[]; next: number } {
+  const paragraphs: string[][] = [[]];
+  const open = (): string[] => paragraphs[paragraphs.length - 1];
+  let i = from;
+  while (i < lines.length) {
+    const marked = QUOTE_MARK_RE.exec(lines[i]);
+    const lazy = !marked && open().length > 0 && !endsParagraphBeforeLine(lines[i]);
+    if (!marked && !lazy) break;
+    const content = marked ? lines[i].slice(marked[0].length).replace(/^ /, '') : lines[i];
+    const refusal = marked ? refusalInsideQuote(content, open().length === 0) : undefined;
+    if (refusal) report(i, [refusal], true);
+    else if (content.trim() === '') paragraphs.push([]);
+    else {
+      const wrapped = splitWrappedLine(content);
+      if (wrapped && (wrapped.markup.heading || wrapped.markup.className || Object.keys(wrapped.markup.css).length || wrapped.issues.length)) {
+        report(i, ['a paragraph style or heading cannot go inside a quote'], true);
+      } else {
+        report(i, inlineStyleIssues(content));
+        open().push(wrapped ? wrapped.inner : content.trim());
+      }
+    }
+    i++;
+  }
+  const blocks = paragraphs.filter((words) => words.length).map((words): Block => ({ type: 'paragraph', text: words.join(' '), quote: true }));
+  return { blocks, next: i };
+}
+
+function refusalInsideQuote(content: string, startsParagraph: boolean): string | undefined {
+  if (QUOTE_MARK_RE.test(content)) return 'a quote inside a quote (>>) is not supported';
+  if (LIST_RE.test(content)) return 'a list inside a quote is not supported';
+  if (FENCE_OPEN_RE.test(content) || (startsParagraph && INDENTED_CODE_RE.test(content))) return 'a code block inside a quote is not supported';
+  if (HEADING_RE.test(content)) return 'a heading inside a quote is not supported';
+  return undefined;
 }
 
 function parseStyleBlockAt(lines: string[], from: number, issues: string[]): number {
@@ -208,7 +288,7 @@ const WRAPPED_IMAGE_LINE_RE = /^<p\b[^>]*>\s*<img\b/i;
 export function holdsBlockMarkdown(markdown: string): boolean {
   const hasBlockLine = markdown.split('\n').some((line) => {
     const trimmed = line.trim();
-    return HEADING_RE.test(line) || LIST_RE.test(line) || isTableRow(line) || HTML_TABLE_START_RE.test(trimmed) || IMAGE_RE.test(trimmed) || IMG_TAG_RE.test(trimmed) || WRAPPED_IMAGE_LINE_RE.test(trimmed) || STYLE_OPEN_RE.test(trimmed);
+    return HEADING_RE.test(line) || LIST_RE.test(line) || FENCE_OPEN_RE.test(line) || QUOTE_MARK_RE.test(line) || isTableRow(line) || HTML_TABLE_START_RE.test(trimmed) || IMAGE_RE.test(trimmed) || IMG_TAG_RE.test(trimmed) || WRAPPED_IMAGE_LINE_RE.test(trimmed) || STYLE_OPEN_RE.test(trimmed);
   });
   return hasBlockLine || /\n[ \t]*\n/.test(markdown);
 }
@@ -229,6 +309,12 @@ export function parseBlocks(md: string): Block[] {
     const line = lines[i];
     if (line.trim() === '') {
       i++;
+      continue;
+    }
+    if (INDENTED_CODE_RE.test(line)) {
+      const code = parseIndentedCodeAt(lines, i);
+      blocks.push(code.block);
+      i = code.next;
       continue;
     }
     if (line.trim().startsWith('<!--')) {
@@ -280,6 +366,18 @@ export function parseBlocks(md: string): Block[] {
       report(i, pageBreak.issues);
       blocks.push({ type: 'pageBreak' });
       i++;
+      continue;
+    }
+    if (FENCE_OPEN_RE.test(line)) {
+      const code = parseFencedCodeAt(lines, i, report);
+      blocks.push(code.block);
+      i = code.next;
+      continue;
+    }
+    if (QUOTE_MARK_RE.test(line)) {
+      const quote = parseQuoteAt(lines, i, report);
+      blocks.push(...quote.blocks);
+      i = quote.next;
       continue;
     }
     const wrapped = splitWrappedLine(line);
@@ -351,6 +449,7 @@ interface ParagraphOp {
   end: number;
   namedStyleType?: string;
   css: ParagraphCss;
+  quote?: true;
 }
 
 export interface BuildOptions {
@@ -363,6 +462,7 @@ export interface BuildOptions {
 }
 
 const RESET_PARAGRAPH_FIELDS = [
+  'borderLeft',
   'namedStyleType',
   'alignment',
   'lineSpacing',
@@ -464,8 +564,17 @@ export function buildContentRequests(
       const plain = addInline(lineStart, block.text);
       text += plain + '\n';
       const namedStyleType = block.type === 'heading' ? HEADING_BY_LEVEL[block.level] : block.className && NAMED_STYLE_BY_CLASS[block.className];
-      if (namedStyleType || block.css) {
-        paragraphOps.push({ start: abs(lineStart), end: abs(lineStart + plain.length + 1), namedStyleType: namedStyleType || undefined, css: block.css ?? {} });
+      const quote = block.type === 'paragraph' ? block.quote : undefined;
+      if (namedStyleType || block.css || quote) {
+        paragraphOps.push({ start: abs(lineStart), end: abs(lineStart + plain.length + 1), namedStyleType: namedStyleType || undefined, css: block.css ?? {}, quote });
+      }
+    } else if (block.type === 'code') {
+      const lineStart = text.length;
+      const lineBroken = block.text.replace(/\n/g, '\v');
+      text += lineBroken + '\n';
+      if (lineBroken) {
+        const { textStyle, fields } = segmentTextStyle({ text: lineBroken, code: true });
+        inlineOps.push({ start: abs(lineStart), end: abs(lineStart + lineBroken.length), textStyle, fields });
       }
     } else if (block.type === 'pageBreak') {
       breakOffsets.push(abs(text.length));
@@ -507,12 +616,13 @@ export function buildContentRequests(
   }
   for (const op of paragraphOps) {
     const update = paragraphStyleUpdate(op.css);
-    const fields = [...(op.namedStyleType ? ['namedStyleType'] : []), ...update.fields];
+    const quoteStyle = op.quote ? QUOTE_PARAGRAPH_STYLE : {};
+    const fields = [...(op.namedStyleType ? ['namedStyleType'] : []), ...update.fields, ...(op.quote ? QUOTE_PARAGRAPH_FIELDS : [])];
     if (!fields.length) continue;
     requests.push({
       updateParagraphStyle: {
         range: { startIndex: op.start, endIndex: op.end, tabId, segmentId },
-        paragraphStyle: { ...update.style, ...(op.namedStyleType ? { namedStyleType: op.namedStyleType } : {}) },
+        paragraphStyle: { ...update.style, ...quoteStyle, ...(op.namedStyleType ? { namedStyleType: op.namedStyleType } : {}) },
         fields: fields.join(','),
       },
     });

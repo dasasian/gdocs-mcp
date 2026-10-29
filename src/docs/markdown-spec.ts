@@ -146,3 +146,9 @@ export type VerticalAlign = keyof typeof ALIGNMENT_BY_VERTICAL_ALIGN;
 export const DOCS_DEFAULT_CELL_PADDING_PT = 5;
 
 export const DOCS_DEFAULT_BORDER = '1pt solid #000000';
+
+export const QUOTE_INDENT_PT = 36;
+
+export const QUOTE_BORDER_WIDTH_PT = 1.5;
+
+export const QUOTE_BORDER_HEX = '#cccccc';

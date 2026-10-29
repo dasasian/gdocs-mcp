@@ -38,7 +38,7 @@ export const plainTextOf = (text: string): string => parseInline(text).map((segm
 
 export function cellWords(cell: LayoutCell): string {
   return cellBlocksOf(cell)
-    .blocks.map((block) => (block.type === 'list' ? block.items.map((item) => plainTextOf(item.text)).join('\n') : plainTextOf(block.text)))
+    .blocks.map((block) => (block.type === 'list' ? block.items.map((item) => plainTextOf(item.text)).join('\n') : block.type === 'code' ? block.text : plainTextOf(block.text)))
     .join('\n');
 }
 

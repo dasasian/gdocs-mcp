@@ -121,7 +121,13 @@ function layoutAfterEdit(markup: string): TableLayout {
 }
 
 function signatureOf(blocks: CellBlock[]): string {
-  return JSON.stringify(blocks.map((block) => (block.type === 'list' ? { ...block, items: block.items.map((item) => ({ level: item.level, text: parseInline(item.text) })) } : { ...block, text: parseInline(block.text) })));
+  return JSON.stringify(
+    blocks.map((block) => {
+      if (block.type === 'list') return { ...block, items: block.items.map((item) => ({ level: item.level, text: parseInline(item.text) })) };
+      if (block.type === 'code') return block;
+      return { ...block, text: parseInline(block.text) };
+    }),
+  );
 }
 
 function onlyParagraph(blocks: CellBlock[]): Extract<CellBlock, { type: 'paragraph' }> | undefined {
@@ -174,7 +180,7 @@ function cellRequests(
   if (signatureOf(beforeBlocks) === signatureOf(afterBlocks)) return undefined;
   const was = onlyParagraph(beforeBlocks);
   const now = onlyParagraph(afterBlocks);
-  if (was && now && !was.className && !now.className && plainTextOf(was.text) === plainTextOf(now.text)) {
+  if (was && now && !was.className && !now.className && Boolean(was.quote) === Boolean(now.quote) && plainTextOf(was.text) === plainTextOf(now.text)) {
     return { start: range.start, requests: restyleRequests(was, now, range, tabId, segmentId) };
   }
   const retyped = buildContentRequests(afterBlocks, range.start, tabId, segmentId, { startsParagraph: true, endsInExistingParagraphMark: true, resetParagraphStyles: true });

@@ -39,6 +39,13 @@ const NEEDS_TAG: [string, string][] = [
   ['paragraph tag', '<p>x</p>'],
   ['heading tag', '<h1>x</h1>'],
   ['styled paragraph tag', '<p style="text-align:center">x</p>'],
+  ['quote marker', '> quoted'],
+  ['quote marker without a space', '>= 5 items'],
+  ['lone quote marker', '>'],
+  ['code fence', '```'],
+  ['code fence with a language', '```js'],
+  ['tilde fence', '~~~'],
+  ['four spaces', '    aligned'],
 ];
 
 const NEEDS_ESCAPE: [string, string, string][] = [
@@ -65,7 +72,6 @@ const STAYS_CLEAN = [
   '***',
   'AT&T and &copy;',
   '| a | b |',
-  '```',
   'Exhibit A.*',
   '2 * 3',
   'C:\\Users\\me',
@@ -73,7 +79,6 @@ const STAYS_CLEAN = [
   '4.5 percent',
   '-5 degrees',
   '#hashtag',
-  '> quoted',
   '-',
 ];
 
