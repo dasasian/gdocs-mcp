@@ -372,6 +372,7 @@ Two rules this design enforces:
 - **Match space:** doc projected to plain text; `old_string` matched against it.
 - **Markup-tolerant:** `"# Title"` and `"Title"` both match the heading. Literal-text markers (§2b) are markup too: `5 * 3`, `5 \* 3` and `<p>4. Term` all find the text they spell.
 - **Whitespace-normalized:** collapse repeated spaces, ignore soft-wraps, trim — robust against invisible-character mismatches.
+- **Paragraph breaks as the read shows them:** the read puts a blank line between paragraphs, so a blank line in `old_string` matches one paragraph break. `## Scope\n\nThis project covers`, copied from the read, finds the heading and the paragraph after it.
 - **Cross-run:** matches across formatting boundaries (a bold word mid-sentence does not break the match).
 - **0 matches** → error "not found" (+ nearest-text hint).
 - **>1 matches** → error listing each with surrounding context; agent retries with more context (same escape hatch as local `Edit`). This is also how disambiguation works without polluting reads with anchor IDs.
@@ -397,7 +398,11 @@ Four rules make blocks behave:
 
 - **What comes back unchanged is kept.** Text in `old_string` that reappears
   unchanged in `new_string` is not deleted and re-inserted, so its style,
-  comments and suggestions stay. This is the style-only rule below, applied to
+  comments and suggestions stay. The lines `old_string` and `new_string` share
+  at the start and at the end are kept, and only what differs between them is
+  written: quoting both sides of an insertion point
+  (`## Scope\n\nThis project…` → `## Scope\n\n| table |\n\nThis project…`)
+  inserts the table and retypes nothing. This is the style-only rule below, applied to
   the whole edit. It is also how a paragraph goes after a table that ends the
   doc: the Docs API cannot insert across a cell edge, so the agent quotes the
   table's last row, writes it back, and adds the paragraph after it, as above.
