@@ -3,10 +3,6 @@ import type { GoogleClients } from '../google/clients.js';
 import { contentOf, resolveTabId, writeControlFor, type SegmentKind, type SegmentPage } from './structure.js';
 import { resolveSegmentTarget } from './segments.js';
 
-// Spike-validated logic. Suggestions live in the Docs API only (no author/time —
-// confirmed unavailable). We read in SUGGESTIONS_INLINE (the only mode whose
-// indices are valid for a follow-up batchUpdate), group tagged runs by suggestion
-// id, and emit before→after diffs.
 
 export type SuggestionType = 'insertion' | 'deletion' | 'replacement' | 'style';
 
@@ -92,10 +88,6 @@ function isContiguous(spans: Span[]): boolean {
   return true;
 }
 
-// Short human-readable summary of a suggestion, independent of accept/reject.
-// Callers echo this back into apply_suggestions (as `expectedChange`) so the
-// permission prompt shows what's actually being resolved instead of a bare id,
-// and so a stale/wrong id gets caught before anything is applied.
 export function formatSuggestionPreview(s: Pick<Suggestion, 'type' | 'before' | 'after'>): string {
   const before = s.before.trim();
   const after = s.after.trim();
@@ -119,19 +111,6 @@ export async function listSuggestions(
   return { revisionId: doc.revisionId ?? '', title: doc.title ?? '', suggestions };
 }
 
-// ---- Cluster-aware resolution (fixes #7) ----
-//
-// The naive resolve (delete a suggestion's span, insert its chosen text) is only
-// safe when that suggestion is ISOLATED. When suggestions overlap, abut, or
-// interleave (a non-contiguous suggestion spans across its neighbours), resolving
-// one at a time via separate batchUpdates shifts indices and merges/re-tags the
-// neighbours — silently corrupting them while every call reports success.
-//
-// Fix: treat overlapping/touching suggestions as a CLUSTER that must be resolved
-// together, atomically. For a cluster region we compute the final plain text from
-// the raw runs + a decision per member (accept keeps insertions & drops deletions;
-// reject the reverse; untagged text is kept), then delete the whole region and
-// insert that text in one shot — no interleaving, no inheritance, no per-call drift.
 
 export interface TaggedRun {
   start: number;
@@ -148,9 +127,6 @@ export function collectRuns(doc: docs_v1.Schema$Document, tabId?: string, segmen
     for (const pe of el.paragraph?.elements ?? []) {
       const run = pe.textRun;
       if (!run?.content) continue;
-      // Google attaches suggestedTextStyleChanges to normal insertion/deletion runs
-      // too; a *style-only* suggestion is a style change on a run that is NOT being
-      // inserted or deleted. Only those count as style ids here.
       const isEdit = (run.suggestedInsertionIds?.length ?? 0) > 0 || (run.suggestedDeletionIds?.length ?? 0) > 0;
       const styleIds = isEdit ? [] : Object.keys(run.suggestedTextStyleChanges ?? {});
       runs.push({
@@ -172,8 +148,6 @@ export interface Cluster {
   end: number;
 }
 
-// Group suggestions whose spans overlap or touch. Style-only suggestions have no
-// text span (excluded here; handled via regionHasStyleSuggestion).
 export function clusterSuggestions(suggestions: Suggestion[]): Cluster[] {
   const spatial = suggestions.filter((s) => s.type !== 'style' && Number.isFinite(s.start));
   const sorted = [...spatial].sort((a, b) => a.start - b.start);
@@ -190,7 +164,6 @@ export function clusterSuggestions(suggestions: Suggestion[]): Cluster[] {
   return clusters;
 }
 
-// Final plain text for a region given a decision per suggestion.
 export function resolveRegionText(
   runs: TaggedRun[],
   start: number,
@@ -217,11 +190,6 @@ export interface Conflict {
   text: string;
 }
 
-// A true conflict: a run tagged as BOTH an accepted insertion and an accepted
-// deletion (from two different suggestions) — one suggestion inserts text inside
-// a region another suggestion deletes, and both are being accepted. That's
-// contradictory; resolveRegionText keeps the inserted text (insertion-precedence),
-// which is deterministic but not something to resolve silently (#11).
 export function detectConflicts(
   runs: TaggedRun[],
   start: number,
@@ -244,8 +212,6 @@ export function detectConflicts(
   return out;
 }
 
-// A region we're about to replace must not contain a style-only suggestion —
-// a delete+insert would silently drop it.
 function regionHasStyleSuggestion(runs: TaggedRun[], start: number, end: number): boolean {
   return runs.some((r) => r.start >= start && r.end <= end && (r.styleIds?.length ?? 0) > 0);
 }
@@ -265,9 +231,6 @@ function regionRequests(
   return requests;
 }
 
-// Anchors a call to the document, not just the change (#9): a same-worded
-// suggestion can exist in two near-identical documents, and expectedChange
-// alone wouldn't catch approving it on the wrong one.
 function checkDocumentTitle(doc: docs_v1.Schema$Document, documentTitle: string): string | undefined {
   const actual = doc.title ?? '';
   if (actual === documentTitle) return undefined;
@@ -288,9 +251,6 @@ export interface ApplyManyResult {
   conflicts?: (Conflict & { note: string })[];
 }
 
-// Resolve several suggestions in ONE atomic batchUpdate. Required for clusters:
-// any cluster touched by `resolutions` must be resolved in full (every member
-// decided), or the call is refused — never a partial, corrupting resolution.
 export async function applySuggestions(
   clients: GoogleClients,
   documentId: string,
@@ -304,8 +264,6 @@ export async function applySuggestions(
   if (wrongDoc) return { status: 'wrong_doc', errors: [wrongDoc] };
 
   const tabId = resolveTabId(doc, requestedTabId);
-  // Read and write must agree on the segment: indices are per-segment, so runs
-  // collected from a header can only be written back with that header's id.
   const seg = resolveSegmentTarget(doc, { segment: opts.segment, page: opts.page, tabId });
   if (seg.error) return { status: 'no_segment', errors: [seg.error] };
   const segmentId = seg.segmentId;

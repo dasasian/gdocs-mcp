@@ -1,8 +1,6 @@
 import type { drive_v3 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
 
-// Spike-validated. `fields` is MANDATORY on Drive comments calls. Note:
-// author.emailAddress is not returned (Drive privacy default) — display name only.
 
 export interface CommentReply {
   author: string | null;
@@ -52,8 +50,6 @@ export async function replyComment(
   return { id: res.data.id ?? '' };
 }
 
-// Resolve (or reopen) a comment = a reply carrying an action. Content is optional
-// when an action is set, but Drive requires non-empty content, so we default it.
 export async function resolveComment(
   clients: GoogleClients,
   fileId: string,
@@ -61,8 +57,6 @@ export async function resolveComment(
   reopen = false,
   opts: { expectQuote?: string } = {},
 ): Promise<{ status: 'ok' | 'mismatch'; id?: string; message?: string }> {
-  // commentId is opaque; when the caller echoes a snippet of the comment's quoted
-  // text or body, verify it against the live comment before resolving (#10).
   if (opts.expectQuote !== undefined) {
     const c = (
       await clients.drive.comments.get({ fileId, commentId, fields: 'quotedFileContent/value,content' })
