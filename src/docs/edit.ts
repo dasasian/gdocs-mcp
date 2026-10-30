@@ -10,7 +10,6 @@ import { splitEditLine, type ParagraphLine, type ParagraphMarkup } from './parag
 import { parseStyleBlock, namedStyleRequests, styleRulesOf, renderStyleBlock } from './style-block.js';
 import { clearDirectRunStyling, pageBreakRequests, parseBlocks, holdsBlockMarkdown, isTableRow, isTableSep, splitRow } from './write.js';
 import { planMarkdownRender, renderMarkdownInto, type RenderIntoOptions } from './render.js';
-import { refusal } from './table-pairing.js';
 import { parsePageBreakLine } from './page-break.js';
 import { editTableMarkup, mentionsTableMarkup, type TableEditInput } from './table-edit.js';
 import { contextAround } from './context.js';
@@ -517,7 +516,7 @@ function applyBlockEdit(context: BlockEditContext, matched: DocRange, side: Inse
 async function applyBlockEditsInOneBatch(context: BlockEditContext, edits: { matched: DocRange; side: InsertionSide | undefined }[], revisionId: string | undefined): Promise<void> {
   const plans = edits.map(({ matched, side }) => planMarkdownRender(context.markdown, blockRenderOptions(context, matched, side, revisionId)));
   if (plans.some(({ tables, images }) => tables.length > 0 || images.length > 0)) {
-    throw refusal(`Nothing was changed: replace_all matched ${edits.length} places and new_string holds a table or an image. Those are placed after the text, each with the doc read again, so the matches cannot all be written in one batch and a failure part-way would leave some changed. Edit one place at a time: quote enough context for one match.`);
+    throw new Error(`Nothing was changed: replace_all matched ${edits.length} places and new_string holds a table or an image. Those are placed after the text, each with the doc read again, so the matches cannot all be written in one batch and a failure part-way would leave some changed. Edit one place at a time: quote enough context for one match.`);
   }
   const requests = plans.flatMap((plan) => plan.requests);
   if (requests.length) {

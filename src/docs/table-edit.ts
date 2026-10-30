@@ -377,7 +377,7 @@ export async function editTableMarkup(clients: GoogleClients, documentId: string
     throw refusal('replace_all cannot add blocks next to a table: it matches more than one table. Quote one table with enough context to be unique.');
   }
   if (edits.length > 1 && edits.some(({ comparison }) => comparison.operations.length > 0)) {
-    throw refusal('Nothing was changed: replace_all matches more than one table and the edit adds, removes or merges rows or columns. Each such change needs the table read again before its cells are filled, so the tables cannot all be written in one batch. Edit one table at a time: quote enough context for one.');
+    throw refusal('replace_all matches more than one table and the edit adds, removes or merges rows or columns. Each such change needs the table read again before its cells are filled, so the tables cannot all be written in one batch. Edit one table at a time: quote enough context for one.');
   }
   if (input.suggest) {
     for (const { before, after, comparison } of edits) refuseColumnWidthChange(before, after, comparison.operations.some(({ kind }) => kind === 'insertColumn' || kind === 'deleteColumn'));
