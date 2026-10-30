@@ -28,6 +28,7 @@ The agent reads and writes **GitHub-flavored markdown with inline HTML**:
 - **Content & inline emphasis** → markdown (`#`, `**bold**`, lists, tables, links).
 - **Docs-only formatting** markdown can't express (alignment, color, font, size, spacing, indent, image dimensions) → CSS, in the two places a web page puts it (§2a): a `<style>` block for the document's defaults, and `style="…"` on a `<p>` or `<span>` that differs from them. `<img width="400">` for images. A table with any style reads as an HTML `<table>` carrying the same CSS (§2d). Line breaks, code blocks and quotes follow CommonMark (§2e).
 - **Suggestions / tracked changes** → HTML `<ins>` / `<del>` with an ID marker (`data-sug` attribute or `<!-- sug:id -->`).
+- **Footnotes, chips, dropdowns, equations and every other element inside a paragraph** → shown in the read, so an edit can keep them (§2f).
 
 This single format does both jobs: formatting is **visible in the read** (so the agent can perceive *and* verify style changes), and it is a format the agent authors natively. It replaces an earlier "clean markdown + separate formatting sidecar" idea.
 
@@ -125,9 +126,10 @@ markup. It renders the line, parses it the way the writer will (`parseBlocks`,
 `parseInline`), and marks only if the result is not one plain paragraph of the
 same words; the escape set is then the smallest set of punctuation kinds that
 restores the same parse. So `file_name_here`, a signature line of underscores,
-`<Client Name>`, and `---` already round-trip and stay clean; a paragraph of
+and `<Client Name>` already round-trip and stay clean; a paragraph of
 text that starts with `> ` is marked, because the writer reads that as a quote
-(§2e). A new construct taught to the writer is marked
+(§2e), and so is a paragraph of `---`, which the writer reads as a horizontal
+rule (§2f). A new construct taught to the writer is marked
 by the reader with no second edit. Table cells and header/footer segments use the
 same path; a cell also accounts for the `\|` pipe step its row goes through.
 
@@ -186,12 +188,12 @@ bullet. A break that follows text in its paragraph is not reset: that paragraph 
 the text's, and resetting it took a title's style away (found by the eval below). And **a break in a header or
 footer is refused by the API**, so the writer refuses it first, naming why.
 
-Section breaks and column breaks are not carried: a section break holds its
-own page setup and headers, which is its own design (#57). The read does not
-show them, and `write_doc`'s loss summary counts them (§4). A column break cannot
-be made through the API at all (`insertText` strips the control character and
-there is no `insertColumnBreak`); it is counted from the documented
-`columnBreak` paragraph element.
+A section break is not carried: it holds its own page setup and headers, which
+is its own design (#57). The read does not show it, and `write_doc`'s loss
+summary counts it (§4). A column break reads as
+`<span style="break-after:column"></span>` (§2f); it cannot be made through the
+API at all (`insertText` strips the control character and there is no
+`insertColumnBreak`), so writing a new one is refused and a replace counts it.
 
 ### 2d. A table is a pipe table when it is plain, HTML when it is not
 
@@ -389,6 +391,88 @@ How far each rule reaches, where the issue left room:
   heading, Title or Subtitle; a blank line between; a line that is a block (list
   item, table row, quote, fence, image) or a page break; a `<p>` or `<h>` line.
 
+### 2f. Every element in a paragraph shows in the read
+
+A read shows every element a paragraph holds, not only its text. An element the
+read does not show is one an edit can delete without anyone seeing it: with a person chip in "Owner: @Jane, due Nov
+15", the read showed `Owner: , due .`, and `edit_doc("Owner: , due", "Task
+owner: , due")` deleted Jane; an edit across `30 days[^1].` deleted the
+footnote and its text (checked live, #58). An edit next to an element was
+always safe; one whose range covered it was not.
+
+What sits between paragraphs is outside this rule: a section break is its own
+design (#57), and bookmarks are not in the API at all (docs/limitations.md);
+`write_doc` counts both before a replace (§4).
+
+Each element is spelled by the first of three rules that has a spelling for it:
+
+1. **Markdown, when markdown has one:** `[^1]` for a footnote, `---` for a
+   horizontal rule (on a line of its own with a blank line before it, since
+   `---` right under text makes that text a heading).
+2. **The HTML element made for the thing:** `<time>` for a date,
+   `<datalist>`/`<input list>` for a pick-from-a-list value.
+3. **A class on the nearest element, named for the Docs concept,** when HTML
+   has no element either: `<p class="title">` (§2a); a chip is a link, so
+   `<a class="chip">`.
+
+Layout is CSS whatever the element (§2a, §2c): a column break is
+`break-after:column`, as a page break is `page-break-after`. No meaning is
+carried by the text itself, and no attribute is invented where HTML has one: a
+list's title is `title`, a date's language is `lang`.
+
+| element | reads as | write |
+|---|---|---|
+| footnote | `text[^1]`, and `[^1]: the note` at the end of the read | `createFootnote`, then the note into the footnote's segment |
+| date chip | `<time datetime="2026-11-15">Nov 15, 2026</time>` | `insertDate` |
+| person chip | `<a class="chip" href="mailto:jane@x.com">Jane Doe</a>` | `insertPerson` |
+| link chip (a Drive file) | `<a class="chip" href="https://docs.google.com/document/d/…">Q3 Spec</a>` | `insertRichLink` |
+| dropdown | `<input class="chip" list="kix.la3o7ghprzoj" value="Draft">`, its list once as `<datalist id="kix.la3o7ghprzoj" title="Status"><option>Draft</option><option>Final</option></datalist>` | `insertDropdown`, `updateDropdownProperties` |
+| horizontal rule | `---` | refused: the API cannot make one |
+| column break | `<span style="break-after:column"></span>` | refused: the API cannot make one |
+| equation | `<span class="equation">E = mc²</span>` (the text Docs shows) | refused: the API cannot make one |
+| page-number field | `<span class="page-number">7</span>` | refused: the API cannot make one |
+
+The writer's rules for all of them are the editing contract's (§4): **an element
+that comes back unchanged is kept**, so an edit around it, or across it, leaves
+it alone; one the edit drops is deleted; a new one is created, or refused before
+anything is sent when the API cannot make it, with what to write instead. Every
+element the API can make can also be made as a suggestion (checked live:
+`insertPerson`, `insertDate`, `insertRichLink`, `createFootnote` and
+`insertDropdown` under `writeMode: SUGGEST`), so `suggest: true` refuses none of
+them. In `mode: "tracked"` a suggested element sits inside `<ins>`/`<del>` like
+text.
+
+**Footnotes.** The notes come at the end of the read, in Docs' order and with
+Docs' numbers, as GitHub markdown places them; the body reads as it does in
+Docs. The writer takes a note anywhere, as GitHub markdown does, and any label
+(`[^fees]`): Docs numbers them. A note's text is edited by quoting its line:
+`[^1]: Business days` → `[^1]: Calendar days` edits the footnote's own segment.
+Footnotes exist in the body only; one in a header or footer is refused (the API
+cannot insert one there).
+
+**Dates.** `datetime` holds the moment, the text holds what Docs shows, and
+`lang` the language when it is not English. The text decides the format on
+write: its shape is matched to the API's date formats (`Jan 1`, `January 01`,
+`Jan 1, 1970`, `1970-01-01`) and time formats (none, `12:00 PM`,
+`12:00 PM UTC`); a text no format matches gets the default. A date shown in a
+format the API can only read (`DATE_FORMAT_CUSTOM`, from an import) is kept by
+an edit and counted by a replace (§4).
+
+**Chips.** `href` says which kind: `mailto:` is a person, anything else a link
+chip. A link chip can be made only for a Google Drive file. Google refuses a
+YouTube, Calendar, Maps or web URL ("The URL is invalid"), and an id that
+names no file ("Error fetching chip data"), so the writer refuses them first
+and gives the plain link to write: `[Launch video](https://…)`. A link chip that
+already exists to such a URL reads and is kept like any other. Its text is the
+file's title, which Docs sets.
+
+**Dropdowns.** A list is defined once per tab and shared, so the read writes
+each list once, at the top after the `<style>` block, and each dropdown points
+at it. The `id` is Google's id for the list (§3d says why it is not the title);
+a `<datalist>` with an id the doc does not have is a new list, made with its
+`title` and options. Editing `value` changes a dropdown's choice; editing a
+`<datalist>`'s `title` or options changes the list everywhere it is used.
+
 ---
 
 ## 3. Tool surface
@@ -516,6 +600,15 @@ directory is the project); the refusals read the config fresh, so they stay righ
 after a `set_project_default` mid-session while the description waits for a
 restart. A folder no path reaches (an orphan, shared only with you) is named by
 its id, which starts a path too.
+
+**A name where a person says it, Google's id where only a read gives it.**
+A path is what a user says ("the Notes tab in Contract"), so it walks titles. A
+comment id, a suggestion id, an image's `objectId` and a dropdown list's id
+(§2f) are never said by a person; the agent copies them from a read, so they
+are Google's ids, which a rename does not change and which need no rule for
+two things with one name. The name stays visible beside the id where there is
+one (`<datalist id="kix.…" title="Status">`), so "set the status to Final"
+still finds its list.
 
 `segment` (header/footer) stays a parameter, not a path step: a
 header is part of a tab, not a child of it, and a path step would collide with a
@@ -646,10 +739,13 @@ writes a header or footer the same way, creating it when the doc has none (§3a)
 Asking is only for when there is something to lose: an empty doc, tab, header
 or footer is written without asking, like a new one. Replacing content
 is refused on the first call, and the refusal is a loss summary: the paragraphs
-of text, and everything a read cannot carry that the replace would take with it
-— comments, suggestions, tab stops (the Docs API cannot write them back),
-smart chips, bookmarks, section and column breaks, page-number fields (the
-API can read one but cannot make one). A page-number field is an `autoText` element of type
+of text, and everything the replace would take with it that a write cannot make
+again — comments, suggestions, tab stops (the Docs API cannot write them back),
+bookmarks, section breaks, and the elements a read shows but the API cannot
+make (§2f): column breaks, horizontal rules, equations, page-number fields, a
+date in a format the API can only read, and a link chip to anything but a Drive
+file. The other footnotes, chips and dropdowns are in the markdown and are
+written back, so they are not counted. A page-number field is an `autoText` element of type
 `PAGE_NUMBER` or `PAGE_COUNT`. A body or tab replace counts the body of that
 tab only, because it deletes the body's range and leaves headers and footers
 standing (checked live, #63); a `segment` write counts that header or footer.
