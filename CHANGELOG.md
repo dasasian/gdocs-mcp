@@ -6,31 +6,18 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Breaking
+### Added
 
-> **Comments are written and read through the Docs API, and a comment sits on its text (#64).** `resolve_comment` and `add_comment` change shape.
+- **`edit_doc` and `write_doc` take `suggest` (#64).** With `suggest: true` the edit becomes a suggestion for a person to accept or reject. It defaults to false, and the reply lists the `suggestions` ids. A suggested replace by `write_doc` does not ask for `confirmLoss`: nothing is lost until a person accepts, and rejecting a suggested replace of a whole doc brings back its text, images, tables and comments (checked live). A request Docs cannot suggest is refused before anything is sent, naming it: a table column width, a new tab, renaming or moving a tab, deleting a header or footer, a named range, or a header or footer the doc does not have yet. An edit is never split into a suggested part and a direct part. Table edits work as suggestions, row and column deletes included. `set_page_setup` has no `suggest`.
+- **Suggestions are the Docs API's own (#64).** `list_suggestions` gives each suggestion's `id`, `summary` (Docs' own words, as in the sidebar), `context` (the change in its sentence, `Pay within [30→45] days`), `author` and `time`. `apply_suggestions` accepts or rejects each one on its own, as clicking in Docs does, so style-only suggestions can be resolved too. The cluster rule, the `incomplete` status and the `conflicts` list are gone.
+- **Comments sit on their text (#64).** `add_comment` puts the comment on the one place `quotedText` matches, found the way `edit_doc` finds `old_string`. `quotedText` is required unless `replyTo` is given, because Docs refuses a comment with no range. `segment` puts the comment in a header or footer. `list_comments` gives each comment's `quotedText`, `context`, `author`, `time`, `status`, replies, and its `range` when it has one. A comment made in Drive has no range.
+- `read_doc(mode: "tracked")` marks suggestions inside table cells, an empty cell of a suggested row included.
 
-| Before | Now |
-|---|---|
-| `add_comment(path, content)` made a Drive comment with no anchor | `add_comment(path, content, quotedText)`: the comment is on the one place `quotedText` matches, found the way `edit_doc` finds `old_string`. Two matches are refused with the context of each. `quotedText` is required unless `replyTo` is given, because Docs refuses a comment with no range. The tab comes from `path`; `segment` puts it in a header or footer |
-| `resolve_comment(path, commentId, expectQuote?, reopen?)`, the guard optional | `resolve_comment(path, commentId, expectQuotedText, reopen?)`, the guard **required**: the `quotedText` `list_comments` gave, exactly. A call without it is refused |
-| `list_comments` gave `id`, `author`, `createdTime`, `resolved`, `quotedText`, `content`, `replies[{author, content, createdTime, action}]` | `id`, `quotedText`, `context`, `author`, `time`, `status` (`open` or `resolved`), `content`, `replies[{id, author, time, content, action}]`, and `range` (with `tabId` and `segmentId`) when the comment has one. A comment made in Drive has no range and its quote is its `context` |
+### Changed
 
-> **`list_suggestions` and `apply_suggestions` use the Docs API's own suggestions (#64).** A suggestion is resolved by `acceptSuggestion` or `rejectSuggestion`, not by deleting its region and typing it again. Each one is resolved on its own, as in Docs, so the cluster rule, the `incomplete` status and the `conflicts` list are gone, and a style-only suggestion can be resolved.
-
-| Before | Now |
-|---|---|
-| `list_suggestions` gave `type`, `before`, `after`, `start`, `end`, `contiguous`, `preview` | `id`, `summary` (Docs' own words), `context` (was `preview`: the change in its sentence, `Pay within [30→45] days`), `author`, `time` |
-| `apply_suggestions(path, documentTitle, resolutions[{suggestionId, decision, expectedChange}])` | `apply_suggestions(path, expectTitle, resolutions[{suggestionId, decision, expectContext}])`. A guard is `expect` plus the name of the field it echoes |
-| a suggestion in a cluster had to be resolved with the rest of its cluster; a style-only suggestion was refused | any suggestion can be resolved alone, style-only ones included |
-
-> **`edit_doc` and `write_doc` take `suggest` (#64).** `suggest: true` sends the same requests with `writeControl.writeMode: "SUGGEST"`, so the edit is a suggestion for a person to accept or reject, and the result lists the `suggestions` ids it made. It defaults to false. `edit_doc` no longer adds a note that the edit is direct, because the Docs API can now create suggestions.
-
-A suggested replace by `write_doc` does not ask for `confirmLoss`: nothing is lost until a person accepts, and rejecting a suggested replace of a whole doc brings back its text, image, table and comments (checked live). An edit that needs a request Docs cannot suggest is refused before anything is sent, naming it: a table column width (`updateTableColumnProperties`), a new tab or doc, renaming or moving a tab, deleting a header or footer, a named range. A suggested write to a header or footer the doc does not have yet is refused too. An edit is never split into a suggested part and a direct part. `set_page_setup` has no `suggest`.
-
-A suggested `edit_doc` of a table works for rows and columns: a suggested row or column delete used to fail with "the table is 3 x 2, not the 2 x 2" after the suggestion was sent, because a deleted row stays in the table until accepted; it now reports ok with the suggestion ids, and a delete mixed with an insert and cell text addresses each request where its row sits. A retyped cell with no style of its own no longer sends a style reset, which showed as a "Format: style" suggestion nobody made. `read_doc(mode: "tracked")` marks an empty cell of a suggested row as `<ins data-sug="…"></ins>` (or `<del …>`).
-
-Also: `list_comments`, the comment count in `write_doc`'s loss summary and the check on a moved table row all read the comments of one `documents.get`, so none of them calls Drive, and none pages. `write_doc` counts a tab's comments by their ranges, and a comment in a header or footer by its segment; a comment with no range is counted for the whole doc, and the summary says so on a multi-tab doc. `edit_doc` asks before moving a table row or column when a comment's range falls in it, in a header or footer too (a header table used to ask nothing); a comment with no range is matched by its quote, as before.
+- **Renamed** to follow one rule, a guard is `expect` plus the name of the field it echoes: `apply_suggestions`' `documentTitle` is now `expectTitle`, its `expectedChange` is `expectContext`, and `resolve_comment`'s `expectQuote` is `expectQuotedText`, now required. `list_suggestions`' `preview` is now `context`. A client reads the new names from the schema, so only a saved prompt or script that spells an old one needs changing.
+- `edit_doc` no longer adds a note that the edit is direct.
+- Every comment count (`list_comments`, `write_doc`'s loss summary, the moved-row check in `edit_doc`) comes from one `documents.get`, with no Drive call. `write_doc` counts a tab's comments by their ranges. `edit_doc` asks before moving a table row whose comment's range falls in it, in a header or footer too.
 
 ### Fixed
 
