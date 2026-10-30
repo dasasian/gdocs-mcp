@@ -6,6 +6,7 @@ import { placeCells } from './table-layout.js';
 import { insertTableRequests, mergeRequests, lookRequests, lookOf, plainLook, rowsTouchedByMerges, fillLayoutRequests } from './table-write.js';
 import { uploadImageForInsert, resolveImageSource } from '../drive/images.js';
 import { fillCellRequests, columnAlignRequests } from './objects.js';
+import { batchUpdateWithElements } from './element-write.js';
 
 async function insertImagePlacement(
   clients: GoogleClients,
@@ -64,12 +65,12 @@ async function insertTableAt(clients: GoogleClients, documentId: string, table: 
       ...lookRequests(plainLook(R, C, rowsTouchedByMerges(placement)), lookOf(layout, placement), site),
       ...fillLayoutRequests(tableEl.table, placement, tabId, segmentId),
     ];
-    if (requests.length) await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests } });
+    if (requests.length) await batchUpdateWithElements(clients, documentId, requests, undefined, tabId);
     return;
   }
 
   const requests = fillCellRequests(tableEl, rows, { tabId, segmentId });
-  if (requests.length) await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests } });
+  if (requests.length) await batchUpdateWithElements(clients, documentId, requests, undefined, tabId);
 
   if (aligns.some((a) => a && a !== 'left')) {
     const aligned = (await clients.docs.documents.get({ documentId, ...INLINE_READ })).data;
@@ -110,10 +111,7 @@ export async function renderMarkdownInto(
 ): Promise<{ warnings: string[]; images: { src: string; objectId: string }[] }> {
   const { requests: all, tables, images } = planMarkdownRender(markdown, opts);
   if (all.length) {
-    await clients.docs.documents.batchUpdate({
-      documentId,
-      requestBody: { requests: all, writeControl: writeControlFor(opts.requiredRevisionId) },
-    });
+    await batchUpdateWithElements(clients, documentId, all, writeControlFor(opts.requiredRevisionId), opts.tabId);
   }
   const warnings: string[] = [];
   const imageMap: { src: string; objectId: string }[] = [];

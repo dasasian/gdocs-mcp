@@ -1,5 +1,8 @@
 import type { docs_v1 } from 'googleapis';
-import { parseInline, segmentTextStyle, inlineStyleIssues } from './inline.js';
+import { parseInline, parseInlineWithElements, segmentTextStyle, inlineStyleIssues } from './inline.js';
+import { TokenTable, unescapeAttribute } from './elements.js';
+import { elementRequests, type ListSpec, type PlacedElement } from './element-write.js';
+import { RULE_PARAGRAPH_FIELDS, RULE_PARAGRAPH_STYLE } from './rule.js';
 import { HEADING_BY_LEVEL, NAMED_STYLE_BY_CLASS, type ParagraphClass } from './markdown-spec.js';
 import { paragraphStyleUpdate, StyleSyntaxError, type ParagraphCss } from './css.js';
 import { splitWrappedLine } from './paragraph-markup.js';
@@ -19,7 +22,10 @@ type Block =
   | { type: 'list'; ordered: boolean; items: { level: number; text: string }[] }
   | { type: 'table'; rows: string[][]; aligns: (CellAlign | null)[]; layout?: TableLayout }
   | { type: 'image'; alt: string; src: string; width?: number; height?: number; css?: ParagraphCss }
-  | { type: 'pageBreak' };
+  | { type: 'pageBreak' }
+  | { type: 'rule' }
+  | { type: 'note'; label: string; text: string }
+  | { type: 'datalist'; list: ListSpec };
 
 // Every direct character-formatting field, cleared by listing it in `fields`
 // while leaving it out of `textStyle`. Kept exhaustive on purpose: a field
@@ -37,6 +43,11 @@ const RESET_TEXT_FIELDS = [
   'baselineOffset',
   'link',
 ].join(',');
+
+const NOTE_LINE_RE = /^\[\^([^\]\s]+)\]:[ \t]?(.*)$/;
+const RULE_LINE_RE = /^ {0,3}-{3,}[ \t]*$/;
+const DATALIST_LINE_RE = /^<datalist\b([^>]*)>(.*)<\/datalist\s*>$/i;
+const OPTION_RE = /<option>([^<]*)<\/option>/gi;
 
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
 const LIST_RE = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
@@ -180,7 +191,7 @@ const startsOtherBlockLine = (line: string): boolean =>
   isTableRow(line) || IMAGE_RE.test(line.trim()) || IMG_TAG_RE.test(line.trim()) || HTML_TABLE_START_RE.test(line.trim()) || STYLE_OPEN_RE.test(line.trim()) || line.trim().startsWith('<!--') || splitWrappedLine(line) !== undefined;
 
 const endsParagraphBeforeLine = (line: string): boolean =>
-  line.trim() === '' || HEADING_RE.test(line) || LIST_RE.test(line) || FENCE_OPEN_RE.test(line) || QUOTE_MARK_RE.test(line) || parsePageBreakLine(line) !== undefined;
+  line.trim() === '' || HEADING_RE.test(line) || LIST_RE.test(line) || FENCE_OPEN_RE.test(line) || QUOTE_MARK_RE.test(line) || parsePageBreakLine(line) !== undefined || RULE_LINE_RE.test(line) || NOTE_LINE_RE.test(line) || DATALIST_LINE_RE.test(line.trim());
 
 function parseListAt(lines: string[], from: number): { block: Block; next: number } {
   const ordered = /\d/.test(LIST_RE.exec(lines[from])![2]);
@@ -361,6 +372,25 @@ const parsePageBreakBlock: BlockParser = ({ lines, report }, from) => {
   return single({ type: 'pageBreak' }, from);
 };
 
+const parseRuleLine: BlockParser = ({ lines }, from) => (RULE_LINE_RE.test(lines[from]) ? single({ type: 'rule' }, from) : undefined);
+
+const parseNoteLine: BlockParser = ({ lines }, from) => {
+  const note = NOTE_LINE_RE.exec(lines[from]);
+  return note ? single({ type: 'note', label: note[1], text: note[2].trim() }, from) : undefined;
+};
+
+export function listSpecOfLine(line: string): ListSpec | undefined {
+  const datalist = DATALIST_LINE_RE.exec(line.trim());
+  if (!datalist) return undefined;
+  const attribute = (name: string): string => unescapeAttribute(new RegExp(`\\b${name}="([^"]*)"`).exec(datalist[1])?.[1] ?? '');
+  return { id: attribute('id'), title: attribute('title'), options: [...datalist[2].matchAll(OPTION_RE)].map((option) => unescapeAttribute(option[1])) };
+}
+
+const parseDatalistLine: BlockParser = ({ lines }, from) => {
+  const list = listSpecOfLine(lines[from]);
+  return list ? single({ type: 'datalist', list }, from) : undefined;
+};
+
 const parseFencedCode: BlockParser = ({ lines, report }, from) => {
   if (!FENCE_OPEN_RE.test(lines[from])) return undefined;
   const code = parseFencedCodeAt(lines, from, report);
@@ -399,6 +429,9 @@ const BLOCK_PARSERS_IN_ORDER: BlockParser[] = [
   parseMarkdownImage,
   parseImageTagLine,
   parsePageBreakBlock,
+  parseRuleLine,
+  parseNoteLine,
+  parseDatalistLine,
   parseFencedCode,
   parseQuote,
   parseWrappedParagraph,
@@ -478,6 +511,7 @@ interface ParagraphOp {
   namedStyleType?: string;
   css: ParagraphCss;
   quote?: true;
+  rule?: true;
 }
 
 export interface BuildOptions {
@@ -493,6 +527,7 @@ export interface BuildOptions {
 
 const RESET_PARAGRAPH_FIELDS = [
   'borderLeft',
+  'borderBottom',
   'namedStyleType',
   'alignment',
   'lineSpacing',
@@ -565,11 +600,17 @@ export function buildContentRequests(
   const tables: TablePlacement[] = [];
   const images: ImagePlacement[] = [];
   const breakOffsets: number[] = [];
-  const pageBreaks = (): PageBreakAt[] => breakOffsets.map((at) => ({ index: at, ownParagraph: at > startIndex || opts.startsParagraph !== false }));
+  const tokens = new TokenTable();
+  const elementOps: PlacedElement[] = [];
+  const notes = new Map(blocks.flatMap((block) => (block.type === 'note' ? [[block.label, block.text] as const] : [])));
+  const lists = new Map(blocks.flatMap((block) => (block.type === 'datalist' ? [[block.list.id, block.list] as const] : [])));
+  const elementsBefore = (index: number): number => elementOps.filter((element) => element.index < index).length;
+  const pageBreaks = (): PageBreakAt[] => breakOffsets.map((at) => ({ index: at + elementsBefore(at), ownParagraph: at > startIndex || opts.startsParagraph !== false }));
   const abs = (off: number): number => startIndex + off;
 
   const addInline = (lineContentStart: number, content: string): string => {
-    const segs = parseInline(content);
+    const { segments: segs, elements } = parseInlineWithElements(tokens.encode(content), tokens);
+    elementOps.push(...elements.map(({ offset, token }) => ({ index: abs(lineContentStart + offset), token })));
     let plain = '';
     for (const s of segs) {
       const off = plain.length;
@@ -608,6 +649,11 @@ export function buildContentRequests(
       }
     } else if (block.type === 'pageBreak') {
       breakOffsets.push(abs(text.length));
+    } else if (block.type === 'rule') {
+      paragraphOps.push({ start: abs(text.length), end: abs(text.length + 1), css: {}, rule: true });
+      text += '\n';
+    } else if (block.type === 'note' || block.type === 'datalist') {
+      continue;
     } else if (block.type === 'style') {
       styleRules.push(...block.rules);
     } else if (block.type === 'table') {
@@ -629,7 +675,7 @@ export function buildContentRequests(
   }
 
   const requests: docs_v1.Schema$Request[] = namedStyleRequests(styleRules, [], tabId);
-  const afterBreaks = (index: number): number => index + PAGE_BREAK_PARAGRAPH_LENGTH * breakOffsets.filter((at) => at <= index).length;
+  const afterBreaks = (index: number): number => index + PAGE_BREAK_PARAGRAPH_LENGTH * breakOffsets.filter((at) => at <= index).length + elementsBefore(index);
   const placed = {
     tables: tables.map((t) => ({ ...t, index: afterBreaks(t.index) })),
     images: images.map((im) => ({ ...im, index: afterBreaks(im.index) })),
@@ -646,8 +692,8 @@ export function buildContentRequests(
   }
   for (const op of paragraphOps) {
     const update = paragraphStyleUpdate(op.css);
-    const quoteStyle = op.quote ? QUOTE_PARAGRAPH_STYLE : {};
-    const fields = [...(op.namedStyleType ? ['namedStyleType'] : []), ...update.fields, ...(op.quote ? QUOTE_PARAGRAPH_FIELDS : [])];
+    const quoteStyle = op.quote ? QUOTE_PARAGRAPH_STYLE : op.rule ? RULE_PARAGRAPH_STYLE : {};
+    const fields = [...(op.namedStyleType ? ['namedStyleType'] : []), ...update.fields, ...(op.quote ? QUOTE_PARAGRAPH_FIELDS : []), ...(op.rule ? RULE_PARAGRAPH_FIELDS : [])];
     if (!fields.length) continue;
     requests.push({
       updateParagraphStyle: {
@@ -669,6 +715,7 @@ export function buildContentRequests(
       },
     });
   }
+  requests.push(...elementRequests(elementOps, { tabId, segmentId }, { notes, lists }));
   requests.push(...pageBreakRequests(pageBreaks(), tabId, segmentId));
   return { requests, text, ...placed };
 }

@@ -13,6 +13,9 @@ const UNSUGGESTABLE_REQUESTS: Record<string, string> = {
   createNamedRange: 'a named range',
   deleteNamedRange: 'a named range',
   updateTableColumnProperties: 'a table column width',
+  createDropdownDefinition: 'a new dropdown list',
+  updateDropdownProperties: 'a dropdown choice',
+  updateDropdownDefinitionProperties: 'a change to a dropdown list',
 };
 
 export class SuggestRefusal extends Error {}

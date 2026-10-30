@@ -9,6 +9,7 @@ import { noSuggestedSegment, refuseColumnWidthsIn, suggestingSession, SuggestRef
 import { readFile } from 'node:fs/promises';
 import nodePath from 'node:path';
 import { parseBlocks } from './write.js';
+import { refuseUnwritableElements } from './element-checks.js';
 import { resolveEntry, tabOfEntry, refusal, folderPathOf, parseDriveId, type Resolved, type TabRef } from '../drive/paths.js';
 import { measureLoss, confirmLossToken, lossSummary, lossDetails, type Loss } from './loss.js';
 
@@ -123,6 +124,7 @@ async function replaceTab(
       segmentId = existing;
     }
   }
+  refuseUnwritableElements(content, doc, { tabId, segmentId, suggest: opts.suggest });
   const holdsNothing = isEmptyContent(doc, tabId, segmentId);
   if (!holdsNothing && !opts.suggest) {
     const loss = measureLoss(doc, tabId, segmentId);
@@ -244,6 +246,7 @@ export async function writeDoc(clients: GoogleClients, path: string, content: st
 
 async function applyWrite(clients: GoogleClients, path: string, content: string, opts: WriteOptions): Promise<WriteDocResult> {
   parseBlocks(content);
+  refuseUnwritableElements(content, undefined, { segmentId: opts.segment && opts.segment !== 'body' ? opts.segment : undefined });
   const rootCreates = opts.rootCreates ?? new Set<string>();
   const resolution = await resolveEntry(clients, path);
   if (resolution.ok) return replaceTab(clients, await tabOfEntry(clients, resolution.entry, path), content, opts, path);

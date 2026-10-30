@@ -5,6 +5,7 @@ import { contentOf, INLINE_READ, writeControlFor } from './structure.js';
 import { renderTableMarkup, readTableLayout } from './transformer.js';
 import { threadsOnRangesIn, threadsWithoutRange } from './comments.js';
 import { movedCommentsToken } from './loss.js';
+import { batchUpdateWithElements } from './element-write.js';
 import { parseBlocks, buildContentRequests, cellBlocksOf, clearDirectRunStyling, type CellBlock } from './write.js';
 import { placeCells, effectiveGrid, type LayoutCell, type Placement, type TableLayout } from './table-layout.js';
 import { lookOf, lookRequests, structureRequests, type TableSite } from './table-write.js';
@@ -388,10 +389,10 @@ export async function editTableMarkup(clients: GoogleClients, documentId: string
   let revisionId = doc.revisionId ?? undefined;
   const send = async (requests: docs_v1.Schema$Request[]): Promise<string[]> => {
     if (requests.length === 0) return [];
-    const res = await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests, writeControl: writeControlFor(revisionId) } });
+    const data = await batchUpdateWithElements(clients, documentId, requests, writeControlFor(revisionId), input.tabId);
     revisionId = undefined;
     changed++;
-    return ((res?.data as { suggestionResponses?: { createdSuggestionIds?: string[] }[] } | undefined)?.suggestionResponses ?? []).flatMap((response) => response.createdSuggestionIds ?? []);
+    return ((data as { suggestionResponses?: { createdSuggestionIds?: string[] }[] } | undefined)?.suggestionResponses ?? []).flatMap((response) => response.createdSuggestionIds ?? []);
   };
   const insertNextToTable = async (side: BlockSide, found: TableInDoc, markdown: string): Promise<void> => {
     if (!markdown) return;
