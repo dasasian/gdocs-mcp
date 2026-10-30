@@ -204,6 +204,38 @@ export function paymentAfterTableFailures(described, wantGrid) {
   return failures;
 }
 
+export async function fetchReviewed(clients, documentId) {
+  return (await clients.docs.documents.get({
+    documentId,
+    includeTabsContent: true,
+    suggestionsViewMode: 'SUGGESTIONS_INLINE',
+    commentsViewMode: 'COMMENTS_VIEW_MODE_INCLUDED',
+  })).data;
+}
+
+async function bodyTextIn(clients, documentId, suggestionsViewMode) {
+  const { data } = await clients.docs.documents.get({ documentId, suggestionsViewMode });
+  return data.body.content.filter((element) => element.paragraph).map((element) => paragraphText(element.paragraph)).filter((text) => text.trim()).join('\n');
+}
+
+export const committedText = (clients, documentId) => bodyTextIn(clients, documentId, 'PREVIEW_WITHOUT_SUGGESTIONS');
+
+export const acceptedText = (clients, documentId) => bodyTextIn(clients, documentId, 'PREVIEW_SUGGESTIONS_ACCEPTED');
+
+export function textInRange(reviewed, { startIndex, endIndex }) {
+  let text = '';
+  for (const element of reviewed.tabs[0].documentTab.body.content) {
+    for (const run of element.paragraph?.elements ?? []) {
+      const content = run.textRun?.content ?? '';
+      for (let i = 0; i < content.length; i++) {
+        const at = (run.startIndex ?? 0) + i;
+        if (at >= startIndex && at < endIndex) text += content[i];
+      }
+    }
+  }
+  return text;
+}
+
 export const CONTRACT_PARAGRAPHS = [
   'Preamble. This agreement sets out the terms between the parties.',
   'Term. The agreement lasts one year from the date of signing and renews each year unless either party gives written notice.',
