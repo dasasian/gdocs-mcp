@@ -236,6 +236,30 @@ export function textInRange(reviewed, { startIndex, endIndex }) {
   return text;
 }
 
+/** The first tab's content as documents.get gives it with tabs, where footnotes and dropdown lists are. */
+export async function fetchTab(clients, documentId) {
+  return (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data.tabs[0].documentTab;
+}
+
+export const elementsOfBody = (tab) => tab.body.content.flatMap((block) => block.paragraph?.elements ?? []);
+
+/** A paragraph's text with each element as a marker: [person], [dropdown:Draft], [footnote:id]. */
+export function paragraphWithElements(paragraph) {
+  return (paragraph.elements ?? [])
+    .map((element) => {
+      if (element.textRun) return element.textRun.content;
+      if (element.person) return '[person]';
+      if (element.dropdown) return `[dropdown:${element.dropdown.dropdownProperties?.displayValue ?? ''}]`;
+      if (element.footnoteReference) return `[footnote:${element.footnoteReference.footnoteId}]`;
+      return '[element]';
+    })
+    .join('')
+    .replace(/\n$/, '');
+}
+
+export const footnoteText = (tab, footnoteId) =>
+  (tab.footnotes?.[footnoteId]?.content ?? []).map((block) => paragraphText(block.paragraph)).join('').trim();
+
 export const CONTRACT_PARAGRAPHS = [
   'Preamble. This agreement sets out the terms between the parties.',
   'Term. The agreement lasts one year from the date of signing and renews each year unless either party gives written notice.',
