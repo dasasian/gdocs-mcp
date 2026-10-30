@@ -1,6 +1,6 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
-import { resolveSegmentId, listSegments, type SegmentKind, type SegmentPage } from './structure.js';
+import { INLINE_READ, resolveSegmentId, listSegments, type SegmentKind, type SegmentPage } from './structure.js';
 
 export interface SegmentTarget {
   /** undefined = the body. */
@@ -43,7 +43,7 @@ export async function segmentForWrite(
       ? { createHeader: { type: 'DEFAULT' } }
       : { createFooter: { type: 'DEFAULT' } };
   await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests: [request] } });
-  const fresh = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
+  const fresh = (await clients.docs.documents.get({ documentId, ...INLINE_READ })).data;
   const segmentId = resolveSegmentId(fresh, opts.segment, 'default', opts.tabId);
   if (!segmentId) throw new Error(`Created a ${opts.segment} but could not resolve its id.`);
   return { segmentId, doc: fresh };

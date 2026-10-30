@@ -2,7 +2,7 @@ import { createReadStream, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { GoogleClients } from '../google/clients.js';
-import { inlineObjectsOf, resolveTabId } from '../docs/structure.js';
+import { INLINE_READ, inlineObjectsOf, resolveTabId } from '../docs/structure.js';
 
 // The Docs API can only embed an image from a fetchable URL, not local bytes.
 // So to insert a local image we upload it to Drive, make it link-readable, hand
@@ -94,7 +94,7 @@ export async function downloadImages(
   destDir: string,
   requestedTabId?: string,
 ): Promise<DownloadedImage[]> {
-  const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
+  const doc = (await clients.docs.documents.get({ documentId, ...INLINE_READ })).data;
   const tabId = resolveTabId(doc, requestedTabId);
   const objects = inlineObjectsOf(doc, tabId);
   const token = (await clients.auth.getAccessToken()).token;

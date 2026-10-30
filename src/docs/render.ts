@@ -1,6 +1,6 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
-import { tableInsertedAt, writeControlFor } from './structure.js';
+import { INLINE_READ, tableInsertedAt, writeControlFor } from './structure.js';
 import { markdownToRequests, type ImagePlacement, type TablePlacement } from './write.js';
 import { placeCells } from './table-layout.js';
 import { insertTableRequests, mergeRequests, lookRequests, lookOf, plainLook, rowsTouchedByMerges, fillLayoutRequests } from './table-write.js';
@@ -51,9 +51,9 @@ async function insertTableAt(clients: GoogleClients, documentId: string, table: 
   const R = placement?.rowCount ?? rows.length;
   const C = placement?.columnCount ?? Math.max(...rows.map((r) => r.length));
   if (R === 0 || C === 0) return;
-  const before = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
+  const before = (await clients.docs.documents.get({ documentId, ...INLINE_READ })).data;
   await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests: insertTableRequests(before, index, R, C, tabId, segmentId) } });
-  const after = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
+  const after = (await clients.docs.documents.get({ documentId, ...INLINE_READ })).data;
   const tableEl = tableInsertedAt(after, index, tabId, segmentId);
   if (!tableEl?.table?.tableRows) return;
 
@@ -72,7 +72,7 @@ async function insertTableAt(clients: GoogleClients, documentId: string, table: 
   if (requests.length) await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests } });
 
   if (aligns.some((a) => a && a !== 'left')) {
-    const aligned = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
+    const aligned = (await clients.docs.documents.get({ documentId, ...INLINE_READ })).data;
     const alignReqs = columnAlignRequests(tableInsertedAt(aligned, index, tabId, segmentId), aligns, { tabId, segmentId });
     if (alignReqs.length) await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests: alignReqs } });
   }

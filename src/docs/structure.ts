@@ -13,6 +13,9 @@ export function flattenTabs(doc: docs_v1.Schema$Document): docs_v1.Schema$Tab[] 
   return out;
 }
 
+/** The parameters of a `documents.get` that reads the text: every tab, with suggestions inline, so a pending suggestion is never folded into the text without markup. */
+export const INLINE_READ = { includeTabsContent: true, suggestionsViewMode: 'SUGGESTIONS_INLINE' } as const;
+
 /** Partial-response masks are tabs-only: the Docs API refuses one that mixes legacy top-level fields with tabs content. */
 export const TAB_TREE_FIELDS = 'tabs(tabProperties,childTabs(tabProperties,childTabs(tabProperties,childTabs(tabProperties))))';
 export const PAGE_SETUP_FIELDS = 'revisionId,tabs.tabProperties,tabs.childTabs,tabs.documentTab.documentStyle';

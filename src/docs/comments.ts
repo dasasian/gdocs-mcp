@@ -1,6 +1,6 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
-import { flattenTabs } from './structure.js';
+import { flattenTabs, INLINE_READ } from './structure.js';
 import { project, type Projection } from './transformer.js';
 import { contextAround } from './context.js';
 
@@ -43,8 +43,7 @@ interface TabWithAnchors {
 export type ReviewedDocument = docs_v1.Schema$Document & { comments?: CommentThread[]; suggestions?: SuggestionThread[] };
 
 export const REVIEW_READ = {
-  includeTabsContent: true,
-  suggestionsViewMode: 'SUGGESTIONS_INLINE',
+  ...INLINE_READ,
   commentsViewMode: 'COMMENTS_VIEW_MODE_INCLUDED',
 } as const;
 

@@ -696,7 +696,7 @@ touches only what its anchor covers and keeps everything else.
 > - **Native `text/markdown` export is unusable**: it silently concatenates a pending suggestion into the text (`"2"→"3"` rendered as `"32 weeks"`) with no tracked-change markup, and **drops comments**.
 > - **Native `text/html` export is high-fidelity for formatting** (full `text-align`/color/font/size attrs) and includes comments as footnote refs + divs, but still renders suggestions silently — usable only as a *formatting cross-check*, not the primary read.
 > - Only the Docs API `SUGGESTIONS_INLINE` + our parser represents suggestions correctly; editing also needs the index map that export doesn't provide.
-> - **Hazard:** any text extraction that doesn't pick an explicit `suggestionsViewMode` risks the `32` corruption. The transformer must always set the mode deliberately.
+> - **Hazard:** any text extraction that doesn't pick an explicit `suggestionsViewMode` risks the `32` corruption. The transformer must always set the mode deliberately. Every read that takes text (`INLINE_READ` in `structure.ts`) sets `SUGGESTIONS_INLINE`, the re-reads after a table insert, a row or column change and a header create among them; only the tab-tree and page-setup reads, whose field masks leave the content out, do not. Google's default is the same mode for an editor and a commenter (checked live), so this makes the choice ours, not a default we rely on.
 
 ---
 

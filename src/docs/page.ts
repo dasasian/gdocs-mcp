@@ -1,6 +1,6 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
-import { resolveTabId, documentStyleOf, writeControlFor, PAGE_SETUP_FIELDS } from './structure.js';
+import { resolveTabId, documentStyleOf, writeControlFor, INLINE_READ, PAGE_SETUP_FIELDS } from './structure.js';
 
 // Document-level page setup via updateDocumentStyle: margins, page size, orientation.
 // All dimensions are points (72 pt = 1 inch), consistent with every other length in the server.
@@ -45,7 +45,7 @@ async function getForPageSetup(
 ): Promise<docs_v1.Schema$Document> {
   const masked = await clients.docs.documents.get({ documentId, includeTabsContent: true, fields: PAGE_SETUP_FIELDS });
   if (masked.data.tabs?.length) return masked.data;
-  return (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
+  return (await clients.docs.documents.get({ documentId, ...INLINE_READ })).data;
 }
 
 export interface PageSetupInfo {

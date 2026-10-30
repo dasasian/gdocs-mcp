@@ -1,7 +1,7 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
 import type { EditResult } from './edit.js';
-import { contentOf, writeControlFor } from './structure.js';
+import { contentOf, INLINE_READ, writeControlFor } from './structure.js';
 import { renderTableMarkup, readTableLayout } from './transformer.js';
 import { threadsOnRangesIn, threadsWithoutRange } from './comments.js';
 import { movedCommentsToken } from './loss.js';
@@ -412,7 +412,7 @@ export async function editTableMarkup(clients: GoogleClients, documentId: string
       const tableStart = found.element.startIndex ?? 0;
       const shape = input.suggest ? { rows: placeCells(before).rowCount, columns: placeCells(before).columnCount } : undefined;
       const reportedSuggestions = await send(structureRequests(comparison.operations, { tableStart, tabId, segmentId }, shape));
-      const fresh = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
+      const fresh = (await clients.docs.documents.get({ documentId, ...INLINE_READ })).data;
       const freshInDoc = tableStartingAt(fresh, tableStart, tabId, segmentId);
       const pendingBefore = deletionIdsIn(found.table);
       const mine = new Set([...reportedSuggestions, ...[...deletionIdsIn(freshInDoc.table)].filter((id) => !pendingBefore.has(id))]);

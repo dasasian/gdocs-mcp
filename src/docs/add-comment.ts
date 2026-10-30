@@ -1,5 +1,5 @@
 import type { GoogleClients } from '../google/clients.js';
-import { resolveTabId, type SegmentKind, type SegmentPage } from './structure.js';
+import { INLINE_READ, resolveTabId, type SegmentKind, type SegmentPage } from './structure.js';
 import { resolveSegmentTarget } from './segments.js';
 import { project } from './transformer.js';
 import { locate, rangeFor } from './edit.js';
@@ -26,7 +26,7 @@ export async function addComment(
   quotedText: string,
   opts: { tabId?: string; segment?: SegmentKind; page?: SegmentPage } = {},
 ): Promise<AddCommentResult> {
-  const doc = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
+  const doc = (await clients.docs.documents.get({ documentId, ...INLINE_READ })).data;
   const tabId = resolveTabId(doc, opts.tabId);
   const target = resolveSegmentTarget(doc, { segment: opts.segment, page: opts.page, tabId });
   if (target.error) return { status: 'no_segment', message: target.error };
