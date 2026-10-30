@@ -1,5 +1,5 @@
 import type { docs_v1 } from 'googleapis';
-import { contentOf, listsOf, inlineObjectsOf, flattenTabs, tabContainer } from './structure.js';
+import { contentOf, listsOf, inlineObjectsOf, tabContainer } from './structure.js';
 import { LEVEL_BY_HEADING, CLASS_BY_NAMED_STYLE, CODE_FONT, PAGE_BREAK_LINE, RULE_LINE, type CssAlign } from './markdown-spec.js';
 import { elementTokenOf, escapeElementLookalikes, suggestionIdsOf, isRuleElement, TokenTable, escapeAttribute, type ParagraphElement, type DocumentTabWithElements } from './elements.js';
 import { hasRuleBorder } from './rule.js';

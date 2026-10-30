@@ -1,5 +1,5 @@
 import type { docs_v1 } from 'googleapis';
-import { parseInline, parseInlineWithElements, segmentTextStyle, inlineStyleIssues } from './inline.js';
+import { parseInlineWithElements, segmentTextStyle, inlineStyleIssues } from './inline.js';
 import { TokenTable, unescapeAttribute } from './elements.js';
 import { elementRequests, type ListSpec, type PlacedElement } from './element-write.js';
 import { RULE_PARAGRAPH_FIELDS, RULE_PARAGRAPH_STYLE } from './rule.js';
