@@ -53,7 +53,7 @@ export interface ServerOptions {
 }
 
 export function createServer(options: ServerOptions = {}): McpServer {
-  const server = new McpServer({ name: 'gdocs-mcp', version: '0.7.0' });
+  const server = new McpServer({ name: 'gdocs-mcp', version: '1.0.0' });
 
   server.registerTool(
     'list_accounts',
