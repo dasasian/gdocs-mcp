@@ -1,89 +1,136 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
-import { contentOf, resolveTabId, writeControlFor, type SegmentKind, type SegmentPage } from './structure.js';
+import { contentOf, resolveTabId, tabContainer, writeControlFor, type SegmentKind, type SegmentPage } from './structure.js';
 import { resolveSegmentTarget } from './segments.js';
-import { getDocForReview } from './comments.js';
+import { asRequest, getDocForReview, type ReviewedDocument } from './comments.js';
 
+const SUGGESTED_FIELD = /^suggested[A-Z]/;
+const CONTEXT_REACH = 40;
+const CHANGE_REACH = 80;
 
-export type SuggestionType = 'insertion' | 'deletion' | 'replacement' | 'style';
+type Holder = { kind: 'paragraph'; paragraph: docs_v1.Schema$Paragraph } | { kind: 'row'; row: docs_v1.Schema$TableRow } | { kind: 'nothing' };
 
-export interface Suggestion {
-  id: string;
-  type: SuggestionType;
-  before: string;
-  after: string;
-  start: number;
-  end: number;
-  contiguous: boolean;
-}
-
-interface Span {
-  start: number;
-  end: number;
-  text: string;
-}
-
-interface Group {
-  id: string;
-  insertions: Span[];
-  deletions: Span[];
-  styleOnly: boolean;
-}
-
-export function parseSuggestions(doc: docs_v1.Schema$Document, tabId?: string, segmentId?: string): Suggestion[] {
-  const groups = new Map<string, Group>();
-  const ensure = (id: string): Group => {
-    let g = groups.get(id);
-    if (!g) {
-      g = { id, insertions: [], deletions: [], styleOnly: false };
-      groups.set(id, g);
-    }
-    return g;
-  };
-
-  for (const el of contentOf(doc, tabId, segmentId)) {
-    const elements = el.paragraph?.elements;
-    if (!elements) continue;
-    for (const pe of elements) {
-      const run = pe.textRun;
-      if (!run) continue;
-      const span: Span = { start: pe.startIndex ?? 0, end: pe.endIndex ?? 0, text: run.content ?? '' };
-      for (const id of run.suggestedInsertionIds ?? []) ensure(id).insertions.push(span);
-      for (const id of run.suggestedDeletionIds ?? []) ensure(id).deletions.push(span);
-      const styleChanges = run.suggestedTextStyleChanges ?? {};
-      for (const id of Object.keys(styleChanges)) ensure(id).styleOnly = true;
-    }
-  }
-
-  return [...groups.values()].map((g) => {
-    const all = [...g.insertions, ...g.deletions];
-    const start = Math.min(...all.map((s) => s.start));
-    const end = Math.max(...all.map((s) => s.end));
-    const before = g.deletions.map((s) => s.text).join('');
-    const after = g.insertions.map((s) => s.text).join('');
-    let type: SuggestionType = 'style';
-    if (g.insertions.length && g.deletions.length) type = 'replacement';
-    else if (g.insertions.length) type = 'insertion';
-    else if (g.deletions.length) type = 'deletion';
-    return { id: g.id, type, before, after, start, end, contiguous: isContiguous(all) };
+function idsNamedBy(node: object): string[] {
+  return Object.entries(node).flatMap(([field, value]) => {
+    if (!SUGGESTED_FIELD.test(field) || value === null || typeof value !== 'object') return [];
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : Object.keys(value);
   });
 }
 
-function isContiguous(spans: Span[]): boolean {
-  const s = [...spans].sort((a, b) => a.start - b.start);
-  for (let i = 1; i < s.length; i++) {
-    if (s[i].start !== s[i - 1].end) return false;
-  }
-  return true;
+function holderFor(node: object, inherited: Holder): Holder {
+  const { paragraph, tableCells } = node as { paragraph?: docs_v1.Schema$Paragraph; tableCells?: unknown };
+  if (paragraph) return { kind: 'paragraph', paragraph };
+  if (Array.isArray(tableCells)) return { kind: 'row', row: node as docs_v1.Schema$TableRow };
+  return inherited;
 }
 
-export function formatSuggestionPreview(s: Pick<Suggestion, 'type' | 'before' | 'after'>): string {
-  const before = s.before.trim();
-  const after = s.after.trim();
-  if (s.type === 'insertion') return `insert: "${after}"`;
-  if (s.type === 'deletion') return `delete: "${before}"`;
-  if (s.type === 'replacement') return `"${before}" → "${after}"`;
-  return '(style change)';
+function collectIds(node: unknown, inherited: Holder, found: Map<string, Holder>): void {
+  if (node === null || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    node.forEach((child) => collectIds(child, inherited, found));
+    return;
+  }
+  const holder = holderFor(node, inherited);
+  for (const id of idsNamedBy(node)) if (!found.has(id)) found.set(id, holder);
+  Object.values(node).forEach((child) => collectIds(child, holder, found));
+}
+
+function suggestionHolders(roots: unknown[]): Map<string, Holder> {
+  const found = new Map<string, Holder>();
+  roots.forEach((root) => collectIds(root, { kind: 'nothing' }, found));
+  return found;
+}
+
+function segmentRoot(doc: ReviewedDocument, tabId: string | undefined, segmentId: string): unknown {
+  const container = tabContainer(doc, tabId);
+  return container?.headers?.[segmentId] ?? container?.footers?.[segmentId];
+}
+
+function rootsFor(doc: ReviewedDocument, tabId: string | undefined, segmentId: string | undefined): unknown[] {
+  if (segmentId) return [segmentRoot(doc, tabId, segmentId)];
+  const container = tabContainer(doc, tabId);
+  return [contentOf(doc, tabId), container?.documentStyle, container?.namedStyles];
+}
+
+/** How many suggestions touch the content of a tab's body, or of its header or footer (`segmentId`). */
+export function countSuggestions(doc: ReviewedDocument, tabId: string | undefined, segmentId?: string): number {
+  return suggestionHolders([contentOf(doc, tabId, segmentId)]).size;
+}
+
+const clipped = (text: string, reach: number): string => (text.length > reach ? `${text.slice(0, reach)}…` : text);
+
+function textUnder(node: unknown): string {
+  if (node === null || typeof node !== 'object') return '';
+  if (Array.isArray(node)) return node.map(textUnder).join('');
+  const { textRun } = node as { textRun?: docs_v1.Schema$TextRun };
+  if (textRun) return textRun.content ?? '';
+  return Object.values(node).map(textUnder).join('');
+}
+
+const withoutParagraphMark = (text: string): string => text.replace(/\n$/, '');
+
+function paragraphContext(paragraph: docs_v1.Schema$Paragraph, id: string): string {
+  let before = '';
+  let after = '';
+  let deleted = '';
+  let inserted = '';
+  let atChange = false;
+  for (const element of paragraph.elements ?? []) {
+    const run = element.textRun;
+    const content = run?.content ?? '';
+    if (run?.suggestedInsertionIds?.includes(id)) {
+      atChange = true;
+      inserted += content;
+    } else if (run?.suggestedDeletionIds?.includes(id)) {
+      atChange = true;
+      deleted += content;
+    } else if (run?.suggestedDeletionIds?.length) {
+      continue;
+    } else if (atChange) {
+      after += content;
+    } else {
+      before += content;
+    }
+  }
+  if (!atChange) return clipped(withoutParagraphMark(before), CONTEXT_REACH * 2);
+  const change = `[${clipped(deleted, CHANGE_REACH)}→${clipped(inserted, CHANGE_REACH)}]`;
+  const lead = before.length > CONTEXT_REACH ? `…${before.slice(-CONTEXT_REACH)}` : before;
+  const trail = withoutParagraphMark(after);
+  return `${lead}${change}${trail.length > CONTEXT_REACH ? `${trail.slice(0, CONTEXT_REACH)}…` : trail}`;
+}
+
+function contextFor(holder: Holder, id: string): string | undefined {
+  if (holder.kind === 'paragraph') return paragraphContext(holder.paragraph, id);
+  if (holder.kind === 'row') return clipped(textUnder(holder.row).replace(/\s+/g, ' ').trim(), CONTEXT_REACH * 2);
+  return undefined;
+}
+
+export interface ListedSuggestion {
+  id: string;
+  summary: string;
+  context: string;
+  author: string | null;
+  time: string | null;
+}
+
+/**
+ * The pending suggestions on a tab's body (with its document and named styles), or on one header or footer, in document order.
+ * `summary` is Docs' own words for the change; `context` is the change in its sentence, `[deleted→inserted]`, and is what
+ * `apply_suggestions` checks. `doc` must come from `getDocForReview`.
+ */
+export function readSuggestions(doc: ReviewedDocument, tabId: string | undefined, segmentId?: string): ListedSuggestion[] {
+  const threads = new Map((doc.suggestions ?? []).map((thread) => [thread.suggestionId, thread]));
+  return [...suggestionHolders(rootsFor(doc, tabId, segmentId))].map(([id, holder]) => {
+    const thread = threads.get(id);
+    const summary = thread?.summaryText ?? '';
+    return {
+      id,
+      summary,
+      context: contextFor(holder, id) ?? summary,
+      author: thread?.headPost?.author?.displayName ?? null,
+      time: thread?.headPost?.createTime ?? null,
+    };
+  });
 }
 
 export async function listSuggestions(
@@ -91,225 +138,62 @@ export async function listSuggestions(
   documentId: string,
   requestedTabId?: string,
   opts: { segment?: SegmentKind; page?: SegmentPage } = {},
-): Promise<{ revisionId: string; title: string; suggestions: (Suggestion & { preview: string })[]; message?: string }> {
+): Promise<{ revisionId: string; title: string; suggestions: ListedSuggestion[]; message?: string }> {
   const doc = await getDocForReview(clients, documentId);
   const tabId = resolveTabId(doc, requestedTabId);
-  const seg = resolveSegmentTarget(doc, { segment: opts.segment, page: opts.page, tabId });
-  if (seg.error) return { revisionId: doc.revisionId ?? '', title: doc.title ?? '', suggestions: [], message: seg.error };
-  const suggestions = parseSuggestions(seg.doc, tabId, seg.segmentId).map((s) => ({ ...s, preview: formatSuggestionPreview(s) }));
-  return { revisionId: doc.revisionId ?? '', title: doc.title ?? '', suggestions };
-}
-
-
-export interface TaggedRun {
-  start: number;
-  end: number;
-  text: string;
-  insertionId?: string;
-  deletionId?: string;
-  styleIds?: string[];
-}
-
-export function collectRuns(doc: docs_v1.Schema$Document, tabId?: string, segmentId?: string): TaggedRun[] {
-  const runs: TaggedRun[] = [];
-  for (const el of contentOf(doc, tabId, segmentId)) {
-    for (const pe of el.paragraph?.elements ?? []) {
-      const run = pe.textRun;
-      if (!run?.content) continue;
-      const isEdit = (run.suggestedInsertionIds?.length ?? 0) > 0 || (run.suggestedDeletionIds?.length ?? 0) > 0;
-      const styleIds = isEdit ? [] : Object.keys(run.suggestedTextStyleChanges ?? {});
-      runs.push({
-        start: pe.startIndex ?? 0,
-        end: pe.endIndex ?? 0,
-        text: run.content,
-        insertionId: run.suggestedInsertionIds?.[0],
-        deletionId: run.suggestedDeletionIds?.[0],
-        ...(styleIds.length ? { styleIds } : {}),
-      });
-    }
-  }
-  return runs;
-}
-
-export interface Cluster {
-  ids: string[];
-  start: number;
-  end: number;
-}
-
-export function clusterSuggestions(suggestions: Suggestion[]): Cluster[] {
-  const spatial = suggestions.filter((s) => s.type !== 'style' && Number.isFinite(s.start));
-  const sorted = [...spatial].sort((a, b) => a.start - b.start);
-  const clusters: Cluster[] = [];
-  for (const s of sorted) {
-    const last = clusters[clusters.length - 1];
-    if (last && s.start <= last.end) {
-      last.end = Math.max(last.end, s.end);
-      last.ids.push(s.id);
-    } else {
-      clusters.push({ ids: [s.id], start: s.start, end: s.end });
-    }
-  }
-  return clusters;
-}
-
-export function resolveRegionText(
-  runs: TaggedRun[],
-  start: number,
-  end: number,
-  decisions: Map<string, 'accept' | 'reject'>,
-): string {
-  let text = '';
-  for (const r of runs) {
-    if (r.start < start || r.end > end) continue;
-    if (r.insertionId) {
-      if (decisions.get(r.insertionId) === 'accept') text += r.text;
-    } else if (r.deletionId) {
-      if (decisions.get(r.deletionId) === 'reject') text += r.text;
-    } else {
-      text += r.text;
-    }
-  }
-  return text;
-}
-
-export interface Conflict {
-  insertionId: string;
-  deletionId: string;
-  text: string;
-}
-
-export function detectConflicts(
-  runs: TaggedRun[],
-  start: number,
-  end: number,
-  decisions: Map<string, 'accept' | 'reject'>,
-): Conflict[] {
-  const out: Conflict[] = [];
-  for (const r of runs) {
-    if (r.start < start || r.end > end) continue;
-    if (
-      r.insertionId &&
-      r.deletionId &&
-      r.insertionId !== r.deletionId &&
-      decisions.get(r.insertionId) === 'accept' &&
-      decisions.get(r.deletionId) === 'accept'
-    ) {
-      out.push({ insertionId: r.insertionId, deletionId: r.deletionId, text: r.text.trim() });
-    }
-  }
-  return out;
-}
-
-function regionHasStyleSuggestion(runs: TaggedRun[], start: number, end: number): boolean {
-  return runs.some((r) => r.start >= start && r.end <= end && (r.styleIds?.length ?? 0) > 0);
-}
-
-function regionRequests(
-  runs: TaggedRun[],
-  cluster: Cluster,
-  decisions: Map<string, 'accept' | 'reject'>,
-  tabId?: string,
-  segmentId?: string,
-): docs_v1.Schema$Request[] {
-  const finalText = resolveRegionText(runs, cluster.start, cluster.end, decisions);
-  const requests: docs_v1.Schema$Request[] = [
-    { deleteContentRange: { range: { startIndex: cluster.start, endIndex: cluster.end, tabId, segmentId } } },
-  ];
-  if (finalText) requests.push({ insertText: { location: { index: cluster.start, tabId, segmentId }, text: finalText } });
-  return requests;
-}
-
-function checkDocumentTitle(doc: docs_v1.Schema$Document, documentTitle: string): string | undefined {
-  const actual = doc.title ?? '';
-  if (actual === documentTitle) return undefined;
-  return `documentTitle did not match the live document (expected "${documentTitle}", found "${actual}"). This id may belong to a different, similarly-titled document — re-run list_suggestions on the intended document and retry.`;
+  const target = resolveSegmentTarget(doc, { segment: opts.segment, page: opts.page, tabId });
+  const header = { revisionId: doc.revisionId ?? '', title: doc.title ?? '' };
+  if (target.error) return { ...header, suggestions: [], message: target.error };
+  return { ...header, suggestions: readSuggestions(doc, tabId, target.segmentId) };
 }
 
 export interface Resolution {
   suggestionId: string;
   decision: 'accept' | 'reject';
-  expectedChange?: string;
+  expectContext: string;
 }
 
-export interface ApplyManyResult {
-  status: 'ok' | 'error' | 'incomplete' | 'wrong_doc' | 'no_segment';
+export interface ApplyResult {
+  status: 'ok' | 'error' | 'wrong_doc' | 'no_segment';
   resolved?: number;
   errors?: string[];
-  /** Overlapping insert-inside-delete conflicts that were auto-resolved (insertion kept). */
-  conflicts?: (Conflict & { note: string })[];
 }
 
+function refusalFor(resolution: Resolution, listed: Map<string, ListedSuggestion>): string | undefined {
+  const suggestion = listed.get(resolution.suggestionId);
+  if (!suggestion) return `${resolution.suggestionId}: not found (it may be already resolved, or in another tab, header or footer)`;
+  if (suggestion.context !== resolution.expectContext) return `${resolution.suggestionId}: expectContext mismatch (found "${suggestion.context}")`;
+  return undefined;
+}
+
+/**
+ * Accepts or rejects each suggestion on its own, as clicking the check or the cross in Docs does, in one batch after
+ * `expectTitle` and every `expectContext` match the live doc. Nothing is sent if any of them does not.
+ */
 export async function applySuggestions(
   clients: GoogleClients,
   documentId: string,
-  documentTitle: string,
+  expectTitle: string,
   resolutions: Resolution[],
   requestedTabId?: string,
   opts: { segment?: SegmentKind; page?: SegmentPage } = {},
-): Promise<ApplyManyResult> {
+): Promise<ApplyResult> {
   const doc = await getDocForReview(clients, documentId);
-  const wrongDoc = checkDocumentTitle(doc, documentTitle);
-  if (wrongDoc) return { status: 'wrong_doc', errors: [wrongDoc] };
-
+  const title = doc.title ?? '';
+  if (title !== expectTitle) {
+    return { status: 'wrong_doc', errors: [`expectTitle did not match the live document (expected "${expectTitle}", found "${title}"). This id may belong to a different, similarly-titled document — run list_suggestions on the intended document and retry.`] };
+  }
   const tabId = resolveTabId(doc, requestedTabId);
-  const seg = resolveSegmentTarget(doc, { segment: opts.segment, page: opts.page, tabId });
-  if (seg.error) return { status: 'no_segment', errors: [seg.error] };
-  const segmentId = seg.segmentId;
-  const suggestions = parseSuggestions(seg.doc, tabId, segmentId);
-  const byId = new Map(suggestions.map((s) => [s.id, s]));
-  const clusters = clusterSuggestions(suggestions);
-  const runs = collectRuns(seg.doc, tabId, segmentId);
-
-  const decisions = new Map<string, 'accept' | 'reject'>();
-  const errors: string[] = [];
-  for (const r of resolutions) {
-    const s = byId.get(r.suggestionId);
-    if (!s) {
-      errors.push(`${r.suggestionId}: not found (may be already resolved)`);
-      continue;
-    }
-    if (s.type === 'style') {
-      errors.push(`${r.suggestionId}: style-only, not resolvable`);
-      continue;
-    }
-    if (r.expectedChange !== undefined && formatSuggestionPreview(s) !== r.expectedChange) {
-      errors.push(`${r.suggestionId}: expectedChange mismatch (found "${formatSuggestionPreview(s)}")`);
-      continue;
-    }
-    decisions.set(r.suggestionId, r.decision);
-  }
+  const target = resolveSegmentTarget(doc, { segment: opts.segment, page: opts.page, tabId });
+  if (target.error) return { status: 'no_segment', errors: [target.error] };
+  const listed = new Map(readSuggestions(doc, tabId, target.segmentId).map((suggestion) => [suggestion.id, suggestion]));
+  const duplicates = resolutions.filter((resolution, i) => resolutions.findIndex((other) => other.suggestionId === resolution.suggestionId) !== i);
+  const errors = [
+    ...duplicates.map((resolution) => `${resolution.suggestionId}: given more than once`),
+    ...resolutions.flatMap((resolution) => refusalFor(resolution, listed) ?? []),
+  ];
   if (errors.length) return { status: 'error', errors };
-
-  const touched = clusters.filter((c) => c.ids.some((id) => decisions.has(id)));
-  for (const c of touched) {
-    const missing = c.ids.filter((id) => !decisions.has(id));
-    if (missing.length) {
-      errors.push(`cluster [${c.ids.join(', ')}] partially resolved — also decide ${missing.join(', ')} (resolving part of a cluster corrupts the rest)`);
-    }
-    if (regionHasStyleSuggestion(runs, c.start, c.end)) {
-      errors.push(`cluster [${c.ids.join(', ')}] overlaps a style-only suggestion (not resolvable)`);
-    }
-  }
-  if (errors.length) return { status: 'incomplete', errors };
-
-  const requests: docs_v1.Schema$Request[] = [];
-  const conflicts: (Conflict & { note: string })[] = [];
-  for (const c of [...touched].sort((a, b) => b.start - a.start)) {
-    for (const cf of detectConflicts(runs, c.start, c.end, decisions)) {
-      conflicts.push({
-        ...cf,
-        note: `Insertion ${cf.insertionId} ("${cf.text}") sits inside deletion ${cf.deletionId}; accepting both is contradictory. Kept the inserted text (insertion-precedence). Flag this to the user — it is not a clean merge.`,
-      });
-    }
-    requests.push(...regionRequests(runs, c, decisions, tabId, segmentId));
-  }
-  await clients.docs.documents.batchUpdate({
-    documentId,
-    requestBody: {
-      requests,
-      writeControl: writeControlFor(doc.revisionId),
-    },
-  });
-  return { status: 'ok', resolved: decisions.size, ...(conflicts.length ? { conflicts } : {}) };
+  const requests = resolutions.map(({ suggestionId, decision }) => asRequest(decision === 'accept' ? { acceptSuggestion: { suggestionId } } : { rejectSuggestion: { suggestionId } }));
+  await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests, writeControl: writeControlFor(doc.revisionId) } });
+  return { status: 'ok', resolved: resolutions.length };
 }

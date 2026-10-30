@@ -1,6 +1,6 @@
 import type { docs_v1 } from 'googleapis';
 import { contentOf } from './structure.js';
-import { parseSuggestions } from './suggestions.js';
+import { countSuggestions } from './suggestions.js';
 import { commentCounts, type ReviewedDocument } from './comments.js';
 
 export interface Loss {
@@ -76,7 +76,7 @@ function pointsAtBookmarkOrHeading(link: docs_v1.Schema$Link | null | undefined)
  */
 export function measureLoss(doc: ReviewedDocument, tabId: string | undefined, segmentId?: string): Loss {
   const comments = commentCounts(doc, tabId, segmentId);
-  const loss: Loss = { paragraphs: 0, comments: comments.withRange + (segmentId ? 0 : comments.withoutRange), commentsWithoutRange: segmentId ? 0 : comments.withoutRange, suggestions: segmentId ? 0 : parseSuggestions(doc, tabId).length, tabStops: 0, tabStopLines: [], people: 0, dates: 0, richLinks: 0, bookmarkLinks: 0, pageNumberFields: 0, sectionBreaks: 0, columnBreaks: 0 };
+  const loss: Loss = { paragraphs: 0, comments: comments.withRange + (segmentId ? 0 : comments.withoutRange), commentsWithoutRange: segmentId ? 0 : comments.withoutRange, suggestions: segmentId ? 0 : countSuggestions(doc, tabId), tabStops: 0, tabStopLines: [], people: 0, dates: 0, richLinks: 0, bookmarkLinks: 0, pageNumberFields: 0, sectionBreaks: 0, columnBreaks: 0 };
   const content = contentOf(doc, tabId, segmentId);
   loss.sectionBreaks = content.slice(1).filter((el) => el.sectionBreak).length;
   for (const paragraph of paragraphsIn(content)) {

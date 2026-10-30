@@ -222,7 +222,7 @@ export function createServer(options: ServerOptions = {}): McpServer {
     {
       title: 'List suggestions in a doc',
       description:
-        'List pending suggestions (tracked changes) in a Google Doc as before→after diffs, in document order. Returns the doc `title` and, per suggestion, a human-readable `preview` — pass these verbatim as documentTitle/expectedChange to apply_suggestions. Note: the Docs API exposes no author or timestamp for suggestions.',
+        'List the pending suggestions (tracked changes) in a Google Doc, in document order. Each has an `id`, a `summary` (Docs’ own words for it, as in the Docs sidebar, e.g. Replace: “30” with “45”), a `context` (the change in its sentence, [deleted→inserted], so two suggestions with the same summary can be told apart), and its author and time. Returns the doc `title`. Pass the title as expectTitle and each context as expectContext to apply_suggestions. segment: "header" or "footer" lists that one’s suggestions.',
       inputSchema: { path: tabPathArg, ...segmentArg, ...accountArg },
     },
     async ({ path, segment, page, account }) => {
@@ -237,16 +237,16 @@ export function createServer(options: ServerOptions = {}): McpServer {
     {
       title: 'Accept/reject one or more suggestions',
       description:
-        'Resolve one or more pending suggestions (from list_suggestions) in ONE atomic update: accept keeps the proposed text, reject keeps the original. Pass one resolution to resolve a single suggestion, or several at once — required for suggestions that overlap or adjoin each other (a "cluster"), which cannot be resolved one at a time without corrupting neighbours. You MUST include every suggestion in any cluster you touch; a partially-resolved cluster is refused (status "incomplete"). documentTitle is checked against the live document first (status "wrong_doc" on mismatch, e.g. an id from a different, similarly-titled document). Copy each suggestion\'s `preview` from list_suggestions into its `expectedChange` (verified before applying). If the result includes a `conflicts` array, two suggestions genuinely conflicted (one inserts text inside another\'s deletion, both accepted) — it was auto-resolved by keeping the insertion; surface this to the user as NOT a clean merge.',
+        'Accept or reject pending suggestions (from list_suggestions) in one update. Each one is resolved on its own, exactly as clicking the check or the cross in Docs: accept keeps the proposed change, reject restores the original. Two suggestions that touch each other (by different people) are decided one at a time, and the text comes out as Docs makes it; to decide them together, pass both. A style-only suggestion resolves like any other. expectTitle is checked against the live document first (status "wrong_doc" on a mismatch, e.g. an id from a different, similarly-titled document), and each expectContext is checked against the live suggestion (status "error" on a mismatch or an id that is gone); nothing is changed unless all match. Pass the `title` and each suggestion’s `context` from list_suggestions, verbatim.',
       inputSchema: {
         path: tabPathArg,
-        documentTitle: z.string().describe("The document's title, from list_suggestions. Shown for confirmation only."),
+        expectTitle: z.string().describe('the document’s title, from list_suggestions; checked before anything is changed'),
         resolutions: z
           .array(
             z.object({
               suggestionId: z.string(),
               decision: z.enum(['accept', 'reject']),
-              expectedChange: z.string().describe("the suggestion's `preview` from list_suggestions"),
+              expectContext: z.string().describe('the suggestion’s `context` from list_suggestions, verbatim'),
             }),
           )
           .describe('one entry per suggestion to resolve'),
@@ -254,10 +254,10 @@ export function createServer(options: ServerOptions = {}): McpServer {
         ...accountArg,
       },
     },
-    async ({ path, documentTitle, resolutions, segment, page, account }) => {
+    async ({ path, expectTitle, resolutions, segment, page, account }) => {
       const clients = await clientsForAccount(account);
       const target = await resolveTab(clients, path);
-      return json(await applySuggestions(clients, target.documentId, documentTitle, resolutions, target.tabId, { segment, page }));
+      return json(await applySuggestions(clients, target.documentId, expectTitle, resolutions, target.tabId, { segment, page }));
     },
   );
 

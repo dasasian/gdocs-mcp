@@ -38,8 +38,9 @@ accept the typo fixes, reject anything that changes meaning, then reply to the o
 comments and resolve the ones that are settled."*
 
 **What happens:** `list_suggestions` renders each pending tracked change as
-`before → after` so Claude can judge it, `apply_suggestions` accepts and rejects in
-atomic batches, `list_comments` pulls the open threads with their quoted text, and
+`[deleted→inserted]` in its sentence, with Docs' own summary, author and time, so
+Claude can judge it; `apply_suggestions` accepts and rejects them; `list_comments`
+pulls the open threads with the text each is on; and
 `add_comment`/`resolve_comment` reply and close them.
 
 **Why it's nice:** four tools, one sentence, and the judgement in the middle is the
@@ -130,13 +131,15 @@ sends only a style request and cannot change the text.
 **Ask Claude:** *"Show me the pending suggestions as a diff, then accept the wording
 fixes and reject the deletions."*
 
-**What happens:** `list_suggestions` returns each pending change as `before → after`;
-`apply_suggestions` accepts/rejects them in one atomic update. Overlapping or
-adjacent suggestions (a "cluster") are resolved together — resolving them one at a
-time would corrupt neighbours, so the tool refuses a partial cluster.
+**What happens:** `list_suggestions` returns each pending change with Docs' summary
+(`Replace: “30” with “45”`), the change in its sentence (`Pay within [30→45] days`),
+its author and time; `apply_suggestions` accepts or rejects each one on its own, as
+the check and the cross do in Docs, after the `title` and each `context` are checked
+against the live doc. Suggestions that touch each other are decided one at a time,
+or together if you pass both.
 
 **Why it's the headline:** most tools can't even *see* tracked changes correctly.
-This one reads them as diffs and acts on them safely.
+This one reads them with their author and the change in its sentence, and acts on them the way Docs does.
 
 ---
 
@@ -193,8 +196,8 @@ write. Anything outside that small set (a border, say) is refused before a reque
 **Ask Claude:** *"Reply to Dana's comment saying it's fixed, then resolve it."*
 
 **What happens:** `list_comments` finds the thread; `add_comment` with `replyTo`
-posts the reply; `resolve_comment` closes it (verified against the comment's quoted
-text so it won't resolve the wrong one).
+posts the reply; `resolve_comment` closes it, and needs the comment's `quotedText`
+back so it can't resolve the wrong one.
 
 ---
 

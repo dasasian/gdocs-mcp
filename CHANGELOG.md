@@ -16,6 +16,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 | `resolve_comment(path, commentId, expectQuote?, reopen?)`, the guard optional | `resolve_comment(path, commentId, expectQuotedText, reopen?)`, the guard **required**: the `quotedText` `list_comments` gave, exactly. A call without it is refused |
 | `list_comments` gave `id`, `author`, `createdTime`, `resolved`, `quotedText`, `content`, `replies[{author, content, createdTime, action}]` | `id`, `quotedText`, `context`, `author`, `time`, `status` (`open` or `resolved`), `content`, `replies[{id, author, time, content, action}]`, and `range` (with `tabId` and `segmentId`) when the comment has one. A comment made in Drive has no range and its quote is its `context` |
 
+> **`list_suggestions` and `apply_suggestions` use the Docs API's own suggestions (#64).** A suggestion is resolved by `acceptSuggestion` or `rejectSuggestion`, not by deleting its region and typing it again. Each one is resolved on its own, as in Docs, so the cluster rule, the `incomplete` status and the `conflicts` list are gone, and a style-only suggestion can be resolved.
+
+| Before | Now |
+|---|---|
+| `list_suggestions` gave `type`, `before`, `after`, `start`, `end`, `contiguous`, `preview` | `id`, `summary` (Docs' own words), `context` (was `preview`: the change in its sentence, `Pay within [30→45] days`), `author`, `time` |
+| `apply_suggestions(path, documentTitle, resolutions[{suggestionId, decision, expectedChange}])` | `apply_suggestions(path, expectTitle, resolutions[{suggestionId, decision, expectContext}])`. A guard is `expect` plus the name of the field it echoes |
+| a suggestion in a cluster had to be resolved with the rest of its cluster; a style-only suggestion was refused | any suggestion can be resolved alone, style-only ones included |
+
 Also: `list_comments`, the comment count in `write_doc`'s loss summary and the check on a moved table row all read the comments of one `documents.get`, so none of them calls Drive, and none pages. `write_doc` counts a tab's comments by their ranges, and a comment in a header or footer by its segment; a comment with no range is counted for the whole doc, and the summary says so on a multi-tab doc. `edit_doc` asks before moving a table row or column when a comment's range falls in it, in a header or footer too (a header table used to ask nothing); a comment with no range is matched by its quote, as before.
 
 ## [0.7.0] — 2026-10-29

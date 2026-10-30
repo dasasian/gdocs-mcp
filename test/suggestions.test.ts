@@ -4,473 +4,251 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../src/google/clients.js';
-import type { Suggestion } from '../src/docs/suggestions.js';
-import {
-  parseSuggestions,
-  formatSuggestionPreview,
-  applySuggestions,
-  clusterSuggestions,
-  resolveRegionText,
-  detectConflicts,
-  collectRuns,
-} from '../src/docs/suggestions.js';
+import type { ReviewedDocument } from '../src/docs/comments.js';
+import { REVIEW_READ } from '../src/docs/comments.js';
+import { applySuggestions, countSuggestions, listSuggestions, readSuggestions } from '../src/docs/suggestions.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-describe('parseSuggestions', () => {
-  it('groups an insertion + deletion run into one replacement diff', () => {
-    const doc: docs_v1.Schema$Document = {
-      body: {
-        content: [
-          {
-            paragraph: {
-              elements: [
-                { startIndex: 1, endIndex: 5, textRun: { content: 'new ', suggestedInsertionIds: ['s1'] } },
-                { startIndex: 5, endIndex: 9, textRun: { content: 'old ', suggestedDeletionIds: ['s1'] } },
-              ],
-            },
-          },
-        ],
+interface Run {
+  text: string;
+  ins?: string[];
+  del?: string[];
+  style?: string[];
+}
+
+function paragraph(startIndex: number, runs: Run[]): docs_v1.Schema$StructuralElement {
+  let index = startIndex;
+  const elements = runs.map((run) => {
+    const element = {
+      startIndex: index,
+      endIndex: index + run.text.length,
+      textRun: {
+        content: run.text,
+        ...(run.ins ? { suggestedInsertionIds: run.ins } : {}),
+        ...(run.del ? { suggestedDeletionIds: run.del } : {}),
+        ...(run.style ? { suggestedTextStyleChanges: Object.fromEntries(run.style.map((id) => [id, {}])) } : {}),
       },
     };
-    const [s] = parseSuggestions(doc);
-    expect(s).toMatchObject({ id: 's1', type: 'replacement', before: 'old ', after: 'new ', start: 1, end: 9, contiguous: true });
+    index += run.text.length;
+    return element;
+  });
+  return { startIndex, endIndex: index, paragraph: { elements } };
+}
+
+const thread = (suggestionId: string, summaryText: string, displayName = 'Sam Lee', createTime = '2026-10-29T23:38:45Z') => ({ suggestionId, summaryText, status: 'OPEN', headPost: { author: { displayName }, createTime } });
+
+function docWith(content: docs_v1.Schema$StructuralElement[], extra: Partial<ReviewedDocument> = {}): ReviewedDocument {
+  return { title: 'Contract', revisionId: 'r1', body: { content }, ...extra } as ReviewedDocument;
+}
+
+const PAY = paragraph(1, [{ text: 'Pay within ' }, { text: '45', ins: ['s1'] }, { text: '30', del: ['s1'] }, { text: ' days of invoice.\n' }]);
+const REPLACEMENT = docWith([PAY], { suggestions: [thread('s1', 'Replace: “30” with “45”')] });
+
+function clientsFor(doc: ReviewedDocument) {
+  const get = vi.fn().mockResolvedValue({ data: doc });
+  const batchUpdate = vi.fn().mockResolvedValue({ data: {} });
+  const clients = { account: 'a', auth: {} as GoogleClients['auth'], docs: { documents: { get, batchUpdate } } as unknown as GoogleClients['docs'], drive: {} as GoogleClients['drive'] } as GoogleClients;
+  return { clients, get, batchUpdate };
+}
+
+const requestsSent = (batchUpdate: ReturnType<typeof vi.fn>): docs_v1.Schema$Request[] => batchUpdate.mock.calls.flatMap((call) => call[0].requestBody.requests);
+
+describe('list_suggestions reads the SuggestionThreads of the doc', () => {
+  it('asks for suggestions inline with comments included', async () => {
+    const { clients, get } = clientsFor(REPLACEMENT);
+    await listSuggestions(clients, 'd');
+    expect(get).toHaveBeenCalledWith({ documentId: 'd', ...REVIEW_READ });
   });
 
-  it('classifies a pure insertion', () => {
-    const doc: docs_v1.Schema$Document = {
-      body: { content: [{ paragraph: { elements: [{ startIndex: 1, endIndex: 4, textRun: { content: 'add', suggestedInsertionIds: ['s2'] } }] } }] },
-    };
-    const [s] = parseSuggestions(doc);
-    expect(s.type).toBe('insertion');
-    expect(s.before).toBe('');
-    expect(s.after).toBe('add');
+  it('a replacement: Docs’ summary, the change in its sentence, author and time', () => {
+    expect(readSuggestions(REPLACEMENT, undefined)).toEqual([
+      { id: 's1', summary: 'Replace: “30” with “45”', context: 'Pay within [30→45] days of invoice.', author: 'Sam Lee', time: '2026-10-29T23:38:45Z' },
+    ]);
   });
 
-  it('parses the real fixture (2 weeks ⇄ 3 weeks)', () => {
-    const doc = JSON.parse(readFileSync(path.join(here, 'fixtures/replacement-suggestion.json'), 'utf8')) as docs_v1.Schema$Document;
-    const suggestions = parseSuggestions(doc, doc.tabs?.[0]?.tabProperties?.tabId);
-    expect(suggestions).toHaveLength(1);
-    expect(suggestions[0]).toMatchObject({ type: 'replacement', before: '3 weeks', after: '2 weeks', contiguous: true });
+  it('an insertion has nothing before the arrow, a deletion nothing after it', () => {
+    const doc = docWith([paragraph(1, [{ text: 'A' }, { text: ' big', ins: ['i'] }, { text: ' red', del: ['d'] }, { text: ' ball.\n' }])]);
+    expect(readSuggestions(doc, undefined).map((s) => [s.id, s.context])).toEqual([
+      ['i', 'A[→ big] ball.'],
+      ['d', 'A big[ red→] ball.'],
+    ]);
+  });
+
+  it('another suggestion’s insertion reads as text and its deletion is left out', () => {
+    const doc = docWith([paragraph(1, [{ text: 'Pay within ' }, { text: '45', ins: ['a'] }, { text: '30', del: ['a'] }, { text: ' business', ins: ['b'] }, { text: ' days.\n' }])]);
+    expect(readSuggestions(doc, undefined).map((s) => s.context)).toEqual(['Pay within [30→45] business days.', 'Pay within 45[→ business] days.']);
+  });
+
+  it('a style-only suggestion shows its words unchanged, and its summary says what changed', () => {
+    const doc = docWith([paragraph(1, [{ text: 'Pay ', style: ['f'] }, { text: 'within 30 days.\n' }])], { suggestions: [thread('f', 'Format: bold')] });
+    expect(readSuggestions(doc, undefined)).toMatchObject([{ id: 'f', summary: 'Format: bold', context: 'Pay within 30 days.' }]);
+  });
+
+  it('two identical summaries are told apart by their context', () => {
+    const doc = docWith([paragraph(1, [{ text: 'Pay within ' }, { text: '45', ins: ['a'] }, { text: '30', del: ['a'] }, { text: ' days, or ' }, { text: '45', ins: ['b'] }, { text: '30', del: ['b'] }, { text: ' days.\n' }])], {
+      suggestions: [thread('a', 'Replace: “30” with “45”'), thread('b', 'Replace: “30” with “45”')],
+    });
+    expect(new Set(readSuggestions(doc, undefined).map((s) => s.context)).size).toBe(2);
+  });
+
+  it('is in document order, across paragraphs and table cells', () => {
+    const cell = { content: [paragraph(10, [{ text: 'x', ins: ['in-table'] }, { text: '\n' }])] };
+    const doc = docWith([paragraph(1, [{ text: 'a', ins: ['first'] }, { text: '\n' }]), { table: { tableRows: [{ tableCells: [cell] }] } }, paragraph(20, [{ text: 'b', ins: ['last'] }, { text: '\n' }])]);
+    expect(readSuggestions(doc, undefined).map((s) => s.id)).toEqual(['first', 'in-table', 'last']);
+  });
+
+  it('a long paragraph is cut around the change', () => {
+    const long = `${'word '.repeat(40)}`;
+    const doc = docWith([paragraph(1, [{ text: long }, { text: 'X', ins: ['s'] }, { text: `${long}\n` }])]);
+    const [suggestion] = readSuggestions(doc, undefined);
+    expect(suggestion.context).toBe(`…${long.slice(-40)}[→X]${long.slice(0, 40)}…`);
+  });
+
+  it('a suggestion that adds a table row is listed with the text of the row', () => {
+    const row = { suggestedInsertionIds: ['row'], tableCells: [{ content: [paragraph(5, [{ text: 'Ann\n' }])] }, { content: [paragraph(9, [{ text: '1\n' }])] }] };
+    const doc = docWith([{ table: { tableRows: [row] } }]);
+    expect(readSuggestions(doc, undefined)).toMatchObject([{ id: 'row', context: 'Ann 1' }]);
+  });
+
+  it('a suggestion with no text to show has its summary for context', () => {
+    const doc = docWith([paragraph(1, [{ text: 'Hello\n' }])], { documentStyle: { suggestedDocumentStyleChanges: { 'doc-style': {} } }, suggestions: [thread('doc-style', 'Change page setup')] } as Partial<ReviewedDocument>);
+    expect(readSuggestions(doc, undefined)).toMatchObject([{ id: 'doc-style', context: 'Change page setup' }]);
+  });
+
+  it('a suggestion with no thread has no author', () => {
+    expect(readSuggestions(docWith([PAY]), undefined)).toMatchObject([{ id: 's1', summary: '', author: null, time: null }]);
+  });
+
+  it('reads the real fixture (2 weeks over 3 weeks)', () => {
+    const doc = JSON.parse(readFileSync(path.join(here, 'fixtures/replacement-suggestion.json'), 'utf8')) as ReviewedDocument;
+    expect(readSuggestions(doc, doc.tabs?.[0]?.tabProperties?.tabId ?? undefined).map((s) => s.context)).toEqual(['The timeline is [3 weeks→2 weeks].']);
   });
 });
 
-describe('formatSuggestionPreview', () => {
-  it('formats an insertion', () => {
-    expect(formatSuggestionPreview({ type: 'insertion', before: '', after: 'add' })).toBe('insert: "add"');
-  });
-
-  it('formats a deletion', () => {
-    expect(formatSuggestionPreview({ type: 'deletion', before: 'old', after: '' })).toBe('delete: "old"');
-  });
-
-  it('formats a replacement', () => {
-    expect(formatSuggestionPreview({ type: 'replacement', before: '3 weeks', after: '2 weeks' })).toBe('"3 weeks" → "2 weeks"');
-  });
-
-  it('formats a style-only change', () => {
-    expect(formatSuggestionPreview({ type: 'style', before: '', after: '' })).toBe('(style change)');
-  });
-
-  it('trims whitespace so previews match regardless of trailing spaces in the doc', () => {
-    expect(formatSuggestionPreview({ type: 'insertion', before: '', after: 'add ' })).toBe('insert: "add"');
-  });
-});
-
-describe('applySuggestions staleness check', () => {
-  const doc: docs_v1.Schema$Document = {
-    revisionId: 'rev1',
-    title: 'Test Doc',
-    body: {
-      content: [
-        { paragraph: { elements: [{ startIndex: 1, endIndex: 4, textRun: { content: 'add', suggestedInsertionIds: ['s1'] } }] } },
-      ],
-    },
-  };
-
-  function fakeClients(batchUpdate = vi.fn().mockResolvedValue({})): GoogleClients {
-    return {
-      account: 'test@example.com',
-      auth: {} as GoogleClients['auth'],
-      docs: {
-        documents: {
-          get: vi.fn().mockResolvedValue({ data: doc }),
-          batchUpdate,
+describe('suggestions in a tab, a header and a footer', () => {
+  const tabbed = {
+    title: 'Contract',
+    tabs: [
+      { tabProperties: { tabId: 't.1' }, documentTab: { body: { content: [paragraph(1, [{ text: 'one', ins: ['s1'] }, { text: '\n' }])] } } },
+      {
+        tabProperties: { tabId: 't.2' },
+        documentTab: {
+          documentStyle: { defaultHeaderId: 'h1' },
+          headers: { h1: { headerId: 'h1', content: [paragraph(0, [{ text: 'Acme', ins: ['s3'] }, { text: '\n' }])] } },
+          body: { content: [paragraph(1, [{ text: 'two', ins: ['s2'] }, { text: '\n' }])] },
         },
-      } as unknown as GoogleClients['docs'],
-      drive: {} as GoogleClients['drive'],
-    };
-  }
+      },
+    ],
+  } as ReviewedDocument;
 
-  it('refuses to apply when expectedChange does not match the live suggestion', async () => {
-    const batchUpdate = vi.fn().mockResolvedValue({});
-    const clients = fakeClients(batchUpdate);
-    const result = await applySuggestions(clients, 'doc1', 'Test Doc', [
-      { suggestionId: 's1', decision: 'reject', expectedChange: 'insert: "something else"' },
+  it('each tab lists its own', () => {
+    expect(readSuggestions(tabbed, 't.1').map((s) => s.id)).toEqual(['s1']);
+    expect(readSuggestions(tabbed, 't.2').map((s) => s.id)).toEqual(['s2']);
+  });
+
+  it('the body does not list the header’s, and the header lists only its own', () => {
+    expect(readSuggestions(tabbed, 't.2', undefined).map((s) => s.id)).not.toContain('s3');
+    expect(readSuggestions(tabbed, 't.2', 'h1').map((s) => [s.id, s.context])).toEqual([['s3', '[→Acme]']]);
+  });
+
+  it('counts those in the content being replaced', () => {
+    expect(countSuggestions(tabbed, 't.1')).toBe(1);
+    expect(countSuggestions(tabbed, 't.2')).toBe(1);
+    expect(countSuggestions(tabbed, 't.2', 'h1')).toBe(1);
+  });
+
+  it('a header the doc does not have is reported, not guessed', async () => {
+    const { clients } = clientsFor(REPLACEMENT);
+    const result = await listSuggestions(clients, 'd', undefined, { segment: 'footer' });
+    expect(result.suggestions).toEqual([]);
+    expect(result.message).toContain('no footer');
+  });
+});
+
+describe('apply_suggestions sends the native accept and reject', () => {
+  const context = 'Pay within [30→45] days of invoice.';
+
+  it('an accept is one acceptSuggestion and a reject one rejectSuggestion, in one batch pinned to the revision', async () => {
+    const doc = docWith([paragraph(1, [{ text: 'a', ins: ['a'] }, { text: 'b', ins: ['b'] }, { text: '\n' }])]);
+    const { clients, batchUpdate } = clientsFor(doc);
+    const result = await applySuggestions(clients, 'd', 'Contract', [
+      { suggestionId: 'a', decision: 'accept', expectContext: '[→a]b' },
+      { suggestionId: 'b', decision: 'reject', expectContext: 'a[→b]' },
+    ]);
+    expect(result).toEqual({ status: 'ok', resolved: 2 });
+    expect(batchUpdate).toHaveBeenCalledTimes(1);
+    expect(batchUpdate.mock.calls[0][0].requestBody.writeControl).toEqual({ requiredRevisionId: 'r1' });
+    expect(requestsSent(batchUpdate)).toEqual([{ acceptSuggestion: { suggestionId: 'a' } }, { rejectSuggestion: { suggestionId: 'b' } }]);
+  });
+
+  it('touching suggestions are resolved one at a time: no cluster rule, no reconstruction of the text', async () => {
+    const doc = docWith([paragraph(1, [{ text: 'Pay within ' }, { text: '45', ins: ['a'] }, { text: '30', del: ['a'] }, { text: ' business', ins: ['b'] }, { text: ' days.\n' }])]);
+    const { clients, batchUpdate } = clientsFor(doc);
+    const result = await applySuggestions(clients, 'd', 'Contract', [{ suggestionId: 'b', decision: 'accept', expectContext: 'Pay within 45[→ business] days.' }]);
+    expect(result.status).toBe('ok');
+    expect(requestsSent(batchUpdate)).toEqual([{ acceptSuggestion: { suggestionId: 'b' } }]);
+  });
+
+  it('a style-only suggestion resolves like any other', async () => {
+    const doc = docWith([paragraph(1, [{ text: 'Pay ', style: ['f'] }, { text: 'within.\n' }])]);
+    const { clients, batchUpdate } = clientsFor(doc);
+    expect((await applySuggestions(clients, 'd', 'Contract', [{ suggestionId: 'f', decision: 'accept', expectContext: 'Pay within.' }])).status).toBe('ok');
+    expect(requestsSent(batchUpdate)).toEqual([{ acceptSuggestion: { suggestionId: 'f' } }]);
+  });
+
+  it('refuses an expectTitle that is not the live document’s, and sends nothing', async () => {
+    const { clients, batchUpdate } = clientsFor(REPLACEMENT);
+    const result = await applySuggestions(clients, 'd', 'Other doc', [{ suggestionId: 's1', decision: 'accept', expectContext: context }]);
+    expect(result.status).toBe('wrong_doc');
+    expect(result.errors?.[0]).toContain('expectTitle');
+    expect(batchUpdate).not.toHaveBeenCalled();
+  });
+
+  it('refuses an expectContext that is not the live suggestion’s, and sends nothing', async () => {
+    const { clients, batchUpdate } = clientsFor(REPLACEMENT);
+    const result = await applySuggestions(clients, 'd', 'Contract', [{ suggestionId: 's1', decision: 'reject', expectContext: 'Pay within [30→60] days of invoice.' }]);
+    expect(result.status).toBe('error');
+    expect(result.errors?.[0]).toContain('expectContext mismatch');
+    expect(batchUpdate).not.toHaveBeenCalled();
+  });
+
+  it('one wrong context in several refuses all of them', async () => {
+    const doc = docWith([paragraph(1, [{ text: 'a', ins: ['a'] }, { text: 'b', ins: ['b'] }, { text: '\n' }])]);
+    const { clients, batchUpdate } = clientsFor(doc);
+    const result = await applySuggestions(clients, 'd', 'Contract', [
+      { suggestionId: 'a', decision: 'accept', expectContext: '[→a]b' },
+      { suggestionId: 'b', decision: 'accept', expectContext: 'WRONG' },
     ]);
     expect(result.status).toBe('error');
-    expect(result.errors?.[0]).toContain('expectedChange mismatch');
     expect(batchUpdate).not.toHaveBeenCalled();
   });
 
-  it('applies when expectedChange matches the live suggestion', async () => {
-    const batchUpdate = vi.fn().mockResolvedValue({});
-    const clients = fakeClients(batchUpdate);
-    const result = await applySuggestions(clients, 'doc1', 'Test Doc', [
-      { suggestionId: 's1', decision: 'reject', expectedChange: 'insert: "add"' },
+  it('refuses an id that is gone, and an id given twice', async () => {
+    const { clients, batchUpdate } = clientsFor(REPLACEMENT);
+    const gone = await applySuggestions(clients, 'd', 'Contract', [{ suggestionId: 'nope', decision: 'accept', expectContext: context }]);
+    expect(gone.errors?.[0]).toContain('not found');
+    const twice = await applySuggestions(clients, 'd', 'Contract', [
+      { suggestionId: 's1', decision: 'accept', expectContext: context },
+      { suggestionId: 's1', decision: 'reject', expectContext: context },
     ]);
-    expect(result.status).toBe('ok');
-    expect(batchUpdate).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('applySuggestions — documentTitle check (#9)', () => {
-  const doc: docs_v1.Schema$Document = {
-    revisionId: 'rev1',
-    title: 'Test Doc',
-    body: {
-      content: [
-        { paragraph: { elements: [{ startIndex: 1, endIndex: 4, textRun: { content: 'add', suggestedInsertionIds: ['s1'] } }] } },
-      ],
-    },
-  };
-
-  function fakeClients(batchUpdate = vi.fn().mockResolvedValue({})): GoogleClients {
-    return {
-      account: 'test@example.com',
-      auth: {} as GoogleClients['auth'],
-      docs: {
-        documents: {
-          get: vi.fn().mockResolvedValue({ data: doc }),
-          batchUpdate,
-        },
-      } as unknown as GoogleClients['docs'],
-      drive: {} as GoogleClients['drive'],
-    };
-  }
-
-  it('refuses when documentTitle does not match the live document', async () => {
-    const batchUpdate = vi.fn().mockResolvedValue({});
-    const result = await applySuggestions(fakeClients(batchUpdate), 'doc1', 'Wrong Doc', [
-      { suggestionId: 's1', decision: 'reject', expectedChange: 'insert: "add"' },
-    ]);
-    expect(result.status).toBe('wrong_doc');
-    expect(batchUpdate).not.toHaveBeenCalled();
-  });
-});
-
-// ---- Cluster-aware resolution (#7) ----
-
-const sug = (id: string, start: number, end: number, type: Suggestion['type'] = 'replacement'): Suggestion => ({
-  id,
-  type,
-  before: '',
-  after: '',
-  start,
-  end,
-  contiguous: true,
-});
-
-describe('clusterSuggestions', () => {
-  it('keeps well-separated suggestions in separate clusters', () => {
-    expect(clusterSuggestions([sug('a', 1, 4), sug('b', 10, 13)])).toHaveLength(2);
-  });
-
-  it('merges overlapping suggestions into one cluster', () => {
-    expect(clusterSuggestions([sug('a', 1, 6), sug('b', 4, 9)])).toEqual([{ ids: ['a', 'b'], start: 1, end: 9 }]);
-  });
-
-  it('merges adjacent (touching) suggestions', () => {
-    expect(clusterSuggestions([sug('a', 1, 4), sug('b', 4, 7)])).toEqual([{ ids: ['a', 'b'], start: 1, end: 7 }]);
-  });
-
-  it('groups a non-contiguous suggestion with the ones it spans across', () => {
-    // 'a' spans [1,10); 'b' sits inside at [4,6) — the interleave that corrupts.
-    const c = clusterSuggestions([sug('a', 1, 10), sug('b', 4, 6)]);
-    expect(c).toHaveLength(1);
-    expect([...c[0].ids].sort()).toEqual(['a', 'b']);
-  });
-
-  it('excludes style-only suggestions (no text span)', () => {
-    expect(clusterSuggestions([sug('s', Infinity, -Infinity, 'style')])).toEqual([]);
-  });
-});
-
-const run = (start: number, text: string, tag?: { ins?: string; del?: string }) => ({
-  start,
-  end: start + text.length,
-  text,
-  ...(tag?.ins ? { insertionId: tag.ins } : {}),
-  ...(tag?.del ? { deletionId: tag.del } : {}),
-});
-
-describe('resolveRegionText', () => {
-  const replacement = [run(1, '2 weeks', { ins: 's' }), run(8, '3 weeks', { del: 's' })];
-
-  it('accept keeps insertions, drops deletions', () => {
-    expect(resolveRegionText(replacement, 1, 15, new Map([['s', 'accept']]))).toBe('2 weeks');
-  });
-
-  it('reject keeps deletions, drops insertions', () => {
-    expect(resolveRegionText(replacement, 1, 15, new Map([['s', 'reject']]))).toBe('3 weeks');
-  });
-
-  it('handles interleaved suggestions with mixed decisions and plain text', () => {
-    const runs = [run(1, 'new', { ins: 'a' }), run(4, ' mid ', {}), run(9, 'old', { del: 'b' })];
-    expect(resolveRegionText(runs, 1, 12, new Map([['a', 'accept'], ['b', 'reject']]))).toBe('new mid old');
-    expect(resolveRegionText(runs, 1, 12, new Map([['a', 'reject'], ['b', 'accept']]))).toBe(' mid ');
-  });
-});
-
-function docFromRuns(runs: { content: string; start: number; ins?: string; del?: string }[]): docs_v1.Schema$Document {
-  return {
-    revisionId: 'rev1',
-    title: 'Test Doc',
-    body: {
-      content: [
-        {
-          paragraph: {
-            elements: runs.map((r) => ({
-              startIndex: r.start,
-              endIndex: r.start + r.content.length,
-              textRun: {
-                content: r.content,
-                ...(r.ins ? { suggestedInsertionIds: [r.ins] } : {}),
-                ...(r.del ? { suggestedDeletionIds: [r.del] } : {}),
-              },
-            })),
-          },
-        },
-      ],
-    },
-  };
-}
-
-function clientsFor(doc: docs_v1.Schema$Document, batchUpdate = vi.fn().mockResolvedValue({})): GoogleClients {
-  return {
-    account: 'test@example.com',
-    auth: {} as GoogleClients['auth'],
-    docs: {
-      documents: { get: vi.fn().mockResolvedValue({ data: doc }), batchUpdate },
-    } as unknown as GoogleClients['docs'],
-    drive: {} as GoogleClients['drive'],
-  };
-}
-
-// A cluster: adjacent insertion 's1' ("new") + deletion 's2' ("old").
-const clusterDoc = () =>
-  docFromRuns([
-    { content: 'new', start: 1, ins: 's1' },
-    { content: 'old', start: 4, del: 's2' },
-  ]);
-
-describe('applySuggestions — cluster safety (#7)', () => {
-  it('refuses to resolve a clustered suggestion and does NOT mutate', async () => {
-    const batchUpdate = vi.fn().mockResolvedValue({});
-    const res = await applySuggestions(clientsFor(clusterDoc(), batchUpdate), 'd', 'Test Doc', [
-      { suggestionId: 's1', decision: 'accept', expectedChange: 'insert: "new"' },
-    ]);
-    expect(res.status).toBe('incomplete');
-    expect(res.errors?.[0]).toContain('s2');
+    expect(twice.errors?.[0]).toContain('more than once');
     expect(batchUpdate).not.toHaveBeenCalled();
   });
 
-  it('resolves an isolated (replacement) suggestion atomically', async () => {
-    const doc = docFromRuns([
-      { content: '2 weeks', start: 1, ins: 's1' },
-      { content: '3 weeks', start: 8, del: 's1' },
-    ]);
-    const batchUpdate = vi.fn().mockResolvedValue({});
-    const res = await applySuggestions(clientsFor(doc, batchUpdate), 'd', 'Test Doc', [
-      { suggestionId: 's1', decision: 'accept', expectedChange: '"3 weeks" → "2 weeks"' },
-    ]);
-    expect(res.status).toBe('ok');
-    expect(batchUpdate).toHaveBeenCalledTimes(1);
-    const reqs = batchUpdate.mock.calls[0][0].requestBody.requests;
-    expect(reqs[0].deleteContentRange.range).toMatchObject({ startIndex: 1, endIndex: 15 });
-    expect(reqs[1].insertText).toMatchObject({ text: '2 weeks' });
-  });
-});
-
-describe('applySuggestions — atomic cluster resolution (#7)', () => {
-  it('resolves a full cluster in one batchUpdate with correct merged text', async () => {
-    const batchUpdate = vi.fn().mockResolvedValue({});
-    const res = await applySuggestions(clientsFor(clusterDoc(), batchUpdate), 'd', 'Test Doc', [
-      { suggestionId: 's1', decision: 'accept', expectedChange: 'insert: "new"' },
-      { suggestionId: 's2', decision: 'accept', expectedChange: 'delete: "old"' },
-    ]);
-    expect(res.status).toBe('ok');
-    expect(res.resolved).toBe(2);
-    expect(batchUpdate).toHaveBeenCalledTimes(1);
-    const reqs = batchUpdate.mock.calls[0][0].requestBody.requests;
-    expect(reqs[0].deleteContentRange.range).toMatchObject({ startIndex: 1, endIndex: 7 });
-    expect(reqs[1].insertText).toMatchObject({ text: 'new' }); // keep insertion, drop deletion
-  });
-
-  it('refuses a partially-resolved cluster (incomplete) and does NOT mutate', async () => {
-    const batchUpdate = vi.fn().mockResolvedValue({});
-    const res = await applySuggestions(clientsFor(clusterDoc(), batchUpdate), 'd', 'Test Doc', [
-      { suggestionId: 's1', decision: 'accept', expectedChange: 'insert: "new"' },
-    ]);
-    expect(res.status).toBe('incomplete');
-    expect(res.errors?.[0]).toMatch(/s2/);
-    expect(batchUpdate).not.toHaveBeenCalled();
-  });
-
-  it('refuses on any expectedChange mismatch and does NOT mutate', async () => {
-    const batchUpdate = vi.fn().mockResolvedValue({});
-    const res = await applySuggestions(clientsFor(clusterDoc(), batchUpdate), 'd', 'Test Doc', [
-      { suggestionId: 's1', decision: 'accept', expectedChange: 'insert: "WRONG"' },
-      { suggestionId: 's2', decision: 'accept', expectedChange: 'delete: "old"' },
-    ]);
-    expect(res.status).toBe('error');
-    expect(batchUpdate).not.toHaveBeenCalled();
-  });
-});
-
-describe('applySuggestions — style metadata on edit runs (#7 regression)', () => {
-  it('resolves an insertion run that also carries suggestedTextStyleChanges (not treated as style-only)', async () => {
+  it('finds the context in the header when told the segment, and refuses a segment the doc lacks', async () => {
     const doc = {
-      revisionId: 'r',
-      title: 'Test Doc',
-      body: {
-        content: [
-          {
-            paragraph: {
-              elements: [
-                { startIndex: 1, endIndex: 4, textRun: { content: 'new', suggestedInsertionIds: ['s1'], suggestedTextStyleChanges: { s1: {} } } },
-              ],
-            },
-          },
-        ],
-      },
-    } as unknown as docs_v1.Schema$Document;
-    const batchUpdate = vi.fn().mockResolvedValue({});
-    const res = await applySuggestions(clientsFor(doc, batchUpdate), 'd', 'Test Doc', [
-      { suggestionId: 's1', decision: 'accept', expectedChange: 'insert: "new"' },
-    ]);
-    expect(res.status).toBe('ok');
-    expect(batchUpdate).toHaveBeenCalledTimes(1);
-  });
-});
-
-// An overlapping insert-inside-delete: run 'bbb' is s2's insertion AND inside s1's
-// deletion. s1 spans [1,7), s2 spans [4,10) -> they cluster; accepting both is a conflict.
-const conflictDoc = () =>
-  docFromRuns([
-    { content: 'aaa', start: 1, del: 's1' },
-    { content: 'bbb', start: 4, ins: 's2', del: 's1' },
-    { content: 'ccc', start: 7, ins: 's2' },
-  ]);
-
-describe('detectConflicts (#11)', () => {
-  it('flags an accepted insertion that sits inside an accepted deletion', () => {
-    const runs = collectRuns(conflictDoc());
-    const c = detectConflicts(runs, 1, 10, new Map([['s1', 'accept'], ['s2', 'accept']]));
-    expect(c).toEqual([{ insertionId: 's2', deletionId: 's1', text: 'bbb' }]);
-  });
-
-  it('is not a conflict when the deletion is rejected', () => {
-    const runs = collectRuns(conflictDoc());
-    expect(detectConflicts(runs, 1, 10, new Map([['s1', 'reject'], ['s2', 'accept']]))).toEqual([]);
-  });
-
-  it('is not a conflict when the insertion is rejected', () => {
-    const runs = collectRuns(conflictDoc());
-    expect(detectConflicts(runs, 1, 10, new Map([['s1', 'accept'], ['s2', 'reject']]))).toEqual([]);
-  });
-});
-
-describe('applySuggestions — surfaces conflicts (#11)', () => {
-  it('resolves atomically but reports the auto-resolved conflict', async () => {
-    const batchUpdate = vi.fn().mockResolvedValue({});
-    const res = await applySuggestions(clientsFor(conflictDoc(), batchUpdate), 'd', 'Test Doc', [
-      { suggestionId: 's1', decision: 'accept' },
-      { suggestionId: 's2', decision: 'accept' },
-    ]);
-    expect(res.status).toBe('ok');
-    expect(batchUpdate).toHaveBeenCalledTimes(1);
-    expect(res.conflicts).toHaveLength(1);
-    expect(res.conflicts?.[0]).toMatchObject({ insertionId: 's2', deletionId: 's1', text: 'bbb' });
-    expect(res.conflicts?.[0].note).toContain('contradictory');
-  });
-
-  it('reports no conflicts for a clean (non-overlapping) cluster', async () => {
-    const res = await applySuggestions(clientsFor(clusterDoc()), 'd', 'Test Doc', [
-      { suggestionId: 's1', decision: 'accept' },
-      { suggestionId: 's2', decision: 'accept' },
-    ]);
-    expect(res.status).toBe('ok');
-    expect(res.conflicts).toBeUndefined();
-  });
-});
-
-// ---- #28: suggestions living in a header/footer ---------------------------
-//
-// The Docs API cannot author a suggestion, so a header suggestion can't be made
-// on a live doc for an end-to-end check. These pin the two halves that matter:
-// the read walks the header's content tree, and the write addresses that same
-// segment (indices are per-segment — a range without the segmentId would land
-// in the body at the same numeric offset).
-
-const HEADER_SEG = 'kix.hdr1';
-
-// A doc whose *header* carries the suggested runs; the body has plain text at
-// the very same indices, so anything that ignores segmentId hits the wrong tree.
-function docWithHeaderRuns(runs: { content: string; start: number; ins?: string; del?: string }[]): docs_v1.Schema$Document {
-  const elements = runs.map((r) => ({
-    startIndex: r.start,
-    endIndex: r.start + r.content.length,
-    textRun: {
-      content: r.content,
-      ...(r.ins ? { suggestedInsertionIds: [r.ins] } : {}),
-      ...(r.del ? { suggestedDeletionIds: [r.del] } : {}),
-    },
-  }));
-  return {
-    revisionId: 'rev1',
-    title: 'Test Doc',
-    documentStyle: { defaultHeaderId: HEADER_SEG },
-    headers: { [HEADER_SEG]: { headerId: HEADER_SEG, content: [{ paragraph: { elements } }] } },
-    body: { content: [{ paragraph: { elements: [{ startIndex: 1, endIndex: 20, textRun: { content: 'plain body text.\n' } }] } }] },
-  };
-}
-
-describe('suggestions in a header (#28)', () => {
-  const doc = () => docWithHeaderRuns([{ content: 'new', start: 1, ins: 's1' }]);
-
-  it('parseSuggestions finds nothing in the body but finds the header suggestion', () => {
-    expect(parseSuggestions(doc())).toEqual([]);
-    const found = parseSuggestions(doc(), undefined, HEADER_SEG);
-    expect(found.map((s) => s.id)).toEqual(['s1']);
-    expect(formatSuggestionPreview(found[0])).toBe('insert: "new"');
-  });
-
-  it('collectRuns reads the header tree, not the body', () => {
-    expect(collectRuns(doc(), undefined, HEADER_SEG).map((r) => r.text)).toEqual(['new']);
-    expect(collectRuns(doc()).map((r) => r.text)).toEqual(['plain body text.\n']);
-  });
-
-  it('applySuggestions addresses the header segment on every write range', async () => {
-    const batchUpdate = vi.fn().mockResolvedValue({});
-    const res = await applySuggestions(clientsFor(doc(), batchUpdate), 'd', 'Test Doc', [
-      { suggestionId: 's1', decision: 'accept', expectedChange: 'insert: "new"' },
-    ], undefined, { segment: 'header' });
-
-    expect(res.status).toBe('ok');
-    const reqs = batchUpdate.mock.calls[0][0].requestBody.requests;
-    expect(reqs[0].deleteContentRange.range.segmentId).toBe(HEADER_SEG);
-    expect(reqs[1].insertText.location.segmentId).toBe(HEADER_SEG);
-  });
-
-  it('refuses with no_segment when the target segment does not exist', async () => {
-    const batchUpdate = vi.fn().mockResolvedValue({});
-    const res = await applySuggestions(clientsFor(doc(), batchUpdate), 'd', 'Test Doc', [
-      { suggestionId: 's1', decision: 'accept', expectedChange: 'insert: "new"' },
-    ], undefined, { segment: 'footer' });
-
-    expect(res.status).toBe('no_segment');
-    expect(res.errors?.[0]).toContain('no footer');
-    expect(batchUpdate).not.toHaveBeenCalled();
+      title: 'Contract',
+      revisionId: 'r1',
+      documentStyle: { defaultHeaderId: 'h1' },
+      headers: { h1: { headerId: 'h1', content: [paragraph(0, [{ text: 'new', ins: ['h'] }, { text: '\n' }])] } },
+      body: { content: [paragraph(1, [{ text: 'body\n' }])] },
+    } as ReviewedDocument;
+    const { clients, batchUpdate } = clientsFor(doc);
+    const resolution = { suggestionId: 'h', decision: 'accept' as const, expectContext: '[→new]' };
+    expect((await applySuggestions(clients, 'd', 'Contract', [resolution], undefined, { segment: 'header' })).status).toBe('ok');
+    expect(requestsSent(batchUpdate)).toEqual([{ acceptSuggestion: { suggestionId: 'h' } }]);
+    expect((await applySuggestions(clients, 'd', 'Contract', [resolution], undefined, { segment: 'footer' })).status).toBe('no_segment');
+    expect((await applySuggestions(clients, 'd', 'Contract', [resolution])).status).toBe('error');
   });
 });
