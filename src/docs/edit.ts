@@ -228,8 +228,9 @@ function newParagraphRequests(
   return requests;
 }
 
-function targetsStyleBlock(oldString: string, block: string, docText: string): boolean {
+function targetsStyleBlock(oldString: string, block: string, docText: string, isEmpty: boolean): boolean {
   if (/<style/i.test(oldString)) return true;
+  if (isEmpty) return false;
   return block.includes(oldString) && locate(docText, oldString).positions.length === 0;
 }
 
@@ -548,10 +549,11 @@ async function applyEdit(clients: GoogleClients, documentId: string, oldString: 
   const projection = project(fetched.data, tabId, segmentId);
 
   const block = renderStyleBlock(styleRulesOf(fetched.data, tabId));
-  if (targetsStyleBlock(oldString, block, projection.text)) {
+  const isEmpty = isEmptyContent(fetched.data, tabId, segmentId);
+  if (targetsStyleBlock(oldString, block, projection.text, isEmpty)) {
     return editStyleBlock(clients, documentId, block, oldString, newString, tabId, revisionId);
   }
-  if (isEmptyContent(fetched.data, tabId, segmentId)) throw new Error(EMPTY_CONTENT_MESSAGE);
+  if (isEmpty) throw new Error(EMPTY_CONTENT_MESSAGE);
 
   if (quotesTable(oldString, newString)) {
     const insertBlocks: TableEditInput['insertBlocks'] = (side, table, markdown, revisionId) => {

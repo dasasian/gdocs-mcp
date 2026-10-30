@@ -287,6 +287,37 @@ describe('an empty doc has no anchor (#60 rule 7)', () => {
   });
 });
 
+describe('a one-letter anchor on an empty doc gets the write_doc refusal (#65)', () => {
+  const EMPTY_PARAGRAPH = [{ startIndex: 1, endIndex: 2, paragraph: { elements: [{ textRun: { content: '\n' } }] } }];
+  const NAMED_STYLES = [{ namedStyleType: 'NORMAL_TEXT', paragraphStyle: { alignment: 'START' }, textStyle: { bold: false, fontSize: { magnitude: 11, unit: 'PT' } } }];
+
+  it('in the body', async () => {
+    const { clients, batchUpdate } = clientsFor({ ...docOf([{ text: '' }]), namedStyles: { styles: NAMED_STYLES } });
+    await expect(editDoc(clients, 'd', 'a', 'b')).rejects.toThrow(/write_doc/);
+    expect(batchUpdate).not.toHaveBeenCalled();
+  });
+
+  it('in a tab', async () => {
+    const doc: docs_v1.Schema$Document = {
+      tabs: [{ tabProperties: { tabId: 't1' }, documentTab: { body: { content: EMPTY_PARAGRAPH }, namedStyles: { styles: NAMED_STYLES } } }],
+    };
+    const { clients, batchUpdate } = clientsFor(doc);
+    await expect(editDoc(clients, 'd', 'a', 'b', { tabId: 't1' })).rejects.toThrow(/write_doc/);
+    expect(batchUpdate).not.toHaveBeenCalled();
+  });
+
+  it('in a header', async () => {
+    const doc: docs_v1.Schema$Document = {
+      body: { content: bodyOf([{ text: 'Body' }]) },
+      namedStyles: { styles: NAMED_STYLES },
+      documentStyle: { defaultHeaderId: 'h1' },
+      headers: { h1: { headerId: 'h1', content: EMPTY_PARAGRAPH } },
+    };
+    const { clients } = clientsFor(doc);
+    await expect(editDoc(clients, 'd', 'a', 'b', { segment: 'header' })).rejects.toThrow(/write_doc/);
+  });
+});
+
 describe('the lines shared at both ends are kept (#60)', () => {
   const scopeDoc = (): Piece[] => [{ text: 'Scope', namedStyleType: 'HEADING_2' }, { text: 'This project covers the work.' }, { text: 'Tail' }];
 

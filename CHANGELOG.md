@@ -32,6 +32,10 @@ A suggested `edit_doc` of a table works for rows and columns: a suggested row or
 
 Also: `list_comments`, the comment count in `write_doc`'s loss summary and the check on a moved table row all read the comments of one `documents.get`, so none of them calls Drive, and none pages. `write_doc` counts a tab's comments by their ranges, and a comment in a header or footer by its segment; a comment with no range is counted for the whole doc, and the summary says so on a multi-tab doc. `edit_doc` asks before moving a table row or column when a comment's range falls in it, in a header or footer too (a header table used to ask nothing); a comment with no range is matched by its quote, as before.
 
+### Fixed
+
+- `edit_doc` with a short `old_string` on an empty doc, tab, header or footer gives the "use write_doc" refusal. It used to match the word in the `<style>` block and fail with a CSS error (#65).
+
 ## [0.7.0] — 2026-10-29
 
 ### Breaking
