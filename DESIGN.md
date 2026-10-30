@@ -708,7 +708,12 @@ edit_doc("/Work/Contract", "within 30 days", "within 45 days", suggest: true)
   them: a new tab, deleting a header or footer, a named range, a table column
   width (`UpdateTableColumnProperties`), and some document-style fields. An
   edit is never split into a suggested part and a direct part. A suggested
-  edit in a header or footer works.
+  edit in a header or footer works; a header or footer that does not exist
+  yet is refused, because `createHeader` can be suggested but the new header
+  has no id to write into until it is accepted (checked live). The check reads
+  the requests where they name the thing, and the markdown or the table's
+  layout where only that does (a column width), so the edit is refused before
+  its first request is sent.
 - `set_page_setup` has no `suggest`: page geometry is a document-style change.
 
 **Reading (`list_suggestions`).** The doc is read with
@@ -730,6 +735,9 @@ identical summaries apart (a contract with two 30s), so it is the one
 `context` shows the styled words unchanged and `summary` says what changed
 ("Format: bold"). In `read_doc(mode: "tracked")` the same suggestions render
 inline as `<ins>/<del>` + ids, so reviewing them is just reading the doc.
+A suggestion that sits on no text (a change to a named style) is found in no
+paragraph, so it is listed last, from its `SuggestionThread`, with its summary
+as its context.
 
 **Acting (`apply_suggestions`).** Each resolution is one `acceptSuggestion` or
 `rejectSuggestion`, all in one `batchUpdate`, after `expectTitle` and every

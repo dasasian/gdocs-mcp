@@ -52,12 +52,18 @@ function rootsFor(doc: ReviewedDocument, tabId: string | undefined, segmentId: s
   return [contentOf(doc, tabId), container?.documentStyle, container?.namedStyles];
 }
 
+function rootsOfWholeDoc(doc: ReviewedDocument): unknown[] {
+  if (doc.tabs?.length) return [doc.tabs];
+  return [doc.body, doc.headers, doc.footers, doc.documentStyle, doc.namedStyles];
+}
+
 /** How many suggestions touch the content of a tab's body, or of its header or footer (`segmentId`). */
 export function countSuggestions(doc: ReviewedDocument, tabId: string | undefined, segmentId?: string): number {
   return suggestionHolders([contentOf(doc, tabId, segmentId)]).size;
 }
 
 const clipped = (text: string, reach: number): string => (text.length > reach ? `${text.slice(0, reach)}…` : text);
+const lineBreaksShown = (text: string): string => text.replace(/\n/g, '⏎');
 
 function textUnder(node: unknown): string {
   if (node === null || typeof node !== 'object') return '';
@@ -93,7 +99,7 @@ function paragraphContext(paragraph: docs_v1.Schema$Paragraph, id: string): stri
     }
   }
   if (!atChange) return clipped(withoutParagraphMark(before), CONTEXT_REACH * 2);
-  const change = `[${clipped(deleted, CHANGE_REACH)}→${clipped(inserted, CHANGE_REACH)}]`;
+  const change = `[${lineBreaksShown(clipped(deleted, CHANGE_REACH))}→${lineBreaksShown(clipped(inserted, CHANGE_REACH))}]`;
   const lead = before.length > CONTEXT_REACH ? `…${before.slice(-CONTEXT_REACH)}` : before;
   const trail = withoutParagraphMark(after);
   return `${lead}${change}${trail.length > CONTEXT_REACH ? `${trail.slice(0, CONTEXT_REACH)}…` : trail}`;
@@ -115,18 +121,23 @@ export interface ListedSuggestion {
 
 /**
  * The pending suggestions on a tab's body (with its document and named styles), or on one header or footer, in document order.
+ * Docs does not mark a suggestion to a named style anywhere in the content; those are listed after the others, from the doc's SuggestionThreads.
  * `summary` is Docs' own words for the change; `context` is the change in its sentence, `[deleted→inserted]`, and is what
  * `apply_suggestions` checks. `doc` must come from `getDocForReview`.
  */
 export function readSuggestions(doc: ReviewedDocument, tabId: string | undefined, segmentId?: string): ListedSuggestion[] {
   const threads = new Map((doc.suggestions ?? []).map((thread) => [thread.suggestionId, thread]));
-  return [...suggestionHolders(rootsFor(doc, tabId, segmentId))].map(([id, holder]) => {
+  const here = suggestionHolders(rootsFor(doc, tabId, segmentId));
+  const placedAnywhere = suggestionHolders(rootsOfWholeDoc(doc));
+  const unplaced = segmentId ? [] : [...threads.values()].filter((thread) => thread.status === 'OPEN' && !placedAnywhere.has(thread.suggestionId)).map((thread) => thread.suggestionId);
+  return [...here.keys(), ...unplaced].map((id) => {
     const thread = threads.get(id);
     const summary = thread?.summaryText ?? '';
+    const holder = here.get(id);
     return {
       id,
       summary,
-      context: contextFor(holder, id) ?? summary,
+      context: (holder && contextFor(holder, id)) || summary,
       author: thread?.headPost?.author?.displayName ?? null,
       time: thread?.headPost?.createTime ?? null,
     };

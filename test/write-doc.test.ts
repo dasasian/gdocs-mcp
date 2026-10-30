@@ -113,7 +113,8 @@ function worldClients(world: World): GoogleClients {
   const batchUpdate = vi.fn().mockImplementation(async (p: { requestBody: { requests: Record<string, unknown>[]; writeControl?: unknown } }) => {
     world.requests.push(p.requestBody.requests);
     world.writeControls.push(p.requestBody.writeControl);
-    return { data: { replies: p.requestBody.requests.map((r) => ('addDocumentTab' in r ? { addDocumentTab: { tabProperties: { tabId: 't.new' } } } : {})) } };
+    const suggested = (p.requestBody.writeControl as { writeMode?: string } | undefined)?.writeMode === 'SUGGEST';
+    return { data: { replies: p.requestBody.requests.map((r) => ('addDocumentTab' in r ? { addDocumentTab: { tabProperties: { tabId: 't.new' } } } : {})), ...(suggested ? { suggestionResponses: [{ createdSuggestionIds: ['suggest.w1'] }] } : {}) } };
   });
   return {
     auth: {} as GoogleClients['auth'],
@@ -244,6 +245,44 @@ describe('write_doc replaces only when the loss summary is passed back (#55)', (
     expect((error as Error).message).toContain('/Work/Contract/Summary');
     expect((error as Error).message).toContain('/Work/Contract/Part 2/Ch.4');
     expect(world.requests).toEqual([]);
+  });
+});
+
+describe('a suggested write_doc replace (#64)', () => {
+  it('does not ask for confirmLoss, and sends every batch as a suggestion pinned to the revision', async () => {
+    const world = newWorld();
+    const r = await writeDoc(worldClients(world), '/Work/Memo', 'new text', { suggest: true });
+    expect(r).toMatchObject({ status: 'replaced', documentId: 'memo', suggestions: ['suggest.w1'] });
+    expect(world.requests.length).toBeGreaterThan(0);
+    expect(world.writeControls[0]).toEqual({ requiredRevisionId: 'rev-1', writeMode: 'SUGGEST' });
+    expect(world.writeControls.every((control) => (control as { writeMode: string }).writeMode === 'SUGGEST')).toBe(true);
+  });
+
+  it('is refused when the path names nothing, because a new doc or tab cannot be a suggestion, and creates nothing', async () => {
+    const world = newWorld();
+    await expect(writeDoc(worldClients(world), '/Work/Brief', 'hello', { suggest: true })).rejects.toThrow(/a new doc or tab cannot be a suggestion/);
+    await expect(writeDoc(worldClients(world), '/Work/Contract/Notes', 'hello', { suggest: true })).rejects.toThrow(/a new doc or tab cannot be a suggestion/);
+    expect(world.created).toEqual([]);
+    expect(world.requests).toEqual([]);
+  });
+
+  it('is refused for a header the doc does not have yet, with nothing sent', async () => {
+    const world = newWorld();
+    await expect(writeDoc(worldClients(world), '/Work/Memo', 'Acme', { suggest: true, segment: 'header' })).rejects.toThrow(/has no header yet/);
+    expect(world.requests).toEqual([]);
+  });
+
+  it('refuses a table column width before anything is sent', async () => {
+    const world = newWorld();
+    const table = '<table>\n<col style="width:120pt"><col>\n<tr><td>a</td><td>b</td></tr>\n</table>';
+    await expect(writeDoc(worldClients(world), '/Work/Memo', table, { suggest: true })).rejects.toThrow(/a table column width/);
+    expect(world.requests).toEqual([]);
+  });
+
+  it('a replace that is not a suggestion still asks, and says nothing of suggestions', async () => {
+    const world = newWorld();
+    const r = await writeDoc(worldClients(world), '/Work/Memo', 'new text', { suggest: false });
+    expect(r.status).toBe('confirm_required');
   });
 });
 

@@ -4,6 +4,7 @@ import { contentOf, resolveTabId, flattenTabs, isEmptyContent, resolveSegmentId,
 import { segmentForWrite } from './segments.js';
 import { renderMarkdownInto } from './render.js';
 import { getDocForReview } from './comments.js';
+import { noSuggestedSegment, refuseColumnWidthsIn, suggestingClients, SuggestRefusal } from './suggest.js';
 import { readFile } from 'node:fs/promises';
 import nodePath from 'node:path';
 import { parseBlocks } from './write.js';
@@ -61,7 +62,7 @@ export async function updateTab(
 
 export type WriteDocResult =
   | { status: 'created'; kind: 'doc' | 'tab'; path: string; documentId: string; tabId?: string; url: string; warnings?: string[]; images?: { src: string; objectId: string }[] }
-  | { status: 'replaced'; path: string; documentId: string; tabId: string; createdSegment?: 'header' | 'footer'; warnings?: string[]; images?: { src: string; objectId: string }[] }
+  | { status: 'replaced'; path: string; documentId: string; tabId: string; createdSegment?: 'header' | 'footer'; warnings?: string[]; images?: { src: string; objectId: string }[]; suggestions?: string[] }
   | { status: 'confirm_required'; message: string; lost: Loss; details: string[]; confirmLoss: string }
   | { status: 'not_created'; message: string; suggestedPath?: string }
   | { status: 'not_written'; message: string };
@@ -100,7 +101,7 @@ async function replaceTab(
   clients: GoogleClients,
   tab: TabRef,
   content: string,
-  opts: { confirmLoss?: string; baseDir?: string; segment?: 'body' | 'header' | 'footer'; page?: SegmentPage },
+  opts: { confirmLoss?: string; baseDir?: string; segment?: 'body' | 'header' | 'footer'; page?: SegmentPage; suggest?: boolean },
   asNamed: string,
 ): Promise<WriteDocResult> {
   let doc = await getDocForReview(clients, tab.documentId);
@@ -111,6 +112,7 @@ async function replaceTab(
   if (segment !== 'body') {
     const existing = resolveSegmentId(doc, segment, opts.page, tabId);
     if (!existing) {
+      if (opts.suggest) throw noSuggestedSegment(segment);
       const made = await segmentForWrite(clients, tab.documentId, doc, { segment, page: opts.page, tabId });
       if ('refusal' in made) return { status: 'not_written', message: made.refusal };
       doc = await getDocForReview(clients, tab.documentId);
@@ -121,7 +123,7 @@ async function replaceTab(
     }
   }
   const holdsNothing = isEmptyContent(doc, tabId, segmentId);
-  if (!holdsNothing) {
+  if (!holdsNothing && !opts.suggest) {
     const loss = measureLoss(doc, tabId, segmentId);
     const confirmLoss = confirmLossToken(loss, doc.revisionId);
     if (opts.confirmLoss !== confirmLoss) {
@@ -207,6 +209,16 @@ function isTopOfMyDrive(parent: Resolved): boolean {
   return parent.isFolder && parent.path === '/';
 }
 
+export interface WriteOptions {
+  confirmLoss?: string;
+  baseDir?: string;
+  defaultFolder?: string;
+  rootCreates?: Set<string>;
+  segment?: 'body' | 'header' | 'footer';
+  page?: SegmentPage;
+  suggest?: boolean;
+}
+
 /**
  * Write like the local Write tool: a path that names nothing is created (a doc in
  * a folder, a tab in a doc, a child tab under a tab) and never asks; a path that
@@ -217,17 +229,24 @@ function isTopOfMyDrive(parent: Resolved): boolean {
  * once too; `rootCreates` remembers what was refused, so the same call repeated
  * (the caller owns the set, for the life of a session) goes through. Throws for a path that is ambiguous, a folder, or a multi-tab doc
  * with no tab step.
+ *
+ * With `suggest` the replace is sent as suggestions and never asks: nothing is lost until a person accepts. A path that
+ * names nothing, a table column width, and anything else Docs cannot suggest are refused before anything is sent.
  */
-export async function writeDoc(
-  clients: GoogleClients,
-  path: string,
-  content: string,
-  opts: { confirmLoss?: string; baseDir?: string; defaultFolder?: string; rootCreates?: Set<string>; segment?: 'body' | 'header' | 'footer'; page?: SegmentPage } = {},
-): Promise<WriteDocResult> {
+export async function writeDoc(clients: GoogleClients, path: string, content: string, opts: WriteOptions = {}): Promise<WriteDocResult> {
+  if (!opts.suggest) return applyWrite(clients, path, content, opts);
+  refuseColumnWidthsIn(content);
+  const made: string[] = [];
+  const result = await applyWrite(suggestingClients(clients, made), path, content, opts);
+  return result.status === 'replaced' ? { ...result, suggestions: [...new Set(made)] } : result;
+}
+
+async function applyWrite(clients: GoogleClients, path: string, content: string, opts: WriteOptions): Promise<WriteDocResult> {
   parseBlocks(content);
   const rootCreates = opts.rootCreates ?? new Set<string>();
   const resolution = await resolveEntry(clients, path);
   if (resolution.ok) return replaceTab(clients, await tabOfEntry(clients, resolution.entry, path), content, opts, path);
+  if (opts.suggest && resolution.status === 'not_found') throw new SuggestRefusal(`Nothing was changed: "${path}" names nothing yet, and a new doc or tab cannot be a suggestion. Create it with write_doc, without suggest, then suggest changes to it.`);
   if (resolution.status === 'not_found' && resolution.missing) {
     if (opts.segment && opts.segment !== 'body') throw new Error(`segment "${opts.segment}" needs a doc that exists: "${path}" names nothing yet. Write the body first.`);
     const { parent, name } = resolution.missing;

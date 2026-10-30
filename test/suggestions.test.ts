@@ -116,6 +116,29 @@ describe('list_suggestions reads the SuggestionThreads of the doc', () => {
     expect(readSuggestions(doc, undefined)).toMatchObject([{ id: 'doc-style', context: 'Change page setup' }]);
   });
 
+  it('a suggestion found nowhere in the content, such as a named style, is listed last from its thread', () => {
+    const doc = docWith([paragraph(1, [{ text: 'a', ins: ['s'] }, { text: '\n' }])], { suggestions: [thread('named-style', 'Format normal text: style'), thread('s', 'Add text')] });
+    expect(readSuggestions(doc, undefined).map((s) => [s.id, s.context])).toEqual([['s', '[→a]'], ['named-style', 'Format normal text: style']]);
+  });
+
+  it('a thread that was accepted or rejected is not listed, though Docs keeps it', () => {
+    const doc = docWith([paragraph(1, [{ text: 'a\n' }])], { suggestions: [{ ...thread('gone', 'Add text'), status: 'REJECTED' }, { ...thread('done', 'Add text'), status: 'ACCEPTED' }] });
+    expect(readSuggestions(doc, undefined)).toEqual([]);
+  });
+
+  it('a suggestion placed in another tab is not listed as one found nowhere', () => {
+    const tabbed = {
+      suggestions: [thread('s1', 'Add text')],
+      tabs: [{ tabProperties: { tabId: 't.1' }, documentTab: { body: { content: [paragraph(1, [{ text: 'x', ins: ['s1'] }, { text: '\n' }])] } } }, { tabProperties: { tabId: 't.2' }, documentTab: { body: { content: [paragraph(1, [{ text: 'y\n' }])] } } }],
+    } as ReviewedDocument;
+    expect(readSuggestions(tabbed, 't.2')).toEqual([]);
+  });
+
+  it('shows a line break inside a change as ⏎', () => {
+    const doc = docWith([paragraph(1, [{ text: 'End.' }, { text: '\n', ins: ['p'] }, { text: '\n' }])]);
+    expect(readSuggestions(doc, undefined)[0].context).toBe('End.[→⏎]');
+  });
+
   it('a suggestion with no thread has no author', () => {
     expect(readSuggestions(docWith([PAY]), undefined)).toMatchObject([{ id: 's1', summary: '', author: null, time: null }]);
   });

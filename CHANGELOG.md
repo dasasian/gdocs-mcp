@@ -24,6 +24,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 | `apply_suggestions(path, documentTitle, resolutions[{suggestionId, decision, expectedChange}])` | `apply_suggestions(path, expectTitle, resolutions[{suggestionId, decision, expectContext}])`. A guard is `expect` plus the name of the field it echoes |
 | a suggestion in a cluster had to be resolved with the rest of its cluster; a style-only suggestion was refused | any suggestion can be resolved alone, style-only ones included |
 
+> **`edit_doc` and `write_doc` take `suggest` (#64).** `suggest: true` sends the same requests with `writeControl.writeMode: "SUGGEST"`, so the edit is a suggestion for a person to accept or reject, and the result lists the `suggestions` ids it made. It defaults to false. `edit_doc` no longer adds a note that the edit is direct, because the Docs API can now create suggestions.
+
+A suggested replace by `write_doc` does not ask for `confirmLoss`: nothing is lost until a person accepts, and rejecting a suggested replace of a whole doc brings back its text, image, table and comments (checked live). An edit that needs a request Docs cannot suggest is refused before anything is sent, naming it: a table column width (`updateTableColumnProperties`), a new tab or doc, renaming or moving a tab, deleting a header or footer, a named range. A suggested write to a header or footer the doc does not have yet is refused too. An edit is never split into a suggested part and a direct part. `set_page_setup` has no `suggest`.
+
 Also: `list_comments`, the comment count in `write_doc`'s loss summary and the check on a moved table row all read the comments of one `documents.get`, so none of them calls Drive, and none pages. `write_doc` counts a tab's comments by their ranges, and a comment in a header or footer by its segment; a comment with no range is counted for the whole doc, and the summary says so on a multi-tab doc. `edit_doc` asks before moving a table row or column when a comment's range falls in it, in a header or footer too (a header table used to ask nothing); a comment with no range is matched by its quote, as before.
 
 ## [0.7.0] — 2026-10-29

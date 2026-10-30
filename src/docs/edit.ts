@@ -14,10 +14,13 @@ import { parsePageBreakLine } from './page-break.js';
 import { editTableMarkup, mentionsTableMarkup, type TableEditInput } from './table-edit.js';
 import { contextAround } from './context.js';
 import { REVIEW_READ } from './comments.js';
+import { refuseColumnWidthsIn, suggestingClients } from './suggest.js';
 
 export interface EditResult {
   status: 'ok' | 'not_found' | 'ambiguous' | 'no_segment' | 'confirm_required';
   replaced?: number;
+  /** with `suggest`, the ids of the suggestions the edit made. Docs folds a change into a touching suggestion of the same person, so there can be fewer than edits sent, and an id can be one that already existed. */
+  suggestions?: string[];
   warnings?: string[];
   images?: { src: string; objectId: string }[];
   matches?: { context: string }[];
@@ -514,13 +517,28 @@ const quotesTable = (oldString: string, newString: string): boolean =>
 
 const EMPTY_CONTENT_MESSAGE = 'There is nothing here to anchor an edit: the doc, tab or header/footer is empty. Use write_doc to write it.';
 
-export async function editDoc(
-  clients: GoogleClients,
-  documentId: string,
-  oldString: string,
-  newString: string,
-  opts: { replaceAll?: boolean; tabId?: string; segment?: SegmentKind; page?: SegmentPage; baseDir?: string; confirmLoss?: string } = {},
-): Promise<EditResult> {
+interface EditOptions {
+  replaceAll?: boolean;
+  tabId?: string;
+  segment?: SegmentKind;
+  page?: SegmentPage;
+  baseDir?: string;
+  confirmLoss?: string;
+  suggest?: boolean;
+}
+
+/**
+ * Replaces `oldString` with `newString`. With `suggest` the same requests are sent as suggestions: a request Docs cannot
+ * suggest refuses the whole edit before anything is sent, and the result lists the suggestion ids made.
+ */
+export async function editDoc(clients: GoogleClients, documentId: string, oldString: string, newString: string, opts: EditOptions = {}): Promise<EditResult> {
+  if (!opts.suggest) return applyEdit(clients, documentId, oldString, newString, opts);
+  const made: string[] = [];
+  const result = await applyEdit(suggestingClients(clients, made), documentId, oldString, newString, opts);
+  return result.status === 'ok' ? { ...result, suggestions: [...new Set(made)] } : result;
+}
+
+async function applyEdit(clients: GoogleClients, documentId: string, oldString: string, newString: string, opts: EditOptions): Promise<EditResult> {
   const fetched = await clients.docs.documents.get({ documentId, ...REVIEW_READ });
   const revisionId = fetched.data.revisionId ?? undefined;
   const tabId = resolveTabId(fetched.data, opts.tabId);
@@ -540,7 +558,7 @@ export async function editDoc(
       const inside = (table.startIndex ?? 0) + 1;
       return applyBlockEdit({ clients, documentId, doc: fetched.data, markdown, tabId, segmentId, baseDir: opts.baseDir }, { startIndex: inside, endIndex: inside + 1 }, side, revisionId);
     };
-    return editTableMarkup(clients, documentId, fetched.data, { oldString, newString, replaceAll: opts.replaceAll, tabId, segmentId, baseDir: opts.baseDir, confirmLoss: opts.confirmLoss, insertBlocks });
+    return editTableMarkup(clients, documentId, fetched.data, { oldString, newString, replaceAll: opts.replaceAll, tabId, segmentId, baseDir: opts.baseDir, confirmLoss: opts.confirmLoss, suggest: opts.suggest, insertBlocks });
   }
   if (mentionsTableMarkup(newString) && !holdsBlockMarkdown(newString)) {
     throw new StyleSyntaxError(['new_string holds table tags, but old_string does not quote a table. Quote the table markup from read_doc in old_string, or write a whole <table> block.']);
@@ -578,6 +596,7 @@ export async function editDoc(
   const asBlocks = !joinsAnchorParagraphs && (insertsOnly ? addsBlockText(written) : holdsBlockMarkdown(written));
   if (asBlocks) {
     parseBlocks(written);
+    if (opts.suggest) refuseColumnWidthsIn(written);
     const context: BlockEditContext = { clients, documentId, doc: fetched.data, markdown: written, tabId, segmentId, baseDir: opts.baseDir };
     const warnings: string[] = [];
     const images: { src: string; objectId: string }[] = [];

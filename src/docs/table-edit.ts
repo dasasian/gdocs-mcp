@@ -10,6 +10,7 @@ import { placeCells, effectiveGrid, type LayoutCell, type Placement, type TableL
 import { lookOf, lookRequests, structureRequests } from './table-write.js';
 import { compareTables, plainTextOf, type MovedLine, type TableComparison } from './table-compare.js';
 import { refusal } from './table-pairing.js';
+import { refuseColumnWidthChange } from './suggest.js';
 import { parseInline, segmentTextStyle } from './inline.js';
 import { paragraphCssChange, paragraphStyleUpdate } from './css.js';
 
@@ -29,6 +30,8 @@ export interface TableEditInput {
   baseDir?: string;
   /** the string from an earlier refusal of this same edit, to go ahead with a move that loses comments. */
   confirmLoss?: string;
+  /** the edit is sent as suggestions, so one Docs cannot suggest is refused before anything is sent. */
+  suggest?: boolean;
   /** puts markdown blocks before or after a table, as an insertion next to it, in Normal text. */
   insertBlocks: (side: BlockSide, table: docs_v1.Schema$StructuralElement, markdown: string, revisionId: string | undefined) => Promise<unknown>;
 }
@@ -330,6 +333,9 @@ export async function editTableMarkup(clients: GoogleClients, documentId: string
   const edits = matches.map((match) => prepareEdit(doc, match, input)).sort((a, b) => (b.match.found.element.startIndex ?? 0) - (a.match.found.element.startIndex ?? 0));
   if (edits.length > 1 && edits.some(({ around }) => around.before || around.after)) {
     throw refusal('replace_all cannot add blocks next to a table: it matches more than one table. Quote one table with enough context to be unique.');
+  }
+  if (input.suggest) {
+    for (const { before, after, comparison } of edits) refuseColumnWidthChange(before, after, comparison.operations.some(({ kind }) => kind === 'insertColumn' || kind === 'deleteColumn'));
   }
   const refused = movedCommentsRefusal(doc, edits.map(({ match, comparison }) => ({ table: match.found.table, moved: comparison.moved })), input);
   if (refused) return refused;
