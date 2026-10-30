@@ -318,6 +318,22 @@ describe('a one-letter anchor on an empty doc gets the write_doc refusal (#65)',
   });
 });
 
+describe('a comment-only user who edits without suggest is told to suggest (#65)', () => {
+  const GOOGLES_REFUSAL = new Error('Forbidden requests[0].insertText: Write access is required, comment-only access is not sufficient.');
+
+  it('says to pass suggest: true instead of showing the raw 403', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: 'Pay within 30 days.' }]));
+    batchUpdate.mockRejectedValue(GOOGLES_REFUSAL);
+    await expect(editDoc(clients, 'd', '30', '45')).rejects.toThrow(/you can only suggest on it: pass suggest: true/);
+  });
+
+  it('another error from Google passes through unchanged', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: 'Pay within 30 days.' }]));
+    batchUpdate.mockRejectedValue(new Error('Quota exceeded'));
+    await expect(editDoc(clients, 'd', '30', '45')).rejects.toThrow(/Quota exceeded/);
+  });
+});
+
 describe('replace_all with block content is one batch, or nothing (#65)', () => {
   const threeNotes = (): Piece[] => [{ text: 'TODO one' }, { text: 'middle' }, { text: 'TODO two' }, { text: 'middle' }, { text: 'TODO three' }];
 

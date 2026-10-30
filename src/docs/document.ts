@@ -4,6 +4,7 @@ import { contentOf, resolveTabId, flattenTabs, isEmptyContent, resolveSegmentId,
 import { segmentForWrite } from './segments.js';
 import { renderMarkdownInto } from './render.js';
 import { getDocForReview } from './comments.js';
+import { explainingCommentOnlyAccess, MUST_SUGGEST_MESSAGE } from './access.js';
 import { noSuggestedSegment, refuseColumnWidthsIn, suggestingClients, SuggestRefusal } from './suggest.js';
 import { readFile } from 'node:fs/promises';
 import nodePath from 'node:path';
@@ -234,7 +235,7 @@ export interface WriteOptions {
  * names nothing, a table column width, and anything else Docs cannot suggest are refused before anything is sent.
  */
 export async function writeDoc(clients: GoogleClients, path: string, content: string, opts: WriteOptions = {}): Promise<WriteDocResult> {
-  if (!opts.suggest) return applyWrite(clients, path, content, opts);
+  if (!opts.suggest) return explainingCommentOnlyAccess(MUST_SUGGEST_MESSAGE, () => applyWrite(clients, path, content, opts));
   refuseColumnWidthsIn(content);
   const made: string[] = [];
   const result = await applyWrite(suggestingClients(clients, made), path, content, opts);

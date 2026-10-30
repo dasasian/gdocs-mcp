@@ -3,6 +3,7 @@ import type { GoogleClients } from '../google/clients.js';
 import { contentOf, resolveTabId, tabContainer, writeControlFor, type SegmentKind, type SegmentPage } from './structure.js';
 import { resolveSegmentTarget } from './segments.js';
 import { asRequest, getDocForReview, type ReviewedDocument } from './comments.js';
+import { explainingCommentOnlyAccess, CANNOT_RESOLVE_MESSAGE } from './access.js';
 
 const SUGGESTED_FIELD = /^suggested[A-Z]/;
 const CONTEXT_REACH = 40;
@@ -205,6 +206,6 @@ export async function applySuggestions(
   ];
   if (errors.length) return { status: 'error', errors };
   const requests = resolutions.map(({ suggestionId, decision }) => asRequest(decision === 'accept' ? { acceptSuggestion: { suggestionId } } : { rejectSuggestion: { suggestionId } }));
-  await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests, writeControl: writeControlFor(doc.revisionId) } });
+  await explainingCommentOnlyAccess(CANNOT_RESOLVE_MESSAGE, () => clients.docs.documents.batchUpdate({ documentId, requestBody: { requests, writeControl: writeControlFor(doc.revisionId) } }));
   return { status: 'ok', resolved: resolutions.length };
 }

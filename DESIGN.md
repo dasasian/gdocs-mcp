@@ -736,6 +736,14 @@ edit_doc("/Work/Contract", "within 30 days", "within 45 days", suggest: true)
   layout where only that does (a column width), so the edit is refused before
   its first request is sent.
 - `set_page_setup` has no `suggest`: page geometry is a document-style change.
+- **A user with comment access can suggest, comment and reject their own
+  suggestion, and nothing else** (checked live): a direct edit, `acceptSuggestion`
+  and `rejectSuggestion` of another person's suggestion are refused with 403
+  "comment-only access is not sufficient". `edit_doc` and `write_doc` without
+  `suggest` turn that refusal into "you can only suggest on it: pass suggest:
+  true", and `apply_suggestions` into a plain sentence on what comment access
+  can resolve. The role is not asked for first: Google's refusal is the fact, so
+  it cannot be out of date.
 
 **Reading (`list_suggestions`).** The doc is read with
 `commentsViewMode: COMMENTS_VIEW_MODE_INCLUDED` and `SUGGESTIONS_INLINE`, which

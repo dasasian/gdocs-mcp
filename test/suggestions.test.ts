@@ -213,6 +213,12 @@ describe('apply_suggestions sends the native accept and reject', () => {
     expect(requestsSent(batchUpdate)).toEqual([{ acceptSuggestion: { suggestionId: 'b' } }]);
   });
 
+  it('a comment-only user is told in plain words what comment access can resolve (#65)', async () => {
+    const { clients, batchUpdate } = clientsFor(REPLACEMENT);
+    batchUpdate.mockRejectedValue(new Error('Forbidden requests[0].acceptSuggestion: Write access is required, comment-only access is not sufficient.'));
+    await expect(applySuggestions(clients, 'd', 'Contract', [{ suggestionId: 's1', decision: 'accept', expectContext: 'Pay within [30→45] days of invoice.' }])).rejects.toThrow(/can reject your own suggestions only/);
+  });
+
   it('a style-only suggestion resolves like any other', async () => {
     const doc = docWith([paragraph(1, [{ text: 'Pay ', style: ['f'] }, { text: 'within.\n' }])]);
     const { clients, batchUpdate } = clientsFor(doc);

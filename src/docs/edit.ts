@@ -16,6 +16,7 @@ import { editTableMarkup, mentionsTableMarkup, type TableEditInput } from './tab
 import { contextAround } from './context.js';
 import { REVIEW_READ } from './comments.js';
 import { refuseColumnWidthsIn, suggestingClients } from './suggest.js';
+import { explainingCommentOnlyAccess, MUST_SUGGEST_MESSAGE } from './access.js';
 
 export interface EditResult {
   status: 'ok' | 'not_found' | 'ambiguous' | 'no_segment' | 'confirm_required';
@@ -549,7 +550,7 @@ interface EditOptions {
  * suggest refuses the whole edit before anything is sent, and the result lists the suggestion ids made.
  */
 export async function editDoc(clients: GoogleClients, documentId: string, oldString: string, newString: string, opts: EditOptions = {}): Promise<EditResult> {
-  if (!opts.suggest) return applyEdit(clients, documentId, oldString, newString, opts);
+  if (!opts.suggest) return explainingCommentOnlyAccess(MUST_SUGGEST_MESSAGE, () => applyEdit(clients, documentId, oldString, newString, opts));
   const made: string[] = [];
   const result = await applyEdit(suggestingClients(clients, made), documentId, oldString, newString, opts);
   return result.status === 'ok' ? { ...result, suggestions: [...new Set(made)] } : result;

@@ -286,6 +286,27 @@ describe('a suggested write_doc replace (#64)', () => {
   });
 });
 
+describe('a comment-only user who writes without suggest is told to suggest (#65)', () => {
+  const GOOGLES_REFUSAL = new Error('Forbidden requests[0].deleteContentRange: Write access is required, comment-only access is not sufficient.');
+
+  it('write_doc says to pass suggest: true instead of showing the raw 403', async () => {
+    const world = newWorld();
+    const clients = worldClients(world);
+    const asked = await writeDoc(clients, '/Work/Memo', 'new text');
+    const confirmLoss = (asked as { confirmLoss: string }).confirmLoss;
+    (clients.docs.documents.batchUpdate as ReturnType<typeof vi.fn>).mockRejectedValue(GOOGLES_REFUSAL);
+    await expect(writeDoc(clients, '/Work/Memo', 'new text', { confirmLoss })).rejects.toThrow(/you can only suggest on it: pass suggest: true/);
+  });
+
+  it('another error from Google passes through unchanged', async () => {
+    const world = newWorld();
+    const clients = worldClients(world);
+    const asked = await writeDoc(clients, '/Work/Memo', 'new text');
+    (clients.docs.documents.batchUpdate as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Quota exceeded'));
+    await expect(writeDoc(clients, '/Work/Memo', 'new text', { confirmLoss: (asked as { confirmLoss: string }).confirmLoss })).rejects.toThrow(/Quota exceeded/);
+  });
+});
+
 describe('write_doc does not create from a bare name (#55)', () => {
   it('with a project default folder: refuses, says where it will go, and gives the full path to call', async () => {
     const world = newWorld();
