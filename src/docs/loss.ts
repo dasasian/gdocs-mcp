@@ -1,10 +1,12 @@
 import type { docs_v1 } from 'googleapis';
 import { contentOf } from './structure.js';
 import { parseSuggestions } from './suggestions.js';
+import { commentCounts, type ReviewedDocument } from './comments.js';
 
 export interface Loss {
   paragraphs: number;
   comments: number;
+  commentsWithoutRange: number;
   suggestions: number;
   tabStops: number;
   tabStopLines: string[];
@@ -19,7 +21,7 @@ export interface Loss {
 
 type ParagraphElementWithDate = docs_v1.Schema$ParagraphElement & { dateElement?: object };
 
-type Counted = Exclude<keyof Loss, 'tabStopLines'>;
+type Counted = Exclude<keyof Loss, 'tabStopLines' | 'commentsWithoutRange'>;
 
 const LABELS: { key: Counted; one: string; many: string }[] = [
   { key: 'paragraphs', one: 'paragraph', many: 'paragraphs' },
@@ -61,16 +63,20 @@ function pointsAtBookmarkOrHeading(link: docs_v1.Schema$Link | null | undefined)
 
 /**
  * What replacing this tab's body would take with it that a markdown read cannot
- * carry. `doc` must come from a SUGGESTIONS_INLINE read, or suggestions are
- * invisible. `comments` is passed in because Drive holds them, not the doc.
- * A body or tab replace counts only that body: it deletes the body's range and leaves the
- * headers and footers alone, so their page-number fields are counted only for a header or
- * footer write. For a header or footer (`segmentId`), comments and suggestions are not counted:
- * they cannot be anchored there. A bookmark is not in the Docs API at all — only links that point at one are,
- * so a bookmark nothing links to is not counted.
+ * carry. `doc` must come from a read with suggestions inline and comments
+ * included (`getDocForReview`), or they are invisible. A body or tab replace
+ * counts only that body: it deletes the body's range and leaves the headers and
+ * footers alone, so their page-number fields are counted only for a header or
+ * footer write. Comments are counted by the range they sit on, in the body or
+ * in the header or footer (`segmentId`) being written; a comment with no range
+ * (made in Drive) is counted for a body write, for the whole doc. Suggestions
+ * are not counted for a header or footer. A bookmark is not in the Docs API at
+ * all, only links that point at one are, so a bookmark nothing links to is not
+ * counted.
  */
-export function measureLoss(doc: docs_v1.Schema$Document, tabId: string | undefined, comments: number, segmentId?: string): Loss {
-  const loss: Loss = { paragraphs: 0, comments: segmentId ? 0 : comments, suggestions: segmentId ? 0 : parseSuggestions(doc, tabId).length, tabStops: 0, tabStopLines: [], people: 0, dates: 0, richLinks: 0, bookmarkLinks: 0, pageNumberFields: 0, sectionBreaks: 0, columnBreaks: 0 };
+export function measureLoss(doc: ReviewedDocument, tabId: string | undefined, segmentId?: string): Loss {
+  const comments = commentCounts(doc, tabId, segmentId);
+  const loss: Loss = { paragraphs: 0, comments: comments.withRange + (segmentId ? 0 : comments.withoutRange), commentsWithoutRange: segmentId ? 0 : comments.withoutRange, suggestions: segmentId ? 0 : parseSuggestions(doc, tabId).length, tabStops: 0, tabStopLines: [], people: 0, dates: 0, richLinks: 0, bookmarkLinks: 0, pageNumberFields: 0, sectionBreaks: 0, columnBreaks: 0 };
   const content = contentOf(doc, tabId, segmentId);
   loss.sectionBreaks = content.slice(1).filter((el) => el.sectionBreak).length;
   for (const paragraph of paragraphsIn(content)) {
@@ -123,7 +129,7 @@ export function lossDetails(loss: Loss, docHasSeveralTabs: boolean): string[] {
   const more = loss.tabStopLines.length - shown.length;
   return [
     ...(loss.tabStops ? [`tab stops on ${loss.tabStopLines.length} line(s): ${shown.join(', ')}${more > 0 ? `, and ${more} more` : ''}. The Docs API cannot write tab stops, so they cannot be put back.`] : []),
-    ...(loss.comments && docHasSeveralTabs ? ['The comment count is for the whole doc: the Drive API does not say which tab a comment is anchored to.'] : []),
+    ...(loss.commentsWithoutRange && docHasSeveralTabs ? [`${loss.commentsWithoutRange} of the comments have no range (they were made in Drive), so they are counted for the whole doc, not for this tab.`] : []),
     ...(loss.pageNumberFields ? ['The Docs API can read a page-number field but cannot create one, so it cannot be put back. To keep it, add it by hand in Docs after the write.'] : []),
     ...(loss.sectionBreaks ||loss.columnBreaks ? ['Section breaks and column breaks are not carried: a read does not show them, so a replace drops them, and the page setup and headers a section break holds go with it.'] : []),
     ...(loss.bookmarkLinks ? ['A bookmark itself is invisible to the API; only links that point at one are counted, so a bookmark nothing links to is not in this list.'] : []),

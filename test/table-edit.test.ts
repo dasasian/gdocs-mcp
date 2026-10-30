@@ -10,21 +10,28 @@ import { background, bodyDocWithTable, headerDocWithTable, plain, tableElement, 
 interface Reads {
   /** the doc as it reads after the rows and columns were changed. */
   afterStructure?: docs_v1.Schema$Document;
-  /** the quoted text of each comment on the doc. */
+  /** the quoted text of each comment made in Drive, which has no range. */
   quotes?: string[];
+  /** comments on a range, each with the range it sits on. */
+  onRanges?: { quote: string; range: { startIndex: number; endIndex: number; segmentId?: string } }[];
 }
 
-function clientsFor(doc: docs_v1.Schema$Document, { afterStructure, quotes = [] }: Reads = {}) {
+function clientsFor(doc: docs_v1.Schema$Document, { afterStructure, quotes = [], onRanges = [] }: Reads = {}) {
   const batchUpdate = vi.fn().mockResolvedValue({ data: { replies: [] } });
-  const get = vi.fn().mockResolvedValueOnce({ data: doc }).mockResolvedValue({ data: afterStructure ?? doc });
-  const list = vi.fn().mockResolvedValue({ data: { comments: quotes.map((value) => ({ quotedFileContent: { value } })) } });
+  const comments = [
+    ...quotes.map((plainTextQuote, i) => ({ commentId: `drive${i}`, plainTextQuote })),
+    ...onRanges.map(({ quote }, i) => ({ commentId: `range${i}`, anchorId: `anchor${i}`, plainTextQuote: quote })),
+  ];
+  const commentAnchors = Object.fromEntries(onRanges.map(({ range }, i) => [`anchor${i}`, { ranges: [range] }]));
+  const first = { ...doc, comments, commentAnchors };
+  const get = vi.fn().mockResolvedValueOnce({ data: first }).mockResolvedValue({ data: afterStructure ?? doc });
   const clients: GoogleClients = {
     account: 'a',
     auth: {} as GoogleClients['auth'],
     docs: { documents: { get, batchUpdate } } as unknown as GoogleClients['docs'],
-    drive: { comments: { list } } as unknown as GoogleClients['drive'],
+    drive: {} as GoogleClients['drive'],
   };
-  return { clients, batchUpdate, list };
+  return { clients, batchUpdate };
 }
 
 const RED = { foregroundColor: { color: { rgbColor: { red: 1 } } } };
@@ -393,6 +400,31 @@ describe('a moved row asks once when comments quote its text (#62 rule 6)', () =
     expect((await editDoc(clients, 'd', OLD, NEW)).status).toBe('confirm_required');
   });
 
+  describe('a comment on a range', () => {
+    const cellStart = (doc: docs_v1.Schema$Document, row: number, column: number): number => doc.body!.content![0].table!.tableRows![row].tableCells![column].content![0].startIndex!;
+    const inCell = (row: number, column: number, offset = 1) => {
+      const start = cellStart(withRows(...PRICES), row, column);
+      return { startIndex: start + offset, endIndex: start + offset + 2 };
+    };
+
+    it('asks when its range falls in the moved row, whatever its quote says', async () => {
+      const { clients, batchUpdate } = clientsFor(withRows(...PRICES), { afterStructure: moved(), onRanges: [{ quote: 'unrelated words', range: inCell(1, 0) }] });
+      const result = await editDoc(clients, 'd', OLD, NEW);
+      expect(result.confirmLoss).toBe(TOKEN);
+      expect(batchUpdate).not.toHaveBeenCalled();
+    });
+
+    it('does not ask when its range is in another row, even if its quote is the moved row’s text', async () => {
+      const { clients } = clientsFor(withRows(...PRICES), { afterStructure: moved(), onRanges: [{ quote: '$1,200', range: inCell(3, 1) }] });
+      expect((await editDoc(clients, 'd', OLD, NEW)).status).toBe('ok');
+    });
+
+    it('counts a comment once when its range and a Drive comment’s quote are both in the moved row', async () => {
+      const { clients } = clientsFor(withRows(...PRICES), { afterStructure: moved(), quotes: ['$1,200'], onRanges: [{ quote: 'x', range: inCell(1, 1) }] });
+      expect((await editDoc(clients, 'd', OLD, NEW)).confirmLoss).toBe('2 comments on text in a moved row or column [revision r1]');
+    });
+  });
+
   it('a row that is only deleted does not ask even when a comment quotes it', async () => {
     const { clients } = clientsFor(withRows(...PRICES), { afterStructure: withRows(PRICES[0], PRICES[1], PRICES[3]), quotes: ['$3,000'] });
     expect((await editDoc(clients, 'd', `${pipe('Build', '$3,000')}\n`, '')).status).toBe('ok');
@@ -431,12 +463,22 @@ describe('a table in a header behaves the same (#62 rule 9)', () => {
     expect(allRequests(batchUpdate).some((r) => r.deleteContentRange)).toBe(false);
   });
 
-  it('a moved row asks nothing, because a comment cannot be anchored in a header', async () => {
+  it('a moved row asks when a comment’s range, in the header, falls in it', async () => {
     const before = headerDocWithTable({ rows: [plain('Ann', '1'), plain('Bob', '2'), plain('Cy', '3')], columns: TWO_FIXED });
     const after = headerDocWithTable({ rows: [plain('Bob', '2'), plain('', ''), plain('Cy', '3')], columns: TWO_FIXED });
-    const { clients, list } = clientsFor(before, { afterStructure: after, quotes: ['Ann'] });
+    const annStart = before.headers!.h1.content![0].table!.tableRows![0].tableCells![0].content![0].startIndex!;
+    const onAnn = { quote: 'Ann', range: { startIndex: annStart, endIndex: annStart + 3, segmentId: 'h1' } };
+    const { clients, batchUpdate } = clientsFor(before, { afterStructure: after, onRanges: [onAnn] });
+    const result = await editDoc(clients, 'd', '<tr><td>Ann</td><td>1</td></tr>\n<tr><td>Bob</td><td>2</td></tr>', '<tr><td>Bob</td><td>2</td></tr>\n<tr><td>Ann</td><td>1</td></tr>', { segment: 'header' });
+    expect(result.status).toBe('confirm_required');
+    expect(batchUpdate).not.toHaveBeenCalled();
+  });
+
+  it('a moved row asks nothing for a comment made in Drive, which has no range to say it is in the header', async () => {
+    const before = headerDocWithTable({ rows: [plain('Ann', '1'), plain('Bob', '2'), plain('Cy', '3')], columns: TWO_FIXED });
+    const after = headerDocWithTable({ rows: [plain('Bob', '2'), plain('', ''), plain('Cy', '3')], columns: TWO_FIXED });
+    const { clients } = clientsFor(before, { afterStructure: after, quotes: ['Ann'] });
     const result = await editDoc(clients, 'd', '<tr><td>Ann</td><td>1</td></tr>\n<tr><td>Bob</td><td>2</td></tr>', '<tr><td>Bob</td><td>2</td></tr>\n<tr><td>Ann</td><td>1</td></tr>', { segment: 'header' });
     expect(result.status).toBe('ok');
-    expect(list).not.toHaveBeenCalled();
   });
 });

@@ -7,15 +7,18 @@ import type { GoogleClients } from '../src/google/clients.js';
 import { writeDoc } from '../src/docs/document.js';
 import { measureLoss, lossSummary, confirmLossToken } from '../src/docs/loss.js';
 import { StyleSyntaxError } from '../src/docs/css.js';
+import type { ReviewedDocument } from '../src/docs/comments.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const lossDoc = JSON.parse(readFileSync(path.join(here, 'fixtures', 'loss-doc.json'), 'utf8')) as docs_v1.Schema$Document;
+const lossDocFixture = JSON.parse(readFileSync(path.join(here, 'fixtures', 'loss-doc.json'), 'utf8')) as docs_v1.Schema$Document;
+const commentsMadeInDrive = (count: number) => Array.from({ length: count }, (_, i) => ({ commentId: `c${i}`, plainTextQuote: `quote ${i}`, status: 'OPEN' }));
+const lossDoc: ReviewedDocument = { ...lossDocFixture, comments: commentsMadeInDrive(2) };
 
 const FOLDER = 'application/vnd.google-apps.folder';
 const DOC = 'application/vnd.google-apps.document';
 
-function withoutLoss(mutate: (doc: docs_v1.Schema$Document) => void): docs_v1.Schema$Document {
-  const copy = JSON.parse(JSON.stringify(lossDoc)) as docs_v1.Schema$Document;
+function withoutLoss(mutate: (doc: docs_v1.Schema$Document) => void): ReviewedDocument {
+  const copy = JSON.parse(JSON.stringify(lossDocFixture)) as docs_v1.Schema$Document;
   mutate(copy);
   return copy;
 }
@@ -25,10 +28,10 @@ function paragraphsOf(doc: docs_v1.Schema$Document): docs_v1.Schema$Paragraph[] 
 }
 
 describe('the loss summary counts what a read cannot carry (#55)', () => {
-  const loss = measureLoss(lossDoc, 't.0', 2);
+  const loss = measureLoss(lossDoc, 't.0');
 
   it('paragraphs with text', () => expect(loss.paragraphs).toBe(6));
-  it('comments, as counted by Drive', () => expect(loss.comments).toBe(2));
+  it('comments, as the doc lists them', () => expect(loss.comments).toBe(2));
   it('suggestions, from suggestedInsertionIds and suggestedDeletionIds', () => expect(loss.suggestions).toBe(1));
   it('tab stops, from paragraphStyle.tabStops', () => {
     expect(loss.tabStops).toBe(2);
@@ -49,15 +52,15 @@ describe('the loss summary counts what a read cannot carry (#55)', () => {
         delete e.textRun?.suggestedDeletionIds;
       })),
     );
-    expect(measureLoss(noTabStops, 't.0', 0).tabStops).toBe(0);
-    expect(measureLoss(noChips, 't.0', 0)).toMatchObject({ people: 0, dates: 0, richLinks: 0 });
-    expect(measureLoss(noLinks, 't.0', 0).bookmarkLinks).toBe(0);
-    expect(measureLoss(noSuggestions, 't.0', 0).suggestions).toBe(0);
+    expect(measureLoss(noTabStops, 't.0').tabStops).toBe(0);
+    expect(measureLoss(noChips, 't.0')).toMatchObject({ people: 0, dates: 0, richLinks: 0 });
+    expect(measureLoss(noLinks, 't.0').bookmarkLinks).toBe(0);
+    expect(measureLoss(noSuggestions, 't.0').suggestions).toBe(0);
   });
 
   it('names only what is present, and always the paragraphs', () => {
     expect(lossSummary(loss)).toBe('6 paragraphs, 2 comments, 1 suggestion, 2 tab stops, 1 person chip, 1 date chip, 1 link chip, 1 link to a bookmark or heading');
-    expect(lossSummary(measureLoss(withoutLoss(() => undefined), 't.0', 0)).startsWith('6 paragraphs, 1 suggestion')).toBe(true);
+    expect(lossSummary(measureLoss(withoutLoss(() => undefined), 't.0')).startsWith('6 paragraphs, 1 suggestion')).toBe(true);
   });
 
   it('a signature line alone reads as one tab stop', () => {
@@ -65,7 +68,7 @@ describe('the loss summary counts what a read cannot carry (#55)', () => {
       const content = d.tabs![0].documentTab!.body!.content!;
       d.tabs![0].documentTab!.body!.content = content.filter((e) => e.paragraph && /^Signature/.test(e.paragraph.elements![0].textRun?.content ?? ''));
     });
-    expect(lossSummary(measureLoss(signature, 't.0', 0))).toBe('1 paragraph, 1 tab stop');
+    expect(lossSummary(measureLoss(signature, 't.0'))).toBe('1 paragraph, 1 tab stop');
   });
 });
 
@@ -103,7 +106,7 @@ function worldClients(world: World): GoogleClients {
     return { data: { id: 'newdoc' } };
   });
   const docsGet = vi.fn().mockImplementation(async ({ documentId }: { documentId: string }) => {
-    if (documentId === 'memo') return { data: { ...lossDoc, revisionId: world.revisionId } };
+    if (documentId === 'memo') return { data: { ...lossDoc, comments: commentsMadeInDrive(world.comments), revisionId: world.revisionId } };
     if (documentId === 'contract') return { data: { title: 'Contract', revisionId: world.revisionId, tabs: contractTabs } };
     return { data: { title: 'New', revisionId: world.revisionId, tabs: [{ tabProperties: { tabId: 't.0', title: 'Tab 1', index: 0 } }] } };
   });
@@ -118,7 +121,6 @@ function worldClients(world: World): GoogleClients {
     drive: {
       files: { list, get, create },
       drives: { list: vi.fn().mockResolvedValue({ data: { drives: [{ id: 'sd1', name: 'Team' }] } }) },
-      comments: { list: vi.fn().mockImplementation(async () => ({ data: { comments: Array.from({ length: world.comments }, (_, i) => ({ id: `c${i}` })) } })) },
     } as unknown as GoogleClients['drive'],
   };
 }
@@ -188,7 +190,7 @@ describe('write_doc replaces only when the loss summary is passed back (#55)', (
     if (r.status !== 'confirm_required') return;
     expect(r.message.startsWith('Ask the user before doing anything else')).toBe(true);
     expect(r.message).toContain('Replacing "/Work/Memo" removes 6 paragraphs, 2 comments, 1 suggestion, 2 tab stops');
-    expect(r.confirmLoss).toBe(confirmLossToken(measureLoss(lossDoc, 't.0', 2), 'rev-1'));
+    expect(r.confirmLoss).toBe(confirmLossToken(measureLoss(lossDoc, 't.0'), 'rev-1'));
     expect(world.requests).toEqual([]);
   });
 

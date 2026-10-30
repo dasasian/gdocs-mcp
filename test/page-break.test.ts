@@ -313,19 +313,19 @@ describe('the loss summary counts section breaks and column breaks (#48)', () =>
   })();
 
   it('counts the one section break the API doc holds, and not the section every doc starts with', () => {
-    expect(measureLoss(apiDoc, 't.0', 0)).toMatchObject({ sectionBreaks: 1, columnBreaks: 0 });
+    expect(measureLoss(apiDoc, 't.0')).toMatchObject({ sectionBreaks: 1, columnBreaks: 0 });
   });
 
   it('counts a column break', () => {
-    expect(measureLoss(withColumnBreak, 't.0', 0)).toMatchObject({ sectionBreaks: 1, columnBreaks: 1 });
+    expect(measureLoss(withColumnBreak, 't.0')).toMatchObject({ sectionBreaks: 1, columnBreaks: 1 });
   });
 
   it('says so in the summary, and page breaks are not in it, since they are carried', () => {
-    expect(lossSummary(measureLoss(withColumnBreak, 't.0', 0))).toMatch(/1 section break, 1 column break$/);
-    expect(lossSummary(measureLoss(withColumnBreak, 't.0', 0))).not.toMatch(/page break/);
+    expect(lossSummary(measureLoss(withColumnBreak, 't.0'))).toMatch(/1 section break, 1 column break$/);
+    expect(lossSummary(measureLoss(withColumnBreak, 't.0'))).not.toMatch(/page break/);
   });
 
   it('a doc with neither says nothing about them', () => {
-    expect(lossSummary(measureLoss(plainDoc, undefined, 0))).toBe('2 paragraphs');
+    expect(lossSummary(measureLoss(plainDoc, undefined))).toBe('2 paragraphs');
   });
 });

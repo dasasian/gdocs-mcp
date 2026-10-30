@@ -2,6 +2,7 @@ import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
 import { contentOf, resolveTabId, writeControlFor, type SegmentKind, type SegmentPage } from './structure.js';
 import { resolveSegmentTarget } from './segments.js';
+import { getDocForReview } from './comments.js';
 
 
 export type SuggestionType = 'insertion' | 'deletion' | 'replacement' | 'style';
@@ -27,18 +28,6 @@ interface Group {
   insertions: Span[];
   deletions: Span[];
   styleOnly: boolean;
-}
-
-export async function getDocInline(
-  clients: GoogleClients,
-  documentId: string,
-): Promise<docs_v1.Schema$Document> {
-  const res = await clients.docs.documents.get({
-    documentId,
-    suggestionsViewMode: 'SUGGESTIONS_INLINE',
-    includeTabsContent: true,
-  });
-  return res.data;
 }
 
 export function parseSuggestions(doc: docs_v1.Schema$Document, tabId?: string, segmentId?: string): Suggestion[] {
@@ -103,7 +92,7 @@ export async function listSuggestions(
   requestedTabId?: string,
   opts: { segment?: SegmentKind; page?: SegmentPage } = {},
 ): Promise<{ revisionId: string; title: string; suggestions: (Suggestion & { preview: string })[]; message?: string }> {
-  const doc = await getDocInline(clients, documentId);
+  const doc = await getDocForReview(clients, documentId);
   const tabId = resolveTabId(doc, requestedTabId);
   const seg = resolveSegmentTarget(doc, { segment: opts.segment, page: opts.page, tabId });
   if (seg.error) return { revisionId: doc.revisionId ?? '', title: doc.title ?? '', suggestions: [], message: seg.error };
@@ -259,7 +248,7 @@ export async function applySuggestions(
   requestedTabId?: string,
   opts: { segment?: SegmentKind; page?: SegmentPage } = {},
 ): Promise<ApplyManyResult> {
-  const doc = await getDocInline(clients, documentId);
+  const doc = await getDocForReview(clients, documentId);
   const wrongDoc = checkDocumentTitle(doc, documentTitle);
   if (wrongDoc) return { status: 'wrong_doc', errors: [wrongDoc] };
 

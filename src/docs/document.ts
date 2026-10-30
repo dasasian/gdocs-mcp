@@ -3,13 +3,12 @@ import type { GoogleClients } from '../google/clients.js';
 import { contentOf, resolveTabId, flattenTabs, isEmptyContent, resolveSegmentId, type SegmentPage } from './structure.js';
 import { segmentForWrite } from './segments.js';
 import { renderMarkdownInto } from './render.js';
-import { getDocInline } from './suggestions.js';
+import { getDocForReview } from './comments.js';
 import { readFile } from 'node:fs/promises';
 import nodePath from 'node:path';
 import { parseBlocks } from './write.js';
 import { resolveEntry, tabOfEntry, refusal, folderPathOf, parseDriveId, type Resolved, type TabRef } from '../drive/paths.js';
 import { measureLoss, confirmLossToken, lossSummary, lossDetails, type Loss } from './loss.js';
-import { countComments } from '../drive/comments.js';
 
 /**
  * Body from either `content` or a `contentFile` read server-side (so a long
@@ -104,7 +103,7 @@ async function replaceTab(
   opts: { confirmLoss?: string; baseDir?: string; segment?: 'body' | 'header' | 'footer'; page?: SegmentPage },
   asNamed: string,
 ): Promise<WriteDocResult> {
-  let doc = await getDocInline(clients, tab.documentId);
+  let doc = await getDocForReview(clients, tab.documentId);
   const tabId = resolveTabId(doc, tab.tabId);
   const segment = opts.segment ?? 'body';
   let segmentId: string | undefined;
@@ -114,7 +113,7 @@ async function replaceTab(
     if (!existing) {
       const made = await segmentForWrite(clients, tab.documentId, doc, { segment, page: opts.page, tabId });
       if ('refusal' in made) return { status: 'not_written', message: made.refusal };
-      doc = await getDocInline(clients, tab.documentId);
+      doc = await getDocForReview(clients, tab.documentId);
       segmentId = made.segmentId;
       createdSegment = segment;
     } else {
@@ -123,7 +122,7 @@ async function replaceTab(
   }
   const holdsNothing = isEmptyContent(doc, tabId, segmentId);
   if (!holdsNothing) {
-    const loss = measureLoss(doc, tabId, await countComments(clients, tab.documentId), segmentId);
+    const loss = measureLoss(doc, tabId, segmentId);
     const confirmLoss = confirmLossToken(loss, doc.revisionId);
     if (opts.confirmLoss !== confirmLoss) {
       const changed = opts.confirmLoss !== undefined;

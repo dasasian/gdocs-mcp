@@ -3,7 +3,7 @@ import type { GoogleClients } from '../google/clients.js';
 import type { EditResult } from './edit.js';
 import { contentOf, writeControlFor } from './structure.js';
 import { renderTableMarkup, readTableLayout } from './transformer.js';
-import { quotedTexts } from '../drive/comments.js';
+import { threadsOnRangesIn, threadsWithoutRange } from './comments.js';
 import { movedCommentsToken } from './loss.js';
 import { parseBlocks, buildContentRequests, cellBlocksOf, clearDirectRunStyling, type CellBlock } from './write.js';
 import { placeCells, effectiveGrid, type LayoutCell, type Placement, type TableLayout } from './table-layout.js';
@@ -254,12 +254,31 @@ function requireExpectedShape(read: TableLayout, expected: TableLayout): void {
 
 const quoteMatches = (quote: string, word: string): boolean => word !== '' && (word.includes(quote) || quote.includes(word));
 
-const commentsQuoting = (moved: MovedLine[], quotes: string[]): number =>
-  quotes.map((quote) => quote.trim()).filter((quote) => quote !== '' && moved.some((line) => line.cells.some((cell) => quoteMatches(quote, cell.trim())))).length;
+function cellsOfMovedLine(table: docs_v1.Schema$Table, line: MovedLine): docs_v1.Schema$TableCell[] {
+  const rows = table.tableRows ?? [];
+  if (line.axis === 'row') return rows[line.index]?.tableCells ?? [];
+  return rows.flatMap((row) => row.tableCells?.[line.index] ?? []);
+}
 
-async function movedCommentsRefusal(clients: GoogleClients, documentId: string, doc: docs_v1.Schema$Document, moved: MovedLine[], input: TableEditInput): Promise<EditResult | undefined> {
-  if (moved.length === 0 || input.segmentId) return undefined;
-  const comments = commentsQuoting(moved, await quotedTexts(clients, documentId));
+interface MovedInTable {
+  table: docs_v1.Schema$Table;
+  moved: MovedLine[];
+}
+
+/** Ids of the comments on the text of the moved rows and columns: by range when Docs gives one, by quote when it does not. */
+function commentsOnMoved(doc: docs_v1.Schema$Document, tabId: string | undefined, segmentId: string | undefined, { table, moved }: MovedInTable): Set<string> {
+  const cellRanges = moved.flatMap((line) => cellsOfMovedLine(table, line).flatMap((cell) => cellRange(cell) ?? []));
+  const words = moved.flatMap((line) => line.cells.map((cell) => cell.trim()));
+  const onRange = threadsOnRangesIn(doc, tabId, segmentId).filter(({ range }) => cellRanges.some((cell) => cell.start <= range.startIndex && range.startIndex < cell.end));
+  const byQuote = (segmentId ? [] : threadsWithoutRange(doc)).filter((thread) => {
+    const quote = (thread.plainTextQuote ?? '').trim();
+    return quote !== '' && words.some((word) => quoteMatches(quote, word));
+  });
+  return new Set([...onRange.map(({ thread }) => thread.commentId), ...byQuote.map((thread) => thread.commentId)]);
+}
+
+function movedCommentsRefusal(doc: docs_v1.Schema$Document, movedByTable: MovedInTable[], input: TableEditInput): EditResult | undefined {
+  const comments = new Set(movedByTable.filter(({ moved }) => moved.length > 0).flatMap((moved) => [...commentsOnMoved(doc, input.tabId, input.segmentId, moved)])).size;
   if (comments === 0) return undefined;
   const token = movedCommentsToken(comments, doc.revisionId);
   if (input.confirmLoss === token) return undefined;
@@ -312,7 +331,7 @@ export async function editTableMarkup(clients: GoogleClients, documentId: string
   if (edits.length > 1 && edits.some(({ around }) => around.before || around.after)) {
     throw refusal('replace_all cannot add blocks next to a table: it matches more than one table. Quote one table with enough context to be unique.');
   }
-  const refused = await movedCommentsRefusal(clients, documentId, doc, edits.flatMap(({ comparison }) => comparison.moved), input);
+  const refused = movedCommentsRefusal(doc, edits.map(({ match, comparison }) => ({ table: match.found.table, moved: comparison.moved })), input);
   if (refused) return refused;
   let changed = 0;
   let revisionId = doc.revisionId ?? undefined;

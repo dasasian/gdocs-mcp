@@ -22,6 +22,8 @@ export type StructureOperation =
 /** The words of the old row or column that a move takes away, to be matched against the quoted text of comments. */
 export interface MovedLine {
   axis: Axis;
+  /** the index of the old row or column. */
+  index: number;
   cells: string[];
 }
 
@@ -237,12 +239,12 @@ export function compareTables(before: TableLayout, after: TableLayout): TableCom
   requireKept(rows, 'row');
   const keptOldRows = keptIndices(rows.forOld);
   const keptNewRows = keptIndices(rows.forNew);
-  const movedRows = movedLines(rows, oldRowLines, newRowLines).map((r): MovedLine => ({ axis: 'row', cells: oldWords[r] }));
+  const movedRows = movedLines(rows, oldRowLines, newRowLines).map((r): MovedLine => ({ axis: 'row', index: r, cells: oldWords[r] }));
   const movedColumns = movedLines(
     columns,
     indices(beforePlacement.columnCount).map((c) => columnLine(oldWords, c, keptOldRows)),
     indices(afterPlacement.columnCount).map((c) => columnLine(newWords, c, keptNewRows)),
-  ).map((c): MovedLine => ({ axis: 'column', cells: columnLine(oldWords, c, allOldRows) }));
+  ).map((c): MovedLine => ({ axis: 'column', index: c, cells: columnLine(oldWords, c, allOldRows) }));
   const pairing = { rows, columns };
   const merges = mergeChanges(beforePlacement, afterPlacement, rows, columns);
   const plan: Plan = { before: beforePlacement, pairing, merges, pinned: after.rows.map((row) => row.pinned) };

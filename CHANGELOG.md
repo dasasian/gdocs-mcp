@@ -6,6 +6,18 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Breaking
+
+> **Comments are written and read through the Docs API, and a comment sits on its text (#64).** `resolve_comment` and `add_comment` change shape.
+
+| Before | Now |
+|---|---|
+| `add_comment(path, content)` made a Drive comment with no anchor | `add_comment(path, content, quotedText)`: the comment is on the one place `quotedText` matches, found the way `edit_doc` finds `old_string`. Two matches are refused with the context of each. `quotedText` is required unless `replyTo` is given, because Docs refuses a comment with no range. The tab comes from `path`; `segment` puts it in a header or footer |
+| `resolve_comment(path, commentId, expectQuote?, reopen?)`, the guard optional | `resolve_comment(path, commentId, expectQuotedText, reopen?)`, the guard **required**: the `quotedText` `list_comments` gave, exactly. A call without it is refused |
+| `list_comments` gave `id`, `author`, `createdTime`, `resolved`, `quotedText`, `content`, `replies[{author, content, createdTime, action}]` | `id`, `quotedText`, `context`, `author`, `time`, `status` (`open` or `resolved`), `content`, `replies[{id, author, time, content, action}]`, and `range` (with `tabId` and `segmentId`) when the comment has one. A comment made in Drive has no range and its quote is its `context` |
+
+Also: `list_comments`, the comment count in `write_doc`'s loss summary and the check on a moved table row all read the comments of one `documents.get`, so none of them calls Drive, and none pages. `write_doc` counts a tab's comments by their ranges, and a comment in a header or footer by its segment; a comment with no range is counted for the whole doc, and the summary says so on a multi-tab doc. `edit_doc` asks before moving a table row or column when a comment's range falls in it, in a header or footer too (a header table used to ask nothing); a comment with no range is matched by its quote, as before.
+
 ## [0.7.0] — 2026-10-29
 
 ### Breaking

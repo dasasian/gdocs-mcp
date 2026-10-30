@@ -40,7 +40,7 @@ describe('rows and columns are paired by the cells they share (#62 rules 1 and 2
 
   it('a column is paired before the rows: a row moved while a column is added is still a move', () => {
     const { moved } = compareTables(table(row('A', '1'), row('B', '2')), table(row('B', '9', '2'), row('A', '8', '1')));
-    expect(moved).toEqual([{ axis: 'row', cells: expect.arrayContaining(['A', '1']) }]);
+    expect(moved).toEqual([{ axis: 'row', index: 0, cells: expect.arrayContaining(['A', '1']) }]);
   });
 
   it('a row that shares a cell with two new rows is a tie and is refused, saying to change one row at a time', () => {

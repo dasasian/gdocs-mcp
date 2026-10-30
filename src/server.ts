@@ -4,7 +4,8 @@ import { clientsForAccount } from './google/clients.js';
 import { resolveTab, resolveDocument } from './drive/paths.js';
 import { listAccounts, findProjectConfig, findProjectConfigPath, setProjectConfig } from './auth/accounts.js';
 import { listSuggestions, applySuggestions } from './docs/suggestions.js';
-import { listComments, addComment, replyComment, resolveComment } from './drive/comments.js';
+import { listComments, replyToComment, resolveComment } from './docs/comments.js';
+import { addComment } from './docs/add-comment.js';
 import { readDoc } from './docs/read.js';
 import { editDoc } from './docs/edit.js';
 import { writeDoc, resolveContentSource } from './docs/document.js';
@@ -19,7 +20,6 @@ function json(data: unknown) {
 }
 
 const DIRECT_EDIT_NOTE = 'Direct edit — applied as live text, not a tracked suggestion (the Docs API cannot create suggestions).';
-const UNANCHORED_COMMENT_NOTE = 'Comment added, but not anchored to specific text (the Docs/Drive API cannot anchor programmatically-created comments).';
 
 const accountArg = {
   account: z
@@ -266,7 +266,7 @@ export function createServer(options: ServerOptions = {}): McpServer {
     {
       title: 'List comments on a doc',
       description:
-        'List comments on a Google Doc (author display name, quoted text, body, resolved status, replies). Author email is not available via the Drive API.',
+        'List the comments on a Google Doc, each with the text it is on (`quotedText`), the sentence around it (`context`, the text in ⟦⟧), its author (a display name, never an email) and time, whether it is open or resolved, its body and its replies. A comment with a `range` is on that part of the doc, in the body or in a header or footer, and moves with its text; a comment with none was made in Drive and has only its quoted text. Pass a comment’s `id` as replyTo to add_comment, and its `quotedText` as expectQuotedText to resolve_comment.',
       inputSchema: { path: docPathArg, ...accountArg },
     },
     async ({ path, account }) => {
@@ -281,19 +281,25 @@ export function createServer(options: ServerOptions = {}): McpServer {
     {
       title: 'Add a comment or reply',
       description:
-        'Add a comment to a Google Doc, or reply to an existing comment thread by passing replyTo (a comment id from list_comments). A new comment (no replyTo) is not anchored to specific text — the Docs/Drive API cannot anchor programmatically-created comments.',
+        'Comment on text in a Google Doc: `quotedText` is the text the comment sits on, found the way edit_doc finds old_string (markup-tolerant; text that matches more than once is refused with the context of each match, so quote more of it). The comment stays on that text as it moves. Docs has no comment on the whole doc, so quotedText is required; put overall feedback on the title, or on its first words. The tab comes from path, and segment: "header" or "footer" comments in the page header or footer. To reply to an existing comment instead, pass replyTo (a comment id from list_comments) and no quotedText; the reply goes to the doc named by path, whatever its tab.',
       inputSchema: {
-        path: docPathArg,
-        content: z.string(),
-        replyTo: z.string().optional().describe('a comment id (from list_comments) to reply to; omit to start a new top-level comment'),
+        path: tabPathArg,
+        content: z.string().describe('the comment, or the reply'),
+        quotedText: z.string().optional().describe('the text to comment on; required unless replyTo is given'),
+        replyTo: z.string().optional().describe('a comment id (from list_comments) to reply to; omit to start a new comment'),
+        ...segmentArg,
         ...accountArg,
       },
     },
-    async ({ path, content, replyTo, account }) => {
+    async ({ path, content, quotedText, replyTo, segment, page, account }) => {
       const clients = await clientsForAccount(account);
-      const { documentId } = await resolveDocument(clients, path);
-      if (replyTo !== undefined) return json(await replyComment(clients, documentId, replyTo, content));
-      return json({ ...(await addComment(clients, documentId, content)), note: UNANCHORED_COMMENT_NOTE });
+      if (replyTo !== undefined) {
+        const { documentId } = await resolveDocument(clients, path);
+        return json(await replyToComment(clients, documentId, replyTo, content));
+      }
+      if (quotedText === undefined) throw new Error('quotedText is required to start a comment: Docs has no comment without a range. Quote the text the comment is about, or pass replyTo to reply.');
+      const target = await resolveTab(clients, path);
+      return json(await addComment(clients, target.documentId, content, quotedText, { tabId: target.tabId, segment, page }));
     },
   );
 
@@ -302,19 +308,19 @@ export function createServer(options: ServerOptions = {}): McpServer {
     {
       title: 'Resolve or reopen a comment',
       description:
-        'Resolve (or reopen) a comment thread by comment id. Pass expectQuote (a snippet of the comment’s quoted text or body, from list_comments) — shown for confirmation and verified against the live comment, so a wrong/stale id is refused instead of resolving the wrong thread.',
+        'Resolve (or reopen) a comment thread by comment id. expectQuotedText is REQUIRED: the `quotedText` list_comments gave for that comment, exactly. It is checked against the live comment first, so a stale or wrong id is refused instead of resolving the wrong thread.',
       inputSchema: {
         path: docPathArg,
         commentId: z.string(),
+        expectQuotedText: z.string().describe('the comment’s quotedText from list_comments; verified before the comment is changed'),
         reopen: z.boolean().optional().describe('reopen instead of resolve'),
-        expectQuote: z.string().optional().describe('snippet of the comment’s quoted text/body; verified before resolving'),
         ...accountArg,
       },
     },
-    async ({ path, commentId, reopen, expectQuote, account }) => {
+    async ({ path, commentId, expectQuotedText, reopen, account }) => {
       const clients = await clientsForAccount(account);
       const { documentId } = await resolveDocument(clients, path);
-      return json(await resolveComment(clients, documentId, commentId, reopen ?? false, { expectQuote }));
+      return json(await resolveComment(clients, documentId, commentId, { expectQuotedText, reopen }));
     },
   );
 

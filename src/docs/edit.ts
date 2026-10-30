@@ -12,6 +12,8 @@ import { clearDirectRunStyling, pageBreakRequests, parseBlocks, holdsBlockMarkdo
 import { renderMarkdownInto } from './render.js';
 import { parsePageBreakLine } from './page-break.js';
 import { editTableMarkup, mentionsTableMarkup, type TableEditInput } from './table-edit.js';
+import { contextAround } from './context.js';
+import { REVIEW_READ } from './comments.js';
 
 export interface EditResult {
   status: 'ok' | 'not_found' | 'ambiguous' | 'no_segment' | 'confirm_required';
@@ -22,8 +24,6 @@ export interface EditResult {
   message?: string;
   confirmLoss?: string;
 }
-
-const CONTEXT = 30;
 
 // Block- and annotation-level wrappers the reader (transformer.ts) puts around a
 // line: the alignment wrapper, and the suggestion markers. They carry no text of
@@ -97,13 +97,6 @@ export function locate(text: string, oldString: string): Located {
     }
   }
   return { needle: oldString, positions: [], normalize: (part) => part };
-}
-
-export function contextAround(text: string, start: number, end: number): string {
-  const pre = text.slice(Math.max(0, start - CONTEXT), start);
-  const hit = text.slice(start, end);
-  const post = text.slice(end, end + CONTEXT);
-  return `…${pre}⟦${hit}⟧${post}…`.replace(/\n/g, '⏎');
 }
 
 // Docs range [startIndex, endIndex) for a plain-text [a, b) match.
@@ -528,7 +521,7 @@ export async function editDoc(
   newString: string,
   opts: { replaceAll?: boolean; tabId?: string; segment?: SegmentKind; page?: SegmentPage; baseDir?: string; confirmLoss?: string } = {},
 ): Promise<EditResult> {
-  const fetched = await clients.docs.documents.get({ documentId, includeTabsContent: true });
+  const fetched = await clients.docs.documents.get({ documentId, ...REVIEW_READ });
   const revisionId = fetched.data.revisionId ?? undefined;
   const tabId = resolveTabId(fetched.data, opts.tabId);
   const target = resolveSegmentTarget(fetched.data, { segment: opts.segment, page: opts.page, tabId });
