@@ -428,7 +428,7 @@ list's title is `title`, a date's language is `lang`.
 | date chip | `<time datetime="2026-11-15">Nov 15, 2026</time>` | `insertDate` |
 | person chip | `<a class="chip" href="mailto:jane@x.com">Jane Doe</a>` | `insertPerson` |
 | link chip (a Drive file) | `<a class="chip" href="https://docs.google.com/document/d/…">Q3 Spec</a>` | `insertRichLink` |
-| dropdown | `<input class="chip" list="kix.la3o7ghprzoj" value="Draft">`, its list once as `<datalist id="kix.la3o7ghprzoj" title="Status"><option>Draft</option><option>Final</option></datalist>` | `insertDropdown`, `updateDropdownProperties` |
+| dropdown | `<input class="chip" list="kix.la3o7ghprzoj" value="Draft">`, its list once as `<datalist id="kix.la3o7ghprzoj" title="Status"><option>Draft</option><option>Final</option></datalist>` | `insertDropdown`; a changed choice deletes the dropdown and inserts it again with the new choice |
 | horizontal rule | `---` | an empty paragraph with `border-bottom: 1pt solid #cccccc`: the API cannot make a rule, and this looks the same |
 | column break | `<span style="break-after:column"></span>` | refused: the API cannot make one |
 | equation | `<span class="equation" title="Google's API does not expose this equation; edit it in Google Docs"></span>` | refused: the API cannot make one |
