@@ -37,14 +37,33 @@ describe('the loss summary counts what a read cannot carry (#55)', () => {
     expect(loss.tabStops).toBe(2);
     expect(loss.tabStopLines).toEqual(['Signature:', 'Date:']);
   });
-  it('person, date and link chips', () => {
-    expect([loss.people, loss.dates, loss.richLinks]).toEqual([1, 1, 1]);
+  it('does not count a person chip, a date the API can format or a Drive file chip: the write puts them back (#58)', () => {
+    expect([loss.customFormatDates, loss.otherLinkChips]).toEqual([0, 0]);
+  });
+  it('counts a date in a format the API can only read, and a link chip to something that is not a Drive file (#58)', () => {
+    const changed = withoutLoss((d) =>
+      paragraphsOf(d).forEach((p) =>
+        p.elements!.forEach((e) => {
+          const date = (e as { dateElement?: { dateElementProperties: { dateFormat: string } } }).dateElement;
+          if (date) date.dateElementProperties.dateFormat = 'DATE_FORMAT_CUSTOM';
+          if (e.richLink) e.richLink.richLinkProperties!.uri = 'https://www.youtube.com/watch?v=abc';
+        }),
+      ),
+    );
+    expect(measureLoss(changed, 't.0')).toMatchObject({ customFormatDates: 1, otherLinkChips: 1 });
+  });
+  it('counts a table of contents and an equation (#58)', () => {
+    const changed = withoutLoss((d) => {
+      const body = d.tabs![0].documentTab!.body!;
+      body.content!.push({ tableOfContents: { content: [] } });
+      paragraphsOf(d)[0].elements!.unshift({ equation: {} } as docs_v1.Schema$ParagraphElement);
+    });
+    expect(measureLoss(changed, 't.0')).toMatchObject({ tablesOfContents: 1, equations: 1 });
   });
   it('links that point at a bookmark', () => expect(loss.bookmarkLinks).toBe(1));
 
   it('each count drops to zero when its item is removed from the fixture', () => {
     const noTabStops = withoutLoss((d) => paragraphsOf(d).forEach((p) => delete p.paragraphStyle!.tabStops));
-    const noChips = withoutLoss((d) => paragraphsOf(d).forEach((p) => (p.elements = p.elements!.filter((e) => !e.person && !(e as { dateElement?: unknown }).dateElement && !e.richLink))));
     const noLinks = withoutLoss((d) => paragraphsOf(d).forEach((p) => p.elements!.forEach((e) => delete e.textRun?.textStyle?.link)));
     const noSuggestions = withoutLoss((d) =>
       paragraphsOf(d).forEach((p) => p.elements!.forEach((e) => {
@@ -53,13 +72,12 @@ describe('the loss summary counts what a read cannot carry (#55)', () => {
       })),
     );
     expect(measureLoss(noTabStops, 't.0').tabStops).toBe(0);
-    expect(measureLoss(noChips, 't.0')).toMatchObject({ people: 0, dates: 0, richLinks: 0 });
     expect(measureLoss(noLinks, 't.0').bookmarkLinks).toBe(0);
     expect(measureLoss(noSuggestions, 't.0').suggestions).toBe(0);
   });
 
   it('names only what is present, and always the paragraphs', () => {
-    expect(lossSummary(loss)).toBe('6 paragraphs, 2 comments, 1 suggestion, 2 tab stops, 1 person chip, 1 date chip, 1 link chip, 1 link to a bookmark or heading');
+    expect(lossSummary(loss)).toBe('6 paragraphs, 2 comments, 1 suggestion, 2 tab stops, 1 link to a bookmark or heading');
     expect(lossSummary(measureLoss(withoutLoss(() => undefined), 't.0')).startsWith('6 paragraphs, 1 suggestion')).toBe(true);
   });
 

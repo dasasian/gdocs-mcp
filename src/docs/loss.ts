@@ -2,6 +2,7 @@ import type { docs_v1 } from 'googleapis';
 import { contentOf } from './structure.js';
 import { countSuggestions } from './suggestions.js';
 import { commentCounts, type ReviewedDocument } from './comments.js';
+import { isDriveFileUrl, type ParagraphElement } from './elements.js';
 
 export interface Loss {
   paragraphs: number;
@@ -10,16 +11,15 @@ export interface Loss {
   suggestions: number;
   tabStops: number;
   tabStopLines: string[];
-  people: number;
-  dates: number;
-  richLinks: number;
+  customFormatDates: number;
+  otherLinkChips: number;
+  equations: number;
+  tablesOfContents: number;
   bookmarkLinks: number;
   pageNumberFields: number;
   sectionBreaks: number;
   columnBreaks: number;
 }
-
-type ParagraphElementWithDate = docs_v1.Schema$ParagraphElement & { dateElement?: object };
 
 type Counted = Exclude<keyof Loss, 'tabStopLines' | 'commentsWithoutRange'>;
 
@@ -28,9 +28,10 @@ const LABELS: { key: Counted; one: string; many: string }[] = [
   { key: 'comments', one: 'comment', many: 'comments' },
   { key: 'suggestions', one: 'suggestion', many: 'suggestions' },
   { key: 'tabStops', one: 'tab stop', many: 'tab stops' },
-  { key: 'people', one: 'person chip', many: 'person chips' },
-  { key: 'dates', one: 'date chip', many: 'date chips' },
-  { key: 'richLinks', one: 'link chip', many: 'link chips' },
+  { key: 'customFormatDates', one: 'date in a format the API can only read', many: 'dates in a format the API can only read' },
+  { key: 'otherLinkChips', one: 'link chip to something that is not a Drive file', many: 'link chips to something that is not a Drive file' },
+  { key: 'equations', one: 'equation', many: 'equations' },
+  { key: 'tablesOfContents', one: 'table of contents', many: 'tables of contents' },
   { key: 'bookmarkLinks', one: 'link to a bookmark or heading', many: 'links to a bookmark or heading' },
   { key: 'pageNumberFields', one: 'page-number field', many: 'page-number fields' },
   { key: 'sectionBreaks', one: 'section break', many: 'section breaks' },
@@ -50,6 +51,8 @@ function paragraphsIn(content: docs_v1.Schema$StructuralElement[]): docs_v1.Sche
 function textOf(paragraph: docs_v1.Schema$Paragraph): string {
   return (paragraph.elements ?? []).map((e) => e.textRun?.content ?? '').join('').trim();
 }
+
+const CUSTOM_DATE_FORMATS = new Set(['DATE_FORMAT_CUSTOM', 'DATE_FORMAT_UNSPECIFIED']);
 
 const PAGE_NUMBER_FIELD_TYPES = ['PAGE_NUMBER', 'PAGE_COUNT'];
 
@@ -76,9 +79,10 @@ function pointsAtBookmarkOrHeading(link: docs_v1.Schema$Link | null | undefined)
  */
 export function measureLoss(doc: ReviewedDocument, tabId: string | undefined, segmentId?: string): Loss {
   const comments = commentCounts(doc, tabId, segmentId);
-  const loss: Loss = { paragraphs: 0, comments: comments.withRange + (segmentId ? 0 : comments.withoutRange), commentsWithoutRange: segmentId ? 0 : comments.withoutRange, suggestions: segmentId ? 0 : countSuggestions(doc, tabId), tabStops: 0, tabStopLines: [], people: 0, dates: 0, richLinks: 0, bookmarkLinks: 0, pageNumberFields: 0, sectionBreaks: 0, columnBreaks: 0 };
+  const loss: Loss = { paragraphs: 0, comments: comments.withRange + (segmentId ? 0 : comments.withoutRange), commentsWithoutRange: segmentId ? 0 : comments.withoutRange, suggestions: segmentId ? 0 : countSuggestions(doc, tabId), tabStops: 0, tabStopLines: [], customFormatDates: 0, otherLinkChips: 0, equations: 0, tablesOfContents: 0, bookmarkLinks: 0, pageNumberFields: 0, sectionBreaks: 0, columnBreaks: 0 };
   const content = contentOf(doc, tabId, segmentId);
   loss.sectionBreaks = content.slice(1).filter((el) => el.sectionBreak).length;
+  loss.tablesOfContents = content.filter((el) => el.tableOfContents).length;
   for (const paragraph of paragraphsIn(content)) {
     const text = textOf(paragraph);
     if (text) loss.paragraphs += 1;
@@ -87,10 +91,10 @@ export function measureLoss(doc: ReviewedDocument, tabId: string | undefined, se
       loss.tabStops += stops;
       loss.tabStopLines.push(text || '(empty line)');
     }
-    for (const element of (paragraph.elements ?? []) as ParagraphElementWithDate[]) {
-      if (element.person) loss.people += 1;
-      if (element.dateElement) loss.dates += 1;
-      if (element.richLink) loss.richLinks += 1;
+    for (const element of (paragraph.elements ?? []) as ParagraphElement[]) {
+      if (element.dateElement && CUSTOM_DATE_FORMATS.has(element.dateElement.dateElementProperties?.dateFormat ?? '')) loss.customFormatDates += 1;
+      if (element.richLink && !isDriveFileUrl(element.richLink.richLinkProperties?.uri ?? '')) loss.otherLinkChips += 1;
+      if (element.equation) loss.equations += 1;
       if (element.columnBreak) loss.columnBreaks += 1;
       if (isPageNumberField(element)) loss.pageNumberFields += 1;
       if (pointsAtBookmarkOrHeading(element.textRun?.textStyle?.link)) loss.bookmarkLinks += 1;
@@ -131,7 +135,10 @@ export function lossDetails(loss: Loss, docHasSeveralTabs: boolean): string[] {
     ...(loss.tabStops ? [`tab stops on ${loss.tabStopLines.length} line(s): ${shown.join(', ')}${more > 0 ? `, and ${more} more` : ''}. The Docs API cannot write tab stops, so they cannot be put back.`] : []),
     ...(loss.commentsWithoutRange && docHasSeveralTabs ? [`${loss.commentsWithoutRange} of the comments have no range (they were made in Drive), so they are counted for the whole doc, not for this tab.`] : []),
     ...(loss.pageNumberFields ? ['The Docs API can read a page-number field but cannot create one, so it cannot be put back. To keep it, add it by hand in Docs after the write.'] : []),
-    ...(loss.sectionBreaks ||loss.columnBreaks ? ['Section breaks and column breaks are not carried: a read does not show them, so a replace drops them, and the page setup and headers a section break holds go with it.'] : []),
+    ...(loss.sectionBreaks || loss.columnBreaks ? ['Section breaks and column breaks are not carried: a replace drops them, and the page setup and headers a section break holds go with it.'] : []),
+    ...(loss.equations ? ['The Docs API does not expose an equation and cannot create one, so it cannot be put back. To keep it, edit around it with edit_doc instead.'] : []),
+    ...(loss.tablesOfContents ? ['A table of contents is not read and cannot be created, so a replace drops it. Insert one again in Docs (Insert → Table of contents) after the write.'] : []),
+    ...(loss.otherLinkChips || loss.customFormatDates ? ['A link chip to something that is not a Drive file, and a date in a format the API can only read, cannot be made again; they come back as plain text or as a date in the default format.'] : []),
     ...(loss.bookmarkLinks ? ['A bookmark itself is invisible to the API; only links that point at one are counted, so a bookmark nothing links to is not in this list.'] : []),
   ];
 }
