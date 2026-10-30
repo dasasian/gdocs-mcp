@@ -58,6 +58,49 @@ describe('a suggested edit_doc', () => {
   });
 });
 
+describe('a suggested edit always names the suggestion it ended up in (#65)', () => {
+  const run = (content: string, marks: Record<string, string[]> = {}): docs_v1.Schema$ParagraphElement => ({ textRun: { content, ...marks } });
+  const paragraphOf = (runs: docs_v1.Schema$ParagraphElement[], startIndex: number): docs_v1.Schema$StructuralElement => {
+    let index = startIndex;
+    const elements = runs.map((element) => {
+      const length = element.textRun!.content!.length;
+      const placed = { ...element, startIndex: index, endIndex: index + length };
+      index += length;
+      return placed;
+    });
+    return { startIndex, endIndex: index, paragraph: { elements, paragraphStyle: { namedStyleType: 'NORMAL_TEXT' } } };
+  };
+  const NOTE = (): docs_v1.Schema$StructuralElement[] => [paragraphOf([run('Note: '), run('draft', { suggestedInsertionIds: ['s9'] }), run('\n')], 22)];
+  const withS1 = (inserted: string): docs_v1.Schema$Document => ({
+    revisionId: 'r1',
+    body: { content: [paragraphOf([run('Pay within '), run(inserted, { suggestedInsertionIds: ['s1'] }), run('30', { suggestedDeletionIds: ['s1'] }), run(' days.\n')], 1), ...NOTE()] },
+  });
+  const withoutS1 = (): docs_v1.Schema$Document => ({ revisionId: 'r1', body: { content: [paragraphOf([run('Pay within 30 days.\n')], 1), ...NOTE()] } });
+
+  it('an edit Docs folds into the same person’s pending suggestion returns that suggestion, and not an unrelated one', async () => {
+    const { clients, get } = clientsFor(withS1('45'), []);
+    get.mockResolvedValueOnce({ data: withS1('45') }).mockResolvedValue({ data: withS1('60') });
+    const result = await editDoc(clients, 'd', 'days', 'weeks', { suggest: true });
+    expect(result.suggestions).toEqual(['s1']);
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(get.mock.calls[1][0]).toMatchObject({ suggestionsViewMode: 'SUGGESTIONS_INLINE' });
+  });
+
+  it('a suggestion that is new is listed once, with the id Docs reported', async () => {
+    const { clients, get } = clientsFor(withoutS1(), ['s1']);
+    get.mockResolvedValueOnce({ data: withoutS1() }).mockResolvedValue({ data: withS1('45') });
+    expect((await editDoc(clients, 'd', '30', '45', { suggest: true })).suggestions).toEqual(['s1']);
+  });
+
+  it('an edit that sends nothing makes no second read and names nothing', async () => {
+    const { clients, get, batchUpdate } = clientsFor(withoutS1(), []);
+    const result = await editDoc(clients, 'd', 'Pay within 30 days.', 'Pay within 30 days.', { suggest: true });
+    expect(result.suggestions).toEqual([]);
+    expect(batchUpdate).not.toHaveBeenCalled();
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('what Docs cannot suggest is refused before anything is sent', () => {
   it.each([
     ['addDocumentTab', 'a new tab'],

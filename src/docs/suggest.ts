@@ -2,6 +2,8 @@ import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
 import type { TableLayout } from './table-layout.js';
 import { parseBlocks } from './write.js';
+import { getDocForReview, REVIEW_READ, type ReviewedDocument } from './comments.js';
+import { suggestionFootprints } from './suggestions.js';
 
 const UNSUGGESTABLE_REQUESTS: Record<string, string> = {
   addDocumentTab: 'a new tab',
@@ -51,6 +53,14 @@ interface SuggestionResponses {
   suggestionResponses?: { createdSuggestionIds?: string[] }[];
 }
 
+type DocumentsApi = GoogleClients['docs']['documents'];
+
+function withDocuments(clients: GoogleClients, replaced: Partial<Pick<DocumentsApi, 'get' | 'batchUpdate'>>): GoogleClients {
+  const documents = Object.create(clients.docs.documents, Object.fromEntries(Object.entries(replaced).map(([name, value]) => [name, { value }])));
+  const docs = Object.create(clients.docs, { documents: { value: documents } });
+  return { ...clients, docs };
+}
+
 /**
  * The same clients, except that every `documents.batchUpdate` is sent with `writeMode: "SUGGEST"` and the ids of the
  * suggestions it makes are added to `made`. A request Docs cannot suggest is refused before that batch is sent.
@@ -65,7 +75,43 @@ export function suggestingClients(clients: GoogleClients, made: string[]): Googl
     made.push(...(res.data.suggestionResponses ?? []).flatMap((response) => response.createdSuggestionIds ?? []));
     return res;
   };
-  const suggestingDocuments = Object.create(documents, { batchUpdate: { value: batchUpdate } });
-  const suggestingDocs = Object.create(clients.docs, { documents: { value: suggestingDocuments } });
-  return { ...clients, docs: suggestingDocs };
+  return withDocuments(clients, { batchUpdate: batchUpdate as DocumentsApi['batchUpdate'] });
+}
+
+export interface SuggestingSession {
+  clients: GoogleClients;
+  /** The ids of the suggestions that now hold the edited text, from one read after the write. Empty when no batch was sent. */
+  suggestionsNow(documentId: string): Promise<string[]>;
+}
+
+/**
+ * `suggestingClients`, plus a note of how the suggestions in the doc stood at the first read that had them inline.
+ * Docs folds an edit that touches the caller's own pending suggestion into it and reports no created id, so the ids are
+ * those the batches created, and those of the suggestions that differ after the write from before it.
+ */
+export function suggestingSession(clients: GoogleClients): SuggestingSession {
+  const made: string[] = [];
+  const suggesting = suggestingClients(clients, made);
+  const documents = suggesting.docs.documents;
+  let before: Map<string, string> | undefined;
+  let sentABatch = false;
+  const get = async (params: docs_v1.Params$Resource$Documents$Get, ...rest: unknown[]) => {
+    const read = documents.get.bind(documents) as (...args: unknown[]) => Promise<{ data: ReviewedDocument }>;
+    const res = await read(params, ...rest);
+    if (!before && params.suggestionsViewMode === REVIEW_READ.suggestionsViewMode) before = suggestionFootprints(res.data);
+    return res;
+  };
+  const batchUpdate = async (params: docs_v1.Params$Resource$Documents$Batchupdate, ...rest: unknown[]) => {
+    sentABatch = true;
+    const send = documents.batchUpdate.bind(documents) as (...args: unknown[]) => Promise<unknown>;
+    return send(params, ...rest);
+  };
+  const watched = withDocuments(suggesting, { get: get as DocumentsApi['get'], batchUpdate: batchUpdate as DocumentsApi['batchUpdate'] });
+  const suggestionsNow = async (documentId: string): Promise<string[]> => {
+    if (!sentABatch) return [];
+    const after = suggestionFootprints(await getDocForReview(suggesting, documentId));
+    const changed = [...after].filter(([id, footprint]) => before?.get(id) !== footprint).map(([id]) => id);
+    return [...new Set([...changed, ...made])];
+  };
+  return { clients: watched, suggestionsNow };
 }

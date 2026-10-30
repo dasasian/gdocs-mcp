@@ -5,7 +5,7 @@ import { segmentForWrite } from './segments.js';
 import { renderMarkdownInto } from './render.js';
 import { getDocForReview } from './comments.js';
 import { explainingCommentOnlyAccess, MUST_SUGGEST_MESSAGE } from './access.js';
-import { noSuggestedSegment, refuseColumnWidthsIn, suggestingClients, SuggestRefusal } from './suggest.js';
+import { noSuggestedSegment, refuseColumnWidthsIn, suggestingSession, SuggestRefusal } from './suggest.js';
 import { readFile } from 'node:fs/promises';
 import nodePath from 'node:path';
 import { parseBlocks } from './write.js';
@@ -237,9 +237,9 @@ export interface WriteOptions {
 export async function writeDoc(clients: GoogleClients, path: string, content: string, opts: WriteOptions = {}): Promise<WriteDocResult> {
   if (!opts.suggest) return explainingCommentOnlyAccess(MUST_SUGGEST_MESSAGE, () => applyWrite(clients, path, content, opts));
   refuseColumnWidthsIn(content);
-  const made: string[] = [];
-  const result = await applyWrite(suggestingClients(clients, made), path, content, opts);
-  return result.status === 'replaced' ? { ...result, suggestions: [...new Set(made)] } : result;
+  const session = suggestingSession(clients);
+  const result = await applyWrite(session.clients, path, content, opts);
+  return result.status === 'replaced' ? { ...result, suggestions: await session.suggestionsNow(result.documentId) } : result;
 }
 
 async function applyWrite(clients: GoogleClients, path: string, content: string, opts: WriteOptions): Promise<WriteDocResult> {

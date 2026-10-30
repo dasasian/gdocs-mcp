@@ -38,6 +38,7 @@ Also: `list_comments`, the comment count in `write_doc`'s loss summary and the c
 - `replace_all` is all or nothing. The text of every match goes in one batch (it was one batch per match, so a failure on match 3 left matches 1 and 2 changed). A table or image in `new_string` over several matches, and a row, column or merge change over several tables, are refused before anything is sent: they need the doc read again between steps. A cell or style change over several tables is one batch (#65).
 - A user with comment access who calls `edit_doc` or `write_doc` without `suggest` is told "you can only suggest on it: pass suggest: true" instead of Google's "Write access is required". `apply_suggestions` says that comment access can reject only your own suggestions: accepting, and rejecting another person's, need edit access (checked live) (#65).
 - Every re-read that takes the doc's text sets the suggestions view mode instead of relying on Google's default: after a table insert, a row or column change, a header create, and in `add_comment` and `download_images`. No behaviour changes today; the default is `SUGGESTIONS_INLINE` for editors and commenters (#65).
+- A suggested `edit_doc` or `write_doc` always names the suggestion the edit ended up in. When Docs folded the edit into your own pending suggestion it reported no id and the reply said `suggestions: []`; the reply now lists the ids found by one read after the write: those the batches created, plus every suggestion whose text or style changed (#65).
 
 ## [0.7.0] — 2026-10-29
 

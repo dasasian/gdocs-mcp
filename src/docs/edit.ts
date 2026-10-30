@@ -14,13 +14,13 @@ import { parsePageBreakLine } from './page-break.js';
 import { editTableMarkup, mentionsTableMarkup, type TableEditInput } from './table-edit.js';
 import { contextAround } from './context.js';
 import { REVIEW_READ } from './comments.js';
-import { refuseColumnWidthsIn, suggestingClients } from './suggest.js';
+import { refuseColumnWidthsIn, suggestingSession } from './suggest.js';
 import { explainingCommentOnlyAccess, MUST_SUGGEST_MESSAGE } from './access.js';
 
 export interface EditResult {
   status: 'ok' | 'not_found' | 'ambiguous' | 'no_segment' | 'confirm_required';
   replaced?: number;
-  /** with `suggest`, the ids of the suggestions the edit made. Docs folds a change into a touching suggestion of the same person, so there can be fewer than edits sent, and an id can be one that already existed. */
+  /** with `suggest`, the ids of the suggestions that now hold the edited text, found by one read after the write. Docs folds a change into a touching suggestion of the same person, so an id can be one that already existed. */
   suggestions?: string[];
   warnings?: string[];
   images?: { src: string; objectId: string }[];
@@ -550,9 +550,9 @@ interface EditOptions {
  */
 export async function editDoc(clients: GoogleClients, documentId: string, oldString: string, newString: string, opts: EditOptions = {}): Promise<EditResult> {
   if (!opts.suggest) return explainingCommentOnlyAccess(MUST_SUGGEST_MESSAGE, () => applyEdit(clients, documentId, oldString, newString, opts));
-  const made: string[] = [];
-  const result = await applyEdit(suggestingClients(clients, made), documentId, oldString, newString, opts);
-  return result.status === 'ok' ? { ...result, suggestions: [...new Set(made)] } : result;
+  const session = suggestingSession(clients);
+  const result = await applyEdit(session.clients, documentId, oldString, newString, opts);
+  return result.status === 'ok' ? { ...result, suggestions: await session.suggestionsNow(documentId) } : result;
 }
 
 async function applyEdit(clients: GoogleClients, documentId: string, oldString: string, newString: string, opts: EditOptions): Promise<EditResult> {

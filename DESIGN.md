@@ -717,10 +717,17 @@ edit_doc("/Work/Contract", "within 30 days", "within 45 days", suggest: true)
 → { suggestions: ["suggest.qfm833r2i6yr"] }
 ```
 
-- **The reply lists the ids of the suggestions made,** so the caller can hand
-  them to `apply_suggestions` (to withdraw them, say). Docs folds a new change
-  into a touching suggestion by the same person, so the list can be shorter
-  than the edits sent, and an id can be one that already existed.
+- **The reply lists the ids of the suggestions that now hold the edited text,**
+  so the caller can hand them to `apply_suggestions` (to withdraw them, say), and
+  a suggested edit always names a suggestion. Docs folds a new change into a
+  touching suggestion by the same person and then reports no created id, so the
+  ids are not read from the batch alone: after the write there is one more read,
+  and the list is the ids the batches created plus every suggestion whose text or
+  style differs from the read the edit started with. An id can therefore be one
+  that already existed (checked live: a second suggested edit on the words of the
+  first returns the first's id, and an edit elsewhere returns only its own). A
+  suggested edit that sends nothing makes no extra read and returns an empty
+  list.
 - **A suggested replace does not ask for `confirmLoss`.** Nothing is lost until
   a person accepts: rejecting a suggested replace of a whole doc brings back
   its text, images, tables and comments as they were (checked live). The guard

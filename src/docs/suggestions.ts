@@ -58,6 +58,29 @@ function rootsOfWholeDoc(doc: ReviewedDocument): unknown[] {
   return [doc.body, doc.headers, doc.footers, doc.documentStyle, doc.namedStyles];
 }
 
+function collectFootprints(node: unknown, found: Map<string, string[]>): void {
+  if (node === null || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    node.forEach((child) => collectFootprints(child, found));
+    return;
+  }
+  const { textStyle, content } = node as { textStyle?: docs_v1.Schema$TextStyle; content?: unknown };
+  const text = typeof content === 'string' ? content : textUnder(node);
+  for (const [field, value] of Object.entries(node)) {
+    if (!SUGGESTED_FIELD.test(field) || value === null || typeof value !== 'object') continue;
+    const ids = Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : Object.keys(value);
+    for (const id of ids) found.set(id, [...(found.get(id) ?? []), `${field}|${text}|${JSON.stringify(textStyle ?? null)}`]);
+  }
+  Object.values(node).forEach((child) => collectFootprints(child, found));
+}
+
+/** For each suggestion in the whole doc, what it holds: the text and style under every place it is marked. Two reads of the same suggestion differ when an edit changed it. */
+export function suggestionFootprints(doc: ReviewedDocument): Map<string, string> {
+  const found = new Map<string, string[]>();
+  rootsOfWholeDoc(doc).forEach((root) => collectFootprints(root, found));
+  return new Map([...found].map(([id, parts]) => [id, parts.join('\n')]));
+}
+
 /** How many suggestions touch the content of a tab's body, or of its header or footer (`segmentId`). */
 export function countSuggestions(doc: ReviewedDocument, tabId: string | undefined, segmentId?: string): number {
   return suggestionHolders([contentOf(doc, tabId, segmentId)]).size;
