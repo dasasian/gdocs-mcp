@@ -16,6 +16,14 @@ import { contextAround } from './context.js';
 import { REVIEW_READ } from './comments.js';
 import { refuseColumnWidthsIn, suggestingSession } from './suggest.js';
 import { explainingCommentOnlyAccess, MUST_SUGGEST_MESSAGE } from './access.js';
+import { parseInlineWithElements } from './inline.js';
+import { splitAtKeptElements, type Gap } from './element-diff.js';
+import { elementRequests, creationIssuesIn, listRequest, batchUpdateWithElements, ElementRefusal, type ListSpec, type PlacedElement } from './element-write.js';
+import { unsuggestableDropdownIssues } from './element-checks.js';
+import { chipTextChange, parseElement, type DropdownDefinition, type TokenTable } from './elements.js';
+import { renderDatalists } from './transformer.js';
+import { listSpecOfLine } from './write.js';
+import { tabContainer } from './structure.js';
 
 export interface EditResult {
   status: 'ok' | 'not_found' | 'ambiguous' | 'no_segment' | 'confirm_required';
@@ -302,7 +310,12 @@ interface Replacement {
   lineTexts: string[];
   segments: Segment[];
   plain: string;
+  /** the plain text with each element as its one character, to compare with the doc's. */
+  plainWithElements: string;
   breakOffsets: number[];
+  elements: PlacedElement[];
+  /** what the elements being made need from the markdown around them: the text of their notes, and their dropdown lists. */
+  context: { notes: Map<string, string>; lists: Map<string, ListSpec> };
 }
 
 function styleOnlyRequestsFor(
@@ -324,17 +337,19 @@ function styleOnlyRequestsFor(
 function replacementRequestsFor(
   doc: docs_v1.Schema$Document,
   { startIndex, endIndex }: DocRange,
-  { newLines, lineTexts, segments, plain, breakOffsets }: Replacement,
+  { newLines, lineTexts, segments, plain, breakOffsets, elements, context }: Replacement,
   tabId?: string,
   segmentId?: string,
 ): docs_v1.Schema$Request[] {
+  const elementsBefore = (offset: number): number => elements.filter((element) => element.index < offset).length;
   const breaks = breakOffsets.map((offset) => ({
-    index: startIndex + offset,
+    index: startIndex + offset + elementsBefore(offset),
     ownParagraph: offset === 0 ? startsParagraph(doc, tabId, segmentId, startIndex) : plain[offset - 1] === '\n',
   }));
   return [
     ...(endIndex > startIndex ? [{ deleteContentRange: { range: { startIndex, endIndex, tabId, segmentId } } }] : []),
     ...(plain ? [...insertedTextRequests(segments, plain, startIndex, tabId, segmentId), ...newParagraphRequests(newLines, lineTexts, startIndex, tabId, segmentId)] : []),
+    ...elementRequests(elements.map((element) => ({ ...element, index: startIndex + element.index })), { tabId, segmentId }, context),
     ...pageBreakRequests(breaks, tabId, segmentId),
   ];
 }
@@ -520,7 +535,7 @@ async function applyBlockEditsInOneBatch(context: BlockEditContext, edits: { mat
   }
   const requests = plans.flatMap((plan) => plan.requests);
   if (requests.length) {
-    await context.clients.docs.documents.batchUpdate({ documentId: context.documentId, requestBody: { requests, writeControl: writeControlFor(revisionId) } });
+    await batchUpdateWithElements(context.clients, context.documentId, requests, writeControlFor(revisionId), context.tabId);
   }
 }
 
@@ -535,6 +550,8 @@ const quotesTable = (oldString: string, newString: string): boolean =>
 const EMPTY_CONTENT_MESSAGE = 'There is nothing here to anchor an edit: the doc, tab or header/footer is empty. Use write_doc to write it.';
 
 interface EditOptions {
+  /** an edit to a footnote's text: the id of its segment. Set by the edit itself, from the `[^1]: …` line. */
+  footnoteId?: string;
   replaceAll?: boolean;
   tabId?: string;
   segment?: SegmentKind;
@@ -561,8 +578,14 @@ async function applyEdit(clients: GoogleClients, documentId: string, oldString: 
   const tabId = resolveTabId(fetched.data, opts.tabId);
   const target = resolveSegmentTarget(fetched.data, { segment: opts.segment, page: opts.page, tabId });
   if (target.error) return { status: 'no_segment', message: target.error };
-  const segmentId = target.segmentId;
+  const segmentId = opts.footnoteId ?? target.segmentId;
   const projection = project(fetched.data, tabId, segmentId);
+  const tokens = projection.tokens;
+
+  const datalistEdit = await editDatalists(clients, documentId, fetched.data, tabId, oldString, newString, revisionId);
+  if (datalistEdit) return datalistEdit;
+  const noteEdit = noteEditOf(fetched.data, tabId, oldString, newString);
+  if (noteEdit) return typeof noteEdit === 'string' ? { status: 'not_found', message: noteEdit } : applyEdit(clients, documentId, noteEdit.oldText, noteEdit.newText, { ...opts, footnoteId: noteEdit.footnoteId });
 
   const block = renderStyleBlock(styleRulesOf(fetched.data, tabId));
   const isEmpty = isEmptyContent(fetched.data, tabId, segmentId);
@@ -582,7 +605,10 @@ async function applyEdit(clients: GoogleClients, documentId: string, oldString: 
     throw new StyleSyntaxError(['new_string holds table tags, but old_string does not quote a table. Quote the table markup from read_doc in old_string, or write a whole <table> block.']);
   }
 
-  const located = locate(projection.text, oldString);
+  const definitions = definitionsIn(tokens.encode(newString, true));
+  const oldText = tokens.encode(oldString, true);
+  const newText = definitions.text;
+  const located = locate(projection.text, oldText);
   const { needle, positions } = located;
   if (positions.length === 0) {
     return { status: 'not_found', message: `"${oldString}" not found.` };
@@ -595,10 +621,11 @@ async function applyEdit(clients: GoogleClients, documentId: string, oldString: 
     };
   }
 
-  const shared = sharedLinesOf(oldString, newString, located);
+  const shared = sharedLinesOf(oldText, newText, located);
   const keepsAnything = shared.keepsPrefix || shared.keepsSuffix;
   const insertsOnly = keepsAnything && isBlank(shared.middleOld);
-  const joinedWords = softJoinedWords(shared.middleNew, insertsOnly && shared.continuesKeptLine);
+  const writesNewRule = createsRule(shared.middleNew, shared.middleOld, tokens);
+  const joinedWords = writesNewRule ? undefined : softJoinedWords(shared.middleNew, insertsOnly && shared.continuesKeptLine);
   const anchorPlainIndex = (matchStart: number): number => {
     if (!insertsOnly) return middleSpan(shared, matchStart, needle.length, false).from;
     return shared.keepsPrefix ? matchStart + shared.prefixLength - 1 : matchStart + needle.length - shared.suffixLength;
@@ -611,11 +638,31 @@ async function applyEdit(clients: GoogleClients, documentId: string, oldString: 
 
   if (insertsOnly && writesNothing) return { status: 'ok', replaced: 0 };
 
-  const asBlocks = !joinsAnchorParagraphs && (insertsOnly ? addsBlockText(written) : holdsBlockMarkdown(written));
+  const asBlocks = !joinsAnchorParagraphs && (writesNewRule || (insertsOnly ? addsBlockText(written) : holdsBlockMarkdown(written)));
+  const oldMiddleText = (matchStart: number): string => {
+    const span = insertsOnly ? { from: 0, to: 0 } : middleSpan(shared, matchStart, needle.length, writesNothing);
+    return projection.text.slice(span.from, span.to);
+  };
+  refuseElementsThatCannotBeWritten(oldMiddleText(positions[0]), written, definitions, tokens, { doc: fetched.data, tabId, segmentId, suggest: opts.suggest });
   if (asBlocks) {
-    parseBlocks(written);
-    if (opts.suggest) refuseColumnWidthsIn(written);
-    const context: BlockEditContext = { clients, documentId, doc: fetched.data, markdown: written, tabId, segmentId, baseDir: opts.baseDir };
+    const markdown = [tokens.decode(written), ...definitions.lines].join('\n\n');
+    parseBlocks(markdown);
+    const refused = creationIssuesIn(markdown, segmentId);
+    if (refused.length) throw new ElementRefusal(refused);
+    if (opts.suggest) refuseColumnWidthsIn(markdown);
+    const context: BlockEditContext = { clients, documentId, doc: fetched.data, markdown, tabId, segmentId, baseDir: opts.baseDir };
+    const keptGaps = insertsOnly || highestIndexFirst.length > 1 ? [] : gapsAroundKeptElements(projection, shared, highestIndexFirst[0], needle.length, writesNothing, written, tokens);
+    if (keptGaps.length > 0) {
+      const results = [];
+      for (const [k, gap] of [...keptGaps].reverse().entries()) {
+        const gapMarkdown = [tokens.decode(gap.written), ...definitions.lines].join('\n\n');
+        parseBlocks(gapMarkdown);
+        results.push(await applyBlockEdit({ ...context, markdown: gapMarkdown }, gap.matched, undefined, k === 0 ? revisionId : undefined));
+      }
+      const warnings = results.flatMap((result) => result.warnings);
+      const images = results.flatMap((result) => result.images);
+      return { status: 'ok', replaced: 1, ...(warnings.length ? { warnings } : {}), ...(images.length ? { images } : {}) };
+    }
     const edits = highestIndexFirst.map((matchStart) =>
       insertsOnly ? insertionPoint(projection, shared, matchStart, needle.length) : { side: undefined, matched: rangeOfSpan(projection, middleSpan(shared, matchStart, needle.length, false)) },
     );
@@ -627,29 +674,161 @@ async function applyEdit(clients: GoogleClients, documentId: string, oldString: 
     return { status: 'ok', replaced: highestIndexFirst.length, ...(warnings.length ? { warnings } : {}), ...(images.length ? { images } : {}) };
   }
 
-  const { lines: newLines, breaksAfterLines, issues: problems } = partitionNewString(written);
-  if (problems.length) throw new StyleSyntaxError(problems);
-  const segments = parseInline(newLines.map((l) => l.inner).join('\n'));
-  const plain = segments.map((s) => s.text).join('');
-  const lineTexts = plain.split('\n');
-  const replacement: Replacement = { newLines, lineTexts, segments, plain, breakOffsets: pageBreakOffsets(breaksAfterLines, lineTexts) };
+  const replacementFor = (gapWritten: string): Replacement => {
+    const { lines: newLines, breaksAfterLines, issues: problems } = partitionNewString(gapWritten);
+    if (problems.length) throw new StyleSyntaxError(problems);
+    const joined = newLines.map((l) => l.inner).join('\n');
+    const { segments, elements } = parseInlineWithElements(joined, tokens);
+    const plain = segments.map((s) => s.text).join('');
+    const lineTexts = plain.split('\n');
+    return {
+      newLines,
+      lineTexts,
+      segments,
+      plain,
+      plainWithElements: parseInline(joined).map((segment) => segment.text).join(''),
+      breakOffsets: pageBreakOffsets(breaksAfterLines, lineTexts),
+      elements: elements.map(({ offset, token }) => ({ index: offset, token })),
+      context: { notes: definitions.notes, lists: definitions.lists },
+    };
+  };
+  replacementFor(written);
 
   const requests = highestIndexFirst.flatMap((matchStart) => {
     if (insertsOnly) {
       const { side, matched } = insertionPoint(projection, shared, matchStart, needle.length);
-      return replacementRequestsFor(fetched.data, pointAt(side, matched), replacement, tabId, segmentId);
+      return replacementRequestsFor(fetched.data, pointAt(side, matched), replacementFor(written), tabId, segmentId);
     }
     const span = middleSpan(shared, matchStart, needle.length, writesNothing);
-    const sameWords = plain === projection.text.slice(span.from, span.to) && replacement.breakOffsets.length === 0;
-    if (sameWords) return styleOnlyRequestsFor(projection, span.from, span.to - span.from, shared.middleOld, replacement, tabId, segmentId);
-    return replacementRequestsFor(fetched.data, rangeFor(projection, span.from, span.to), replacement, tabId, segmentId);
+    const gaps = splitAtKeptElements(shared.middleOld, projection.text.slice(span.from, span.to), written, tokens);
+    return [...gaps].reverse().flatMap((gap) => {
+      const from = span.from + gap.plainFrom;
+      const to = span.from + gap.plainTo;
+      const replacement = replacementFor(gap.written);
+      const sameWords = replacement.plainWithElements === projection.text.slice(from, to) && replacement.breakOffsets.length === 0;
+      if (sameWords) return styleOnlyRequestsFor(projection, from, to - from, gap.oldMarkup, replacement, tabId, segmentId);
+      const point = gap.followsKept ? projection.map[from - 1] + 1 : projection.map[to];
+      const range = from < to ? rangeFor(projection, from, to) : { startIndex: point, endIndex: point };
+      return replacementRequestsFor(fetched.data, range, replacement, tabId, segmentId);
+    });
   });
 
-  if (requests.length) {
-    await clients.docs.documents.batchUpdate({
-      documentId,
-      requestBody: { requests, writeControl: writeControlFor(revisionId) },
-    });
-  }
+  if (requests.length) await batchUpdateWithElements(clients, documentId, requests, writeControlFor(revisionId), tabId);
   return { status: 'ok', replaced: highestIndexFirst.length };
+}
+
+/** The stretches of one match between the elements the edit gives back, each with the doc range it covers; none when it keeps no element. */
+function gapsAroundKeptElements(projection: Projection, shared: SharedLines, matchStart: number, matchLength: number, deleting: boolean, written: string, tokens: TokenTable): (Gap & { matched: DocRange })[] {
+  const span = middleSpan(shared, matchStart, matchLength, deleting);
+  const gaps = splitAtKeptElements(shared.middleOld, projection.text.slice(span.from, span.to), written, tokens);
+  if (!gaps.some((gap) => gap.followsKept)) return [];
+  return gaps.map((gap) => {
+    const from = span.from + gap.plainFrom;
+    const to = span.from + gap.plainTo;
+    const point = gap.followsKept ? projection.map[from - 1] + 1 : projection.map[to];
+    return { ...gap, matched: from < to ? rangeFor(projection, from, to) : { startIndex: point, endIndex: point } };
+  });
+}
+
+const NOTE_LINE = /^\[\^([^\]\s]+)\]:[ \t]?(.*)$/;
+
+interface Definitions {
+  /** the new string without its definition lines. */
+  text: string;
+  /** the definition lines themselves, to hand to the block writer. */
+  lines: string[];
+  notes: Map<string, string>;
+  lists: Map<string, ListSpec>;
+}
+
+/** The `[^x]: note` and `<datalist>` lines of a new string are not text: they say what the footnotes and dropdowns it makes need. */
+function definitionsIn(encodedNewString: string): Definitions {
+  const notes = new Map<string, string>();
+  const lists = new Map<string, ListSpec>();
+  const lines: string[] = [];
+  const kept: string[] = [];
+  for (const line of encodedNewString.split('\n')) {
+    const note = NOTE_LINE.exec(line);
+    const list = listSpecOfLine(line);
+    if (note) notes.set(note[1], note[2].trim());
+    else if (list) lists.set(list.id, list);
+    else kept.push(line);
+    if (note || list) lines.push(line);
+  }
+  const text = lines.length === 0 ? encodedNewString : kept.join('\n').replace(/\n{3,}/g, '\n\n').replace(/^\n+|\n+$/g, '');
+  return { text, lines, notes, lists };
+}
+
+const createsRule = (written: string, oldMiddle: string, tokens: TokenTable): boolean => [...written].some((char) => tokens.tokenOf(char)?.startsWith('---') && !oldMiddle.includes(char));
+
+/** Refuses, before anything is sent, an element the edit would make that cannot be made, a chip given other words, or a dropdown change Docs cannot suggest. */
+function refuseElementsThatCannotBeWritten(
+  oldMiddle: string,
+  written: string,
+  definitions: Definitions,
+  tokens: TokenTable,
+  where: { doc: docs_v1.Schema$Document; tabId: string | undefined; segmentId: string | undefined; suggest: boolean | undefined },
+): void {
+  const tokensOf = (text: string): string[] => [...text].flatMap((char) => tokens.tokenOf(char) ?? []);
+  const was = new Set(tokensOf(oldMiddle));
+  const made = [...new Set(tokensOf(written))].filter((token) => !was.has(token));
+  const chipIssues = made.flatMap((token) => [...was].flatMap((before) => chipTextChange(parseElement(before), parseElement(token)) ?? []));
+  const suggestIssues = where.suggest ? unsuggestableDropdownIssues([...made, ...definitions.lines].join('\n'), where.doc, where.tabId).map((issue) => `Docs cannot suggest this: ${issue}`) : [];
+  const issues = [...chipIssues, ...suggestIssues];
+  if (issues.length) throw new ElementRefusal(issues);
+}
+
+function footnoteIdOf(doc: docs_v1.Schema$Document, tabId: string | undefined, number: string): string | undefined {
+  const find = (content: docs_v1.Schema$StructuralElement[]): string | undefined => {
+    for (const el of content) {
+      const cells = (el.table?.tableRows ?? []).flatMap((row) => row.tableCells ?? []);
+      const found = el.paragraph ? el.paragraph.elements?.find((pe) => pe.footnoteReference?.footnoteNumber === number)?.footnoteReference?.footnoteId : find(cells.flatMap((cell) => cell.content ?? []));
+      if (found) return found;
+    }
+    return undefined;
+  };
+  return find(tabContainer(doc, tabId)?.body?.content ?? []);
+}
+
+const nonBlankLines = (text: string): string[] => text.split('\n').filter((line) => line.trim() !== '');
+
+/** An edit whose old_string is one `[^1]: note` line edits that footnote's own text. Undefined for any other edit. */
+function noteEditOf(doc: docs_v1.Schema$Document, tabId: string | undefined, oldString: string, newString: string): { oldText: string; newText: string; footnoteId: string } | undefined {
+  const oldLines = nonBlankLines(oldString);
+  if (oldLines.length === 0 || !oldLines.every((line) => NOTE_LINE.test(line))) return undefined;
+  if (oldLines.length > 1) throw new Error('Edit one footnote at a time: old_string holds more than one [^n]: line.');
+  const [, label, oldText] = NOTE_LINE.exec(oldLines[0])!;
+  const newLine = nonBlankLines(newString).find((line) => NOTE_LINE.exec(line)?.[1] === label);
+  if (newLine === undefined) throw new Error(`new_string must keep the [^${label}]: line, with the note's new words. To remove a footnote, edit the text that holds its [^${label}].`);
+  const footnoteId = footnoteIdOf(doc, tabId, label);
+  if (!footnoteId) throw new Error(`This doc has no footnote [^${label}].`);
+  return { oldText, newText: NOTE_LINE.exec(newLine)![2], footnoteId };
+}
+
+/** An edit whose old_string is `<datalist>` lines changes those lists, everywhere they are used. Undefined for any other edit. */
+async function editDatalists(
+  clients: GoogleClients,
+  documentId: string,
+  doc: docs_v1.Schema$Document,
+  tabId: string | undefined,
+  oldString: string,
+  newString: string,
+  revisionId: string | undefined,
+): Promise<EditResult | undefined> {
+  const oldLines = nonBlankLines(oldString);
+  if (oldLines.length === 0 || !oldLines.every((line) => listSpecOfLine(line) !== undefined)) return undefined;
+  const shown = renderDatalists(doc, tabId);
+  if (!shown.includes(oldString.trim())) return { status: 'not_found', message: `old_string is not in the dropdown lists. They read:\n${shown}` };
+  const definitions = (tabContainer(doc, tabId) as { dropdownDefinitions?: Record<string, DropdownDefinition> } | undefined)?.dropdownDefinitions ?? {};
+  const requests = shown
+    .replace(oldString.trim(), () => newString.trim())
+    .split('\n')
+    .flatMap((line) => {
+      const spec = listSpecOfLine(line);
+      return spec ? [listRequest(spec, definitions[spec.id])] : [];
+    })
+    .filter((request): request is docs_v1.Schema$Request => request !== undefined);
+  if (!requests.length) return { status: 'ok', replaced: 0, message: 'no list changed' };
+  await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests, writeControl: writeControlFor(revisionId) } });
+  return { status: 'ok', replaced: requests.length };
 }

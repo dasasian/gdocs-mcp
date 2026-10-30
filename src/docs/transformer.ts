@@ -111,7 +111,6 @@ interface ReadContext {
   lists: Record<string, docs_v1.Schema$List>;
   objects: Record<string, docs_v1.Schema$InlineObject>;
   inTableCell: boolean;
-  inNote?: boolean;
 }
 
 function readContextFor(doc: docs_v1.Schema$Document, opts: RenderOpts): ReadContext {
@@ -133,18 +132,29 @@ function footnoteReferencesIn(content: docs_v1.Schema$StructuralElement[]): docs
   });
 }
 
-const withoutLeadingSpace = (para: docs_v1.Schema$Paragraph, first: boolean): docs_v1.Schema$Paragraph => {
-  const elements = para.elements ?? [];
-  const [head, ...rest] = elements;
-  return first && head?.textRun?.content?.startsWith(' ') ? { ...para, elements: [{ ...head, textRun: { ...head.textRun, content: head.textRun.content.slice(1) } }, ...rest] } : para;
-};
+const FOOTNOTE_TEXT_SIZE_PT = 10;
+
+/** A footnote's paragraph as one line of inline markup: Docs gives a note its own paragraph style and size, which are not the note's words. */
+function noteLine(para: docs_v1.Schema$Paragraph, first: boolean, context: ReadContext): string {
+  const elements = (para.elements ?? []).map((pe, k) => {
+    const run = pe.textRun;
+    if (!run) return pe;
+    const content = first && k === 0 ? (run.content ?? '').replace(/^ /, '') : run.content;
+    const { fontSize, ...style } = run.textStyle ?? {};
+    const plainSize = fontSize?.magnitude === FOOTNOTE_TEXT_SIZE_PT ? style : { ...style, fontSize };
+    return { ...pe, textRun: { ...run, content, textStyle: plainSize } };
+  });
+  const inlineWith = (escape: Escaper): string =>
+    lineBreaksAsBr(withoutParagraphMark(elements.map((pe) => (pe.textRun ? renderRun(pe.textRun, context.opts, undefined, (text) => escapeElementLookalikes(escape(text))) : renderElement(pe, context.opts))).join('')));
+  return inlineWith(literalTextEscaper(elements.map((pe) => pe.textRun?.content ?? '').join(''), inlineWith));
+}
 
 function footnoteNotes(content: docs_v1.Schema$StructuralElement[], context: ReadContext): string[] {
   const notes = tabContainer(context.doc, context.opts.tabId)?.footnotes ?? {};
   return footnoteReferencesIn(content).flatMap((reference) => {
     const footnote = notes[reference.footnoteId ?? ''];
     if (!footnote) return [];
-    const lines = (footnote.content ?? []).flatMap((el, k) => (el.paragraph ? [renderParagraph(withoutLeadingSpace(el.paragraph, k === 0), { ...context, inNote: true })] : []));
+    const lines = (footnote.content ?? []).flatMap((el, k) => (el.paragraph ? [noteLine(el.paragraph, k === 0, context)] : []));
     const note = lines.filter((line) => line !== '').join('<br>');
     return [note ? `[^${reference.footnoteNumber}]: ${note}` : `[^${reference.footnoteNumber}]:`];
   });

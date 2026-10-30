@@ -51,6 +51,14 @@ describe('the read shows every element a paragraph holds (#58)', () => {
     expect(renderMarkdown(doc)).toBe('<span class="page-number" title="Docs fills in the page number on each page"></span>');
   });
 
+  it('reads a footnote as its words, not as the paragraph and size Docs gives a note', () => {
+    const doc = JSON.parse(JSON.stringify(elementsDoc)) as docs_v1.Schema$Document;
+    doc.tabs![0].documentTab!.footnotes!['kix.xm1udxkuirip'].content = [
+      { startIndex: 0, endIndex: 15, paragraph: { elements: [{ startIndex: 0, endIndex: 15, textRun: { content: ' Business days\n', textStyle: { fontSize: { magnitude: 10, unit: 'PT' } } } }], paragraphStyle: { namedStyleType: 'NORMAL_TEXT', lineSpacing: 100 } } },
+    ];
+    expect(renderMarkdown(doc)).toBe(`${LINE}\n\n[^1]: Business days`);
+  });
+
   it('wraps a suggested element in <ins> in a tracked read', () => {
     const doc = JSON.parse(JSON.stringify(elementsDoc)) as docs_v1.Schema$Document;
     const person = doc.tabs![0].documentTab!.body!.content![1].paragraph!.elements!.find((e) => e.person)!;

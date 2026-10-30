@@ -1,6 +1,7 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
 import { tabContainer } from './structure.js';
+import { parseInline, segmentTextStyle } from './inline.js';
 import { creationIssue, parseElement, tokensIn, type DocumentTabWithElements, type Element, type DropdownDefinition } from './elements.js';
 
 /** Thrown before any request is sent, when an element in the markdown cannot be made. */
@@ -83,7 +84,15 @@ function footnoteRequests(label: string, notes: Map<string, string>, site: Eleme
   return (reply) => {
     const footnoteId = reply?.createFootnote?.footnoteId;
     if (!footnoteId || !note) return [];
-    return [{ insertText: { location: { index: NOTE_START, tabId: site.tabId, segmentId: footnoteId }, text: note } }];
+    const segments = parseInline(note);
+    let offset = 0;
+    const styles = segments.flatMap((segment) => {
+      const start = NOTE_START + offset;
+      offset += segment.text.length;
+      const { textStyle, fields } = segmentTextStyle(segment);
+      return fields.length ? [{ updateTextStyle: { range: { startIndex: start, endIndex: start + segment.text.length, tabId: site.tabId, segmentId: footnoteId }, textStyle, fields: fields.join(',') } }] : [];
+    });
+    return [{ insertText: { location: { index: NOTE_START, tabId: site.tabId, segmentId: footnoteId }, text: segments.map((segment) => segment.text).join('') } }, ...styles];
   };
 }
 
