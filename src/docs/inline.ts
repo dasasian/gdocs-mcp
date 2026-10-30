@@ -1,6 +1,7 @@
 import type { docs_v1 } from 'googleapis';
 import { CODE_FONT } from './markdown-spec.js';
 import { parseTextCss, textStyleUpdate, withoutUndefined, type TextCss } from './css.js';
+import { withoutElementTokens, type TokenTable } from './elements.js';
 
 // Parse inline markdown AND inline HTML into styled segments, so edit_doc's
 // new_string can carry **bold** / *italic* / ~~strike~~ / `code` / [text](url)
@@ -44,7 +45,7 @@ const decodeEscapes = (s: string): string =>
   s.replace(/[\uE000-\uE0FF]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - SENTINEL_LO));
 
 export function inlineStyleIssues(markup: string): string[] {
-  return [...encodeEscapes(markup).matchAll(SPAN_STYLE_RE)].flatMap((m) => parseTextCss(m[1]).issues.map((i) => `<span style> ${i}`));
+  return [...encodeEscapes(withoutElementTokens(markup)).matchAll(SPAN_STYLE_RE)].flatMap((m) => parseTextCss(m[1]).issues.map((i) => `<span style> ${i}`));
 }
 
 // Order matters: links/HTML and double-markers before single-markers.
@@ -114,6 +115,34 @@ export function parseInline(input: string): Segment[] {
     if (s.link) s.link = decodeEscapes(s.link);
   }
   return segments.filter((s) => s.text.length > 0);
+}
+
+export interface ElementAt {
+  /** position in the plain text, which has no room for the element yet. */
+  offset: number;
+  token: string;
+}
+
+/**
+ * `parseInline` over markup whose element tokens are already single characters (`TokenTable.encode`). The characters
+ * come out of the segments, so the segments' offsets are the plain text's, and each is returned as where its element goes.
+ */
+export function parseInlineWithElements(encoded: string, table: TokenTable): { segments: Segment[]; elements: ElementAt[] } {
+  const elements: ElementAt[] = [];
+  let offset = 0;
+  const segments = parseInline(encoded)
+    .map((segment) => {
+      let text = '';
+      for (const char of segment.text) {
+        const token = table.tokenOf(char);
+        if (token === undefined) text += char;
+        else elements.push({ offset: offset + text.length, token });
+      }
+      offset += text.length;
+      return { ...segment, text };
+    })
+    .filter((segment) => segment.text.length > 0);
+  return { segments, elements };
 }
 
 export function segmentTextStyle(seg: Segment): { textStyle: docs_v1.Schema$TextStyle; fields: string[] } {

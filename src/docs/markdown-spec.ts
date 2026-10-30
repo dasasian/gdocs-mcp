@@ -152,3 +152,18 @@ export const QUOTE_INDENT_PT = 36;
 export const QUOTE_BORDER_WIDTH_PT = 1.5;
 
 export const QUOTE_BORDER_HEX = '#cccccc';
+
+// A horizontal rule: Docs' own element reads as this line, and so does an empty
+// paragraph with a bottom border of this look, which is what the writer makes
+// (the API has no request that inserts a rule).
+export const RULE_LINE = '---';
+
+export const RULE_BORDER_WIDTH_PT = 1;
+
+export const RULE_BORDER_HEX = '#cccccc';
+
+export const EQUATION_TITLE = "Google's API does not expose this equation; edit it in Google Docs";
+
+export const PAGE_NUMBER_TITLE = 'Docs fills in the page number on each page';
+
+export const COLUMN_BREAK_SPAN = '<span style="break-after:column"></span>';

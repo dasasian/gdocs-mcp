@@ -167,7 +167,8 @@ export function contentOf(
   if (segmentId) {
     const fromHeader = segmentMap(doc, 'header', tabId)[segmentId];
     const fromFooter = segmentMap(doc, 'footer', tabId)[segmentId];
-    return (fromHeader ?? fromFooter)?.content ?? [];
+    const fromNote = tabContainer(doc, tabId)?.footnotes?.[segmentId];
+    return (fromHeader ?? fromFooter ?? fromNote)?.content ?? [];
   }
   return tabContainer(doc, tabId)?.body?.content ?? [];
 }

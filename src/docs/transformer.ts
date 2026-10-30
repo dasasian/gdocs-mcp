@@ -1,6 +1,8 @@
 import type { docs_v1 } from 'googleapis';
-import { contentOf, listsOf, inlineObjectsOf } from './structure.js';
-import { LEVEL_BY_HEADING, CLASS_BY_NAMED_STYLE, CODE_FONT, PAGE_BREAK_LINE, type CssAlign } from './markdown-spec.js';
+import { contentOf, listsOf, inlineObjectsOf, flattenTabs, tabContainer } from './structure.js';
+import { LEVEL_BY_HEADING, CLASS_BY_NAMED_STYLE, CODE_FONT, PAGE_BREAK_LINE, RULE_LINE, type CssAlign } from './markdown-spec.js';
+import { elementTokenOf, escapeElementLookalikes, suggestionIdsOf, isRuleElement, TokenTable, escapeAttribute, type ParagraphElement, type DocumentTabWithElements } from './elements.js';
+import { hasRuleBorder } from './rule.js';
 import { tableMarkup, tableLayoutOf, type CellReader } from './table-read.js';
 import type { TableLayout } from './table-layout.js';
 import { declarationsFor, styleAttribute } from './css.js';
@@ -25,7 +27,12 @@ export interface Projection {
   text: string;
   /** map[i] = Docs index (UTF-16 units) of plain-text char i. */
   map: number[];
+  /** each element (a chip, a footnote, a rule…) is one character of `text`: the one this table gives for its token. */
+  tokens: TokenTable;
 }
+
+const isRuleParagraph = (paragraph: docs_v1.Schema$Paragraph): boolean =>
+  !paragraph.bullet && hasRuleBorder(paragraph.paragraphStyle) && (paragraph.elements ?? []).every((pe) => !pe.textRun || pe.textRun.content === '\n');
 
 // Docs indices are UTF-16 code units and JS strings are UTF-16, so per-run
 // offsets align directly with Docs indices. Descends into table cells so
@@ -33,6 +40,7 @@ export interface Projection {
 export function project(doc: docs_v1.Schema$Document, tabId?: string, segmentId?: string): Projection {
   const chars: string[] = [];
   const map: number[] = [];
+  const tokens = new TokenTable();
   const pushText = (text: string, indexOfChar: (i: number) => number): void => {
     for (let i = 0; i < text.length; i++) {
       chars.push(text[i]);
@@ -41,19 +49,33 @@ export function project(doc: docs_v1.Schema$Document, tabId?: string, segmentId?
   };
   const endsLine = (): boolean => chars.length === 0 || chars[chars.length - 1] === '\n';
   const projectParagraph = (paragraph: docs_v1.Schema$Paragraph): void => {
-    let afterBreak = false;
+    let afterLineElement = false;
+    if (isRuleParagraph(paragraph)) {
+      const start = paragraph.elements?.[0]?.startIndex ?? 0;
+      if (!endsLine()) pushText('\n', () => start);
+      pushText(tokens.charFor(RULE_LINE), () => start);
+      pushText('\n', () => start);
+      return;
+    }
     for (const pe of paragraph.elements ?? []) {
       const start = pe.startIndex ?? 0;
-      if (pe.pageBreak) {
+      if (pe.pageBreak || isRuleElement(pe)) {
         if (!endsLine()) pushText('\n', () => start);
-        pushText(PAGE_BREAK_LINE, () => start);
-        afterBreak = true;
+        pushText(pe.pageBreak ? PAGE_BREAK_LINE : tokens.charFor(RULE_LINE), () => start);
+        afterLineElement = true;
+        continue;
+      }
+      const token = elementTokenOf(pe);
+      if (token !== undefined) {
+        if (afterLineElement) pushText('\n', () => start - 1);
+        afterLineElement = false;
+        pushText(tokens.charFor(token), () => start);
         continue;
       }
       const content = pe.textRun?.content;
       if (!content) continue;
-      if (afterBreak && content !== '\n') pushText('\n', () => start - 1);
-      afterBreak = false;
+      if (afterLineElement && content !== '\n') pushText('\n', () => start - 1);
+      afterLineElement = false;
       pushText(content, (i) => start + i);
     }
   };
@@ -71,7 +93,7 @@ export function project(doc: docs_v1.Schema$Document, tabId?: string, segmentId?
     }
   };
   walk(contentOf(doc, tabId, segmentId));
-  return { text: chars.join(''), map };
+  return { text: chars.join(''), map, tokens };
 }
 
 export interface RenderOpts {
@@ -89,6 +111,7 @@ interface ReadContext {
   lists: Record<string, docs_v1.Schema$List>;
   objects: Record<string, docs_v1.Schema$InlineObject>;
   inTableCell: boolean;
+  inNote?: boolean;
 }
 
 function readContextFor(doc: docs_v1.Schema$Document, opts: RenderOpts): ReadContext {
@@ -96,8 +119,37 @@ function readContextFor(doc: docs_v1.Schema$Document, opts: RenderOpts): ReadCon
 }
 
 export function renderMarkdown(doc: docs_v1.Schema$Document, opts: RenderOpts = {}): string {
-  return renderBlocks(contentOf(doc, opts.tabId, opts.segmentId), readContextFor(doc, opts)).join('\n\n');
+  const context = readContextFor(doc, opts);
+  const content = contentOf(doc, opts.tabId, opts.segmentId);
+  const notes = opts.segmentId ? [] : footnoteNotes(content, context);
+  return [...renderBlocks(content, context), ...(notes.length ? [notes.join('\n')] : [])].join('\n\n');
 }
+
+function footnoteReferencesIn(content: docs_v1.Schema$StructuralElement[]): docs_v1.Schema$FootnoteReference[] {
+  return content.flatMap((el) => {
+    if (el.paragraph) return (el.paragraph.elements ?? []).flatMap((pe) => (pe.footnoteReference ? [pe.footnoteReference] : []));
+    const cells = (el.table?.tableRows ?? []).flatMap((row) => row.tableCells ?? []);
+    return footnoteReferencesIn(cells.flatMap((cell) => cell.content ?? []));
+  });
+}
+
+const withoutLeadingSpace = (para: docs_v1.Schema$Paragraph, first: boolean): docs_v1.Schema$Paragraph => {
+  const elements = para.elements ?? [];
+  const [head, ...rest] = elements;
+  return first && head?.textRun?.content?.startsWith(' ') ? { ...para, elements: [{ ...head, textRun: { ...head.textRun, content: head.textRun.content.slice(1) } }, ...rest] } : para;
+};
+
+function footnoteNotes(content: docs_v1.Schema$StructuralElement[], context: ReadContext): string[] {
+  const notes = tabContainer(context.doc, context.opts.tabId)?.footnotes ?? {};
+  return footnoteReferencesIn(content).flatMap((reference) => {
+    const footnote = notes[reference.footnoteId ?? ''];
+    if (!footnote) return [];
+    const lines = (footnote.content ?? []).flatMap((el, k) => (el.paragraph ? [renderParagraph(withoutLeadingSpace(el.paragraph, k === 0), { ...context, inNote: true })] : []));
+    const note = lines.filter((line) => line !== '').join('<br>');
+    return [note ? `[^${reference.footnoteNumber}]: ${note}` : `[^${reference.footnoteNumber}]:`];
+  });
+}
+
 
 /** The markup of one table the way `renderMarkdown` reads it, for an edit that quotes it. */
 export function renderTableMarkup(doc: docs_v1.Schema$Document, table: docs_v1.Schema$Table, opts: RenderOpts = {}): string {
@@ -159,11 +211,11 @@ function renderBlocks(content: docs_v1.Schema$StructuralElement[], context: Read
       if (el.table && !context.inTableCell) blocks.push(renderTableMarkup(context.doc, el.table, context.opts));
       continue;
     }
-    for (const piece of splitAtPageBreaks(el.paragraph)) {
-      if (piece === PAGE_BREAK) {
+    for (const piece of splitAtLineElements(el.paragraph)) {
+      if (piece === PAGE_BREAK || piece === RULE) {
         flushList();
         endsInQuote = false;
-        blocks.push(PAGE_BREAK_LINE);
+        blocks.push(piece === PAGE_BREAK ? PAGE_BREAK_LINE : RULE_LINE);
       } else {
         addParagraph(piece);
       }
@@ -174,23 +226,24 @@ function renderBlocks(content: docs_v1.Schema$StructuralElement[], context: Read
 }
 
 const PAGE_BREAK = Symbol('page break');
+const RULE = Symbol('horizontal rule');
 
 const holdsContent = (elements: docs_v1.Schema$ParagraphElement[]): boolean =>
-  elements.some((pe) => (pe.textRun ? withoutParagraphMark(pe.textRun.content ?? '') !== '' : !pe.pageBreak));
+  elements.some((pe) => (pe.textRun ? withoutParagraphMark(pe.textRun.content ?? '') !== '' : !pe.pageBreak && !pe.horizontalRule));
 
-function splitAtPageBreaks(para: docs_v1.Schema$Paragraph): (docs_v1.Schema$Paragraph | typeof PAGE_BREAK)[] {
+function splitAtLineElements(para: docs_v1.Schema$Paragraph): (docs_v1.Schema$Paragraph | typeof PAGE_BREAK | typeof RULE)[] {
   const elements = para.elements ?? [];
-  if (!elements.some((pe) => pe.pageBreak)) return [para];
-  const pieces: (docs_v1.Schema$Paragraph | typeof PAGE_BREAK)[] = [];
+  if (!elements.some((pe) => pe.pageBreak || pe.horizontalRule)) return [para];
+  const pieces: (docs_v1.Schema$Paragraph | typeof PAGE_BREAK | typeof RULE)[] = [];
   let run: docs_v1.Schema$ParagraphElement[] = [];
   const closeRun = (): void => {
     if (holdsContent(run)) pieces.push({ ...para, elements: run });
     run = [];
   };
   for (const pe of elements) {
-    if (pe.pageBreak) {
+    if (pe.pageBreak || pe.horizontalRule) {
       closeRun();
-      pieces.push(PAGE_BREAK);
+      pieces.push(pe.pageBreak ? PAGE_BREAK : RULE);
     } else {
       run.push(pe);
     }
@@ -271,16 +324,18 @@ function fencedCode(code: string): string {
 
 function renderParagraph(para: docs_v1.Schema$Paragraph, context: ReadContext): string {
   const { opts, objects } = context;
+  if (isRuleParagraph(para)) return RULE_LINE;
   const code = codeParagraphText(para, context);
   if (code !== undefined) return fencedCode(code);
   const named = para.paragraphStyle?.namedStyleType ?? 'NORMAL_TEXT';
   const eff = baselineStyles(context, named);
   const paragraphFamily = eff.named?.textStyle?.weightedFontFamily?.fontFamily ?? eff.normal?.textStyle?.weightedFontFamily?.fontFamily ?? undefined;
   const inlineWith = (escape: Escaper): string => {
-    const safe: Escaper = context.inTableCell ? (text) => escapeTableTags(escape(text)) : escape;
+    const safe: Escaper = context.inTableCell ? (text) => escapeElementLookalikes(escapeTableTags(escape(text))) : (text) => escapeElementLookalikes(escape(text));
     let joined = '';
     for (const pe of para.elements ?? []) {
       if (pe.textRun) joined += renderRun(pe.textRun, opts, paragraphFamily, safe);
+      else if (elementTokenOf(pe) !== undefined) joined += renderElement(pe, opts);
       else if (pe.inlineObjectElement?.inlineObjectId && !context.inTableCell) {
         joined += renderImage(pe.inlineObjectElement.inlineObjectId, objects);
       }
@@ -305,8 +360,14 @@ function renderParagraph(para: docs_v1.Schema$Paragraph, context: ReadContext): 
   return inline;
 }
 
-const textRunsOf = (cell: docs_v1.Schema$TableCell): docs_v1.Schema$TextRun[] =>
-  (cell.content ?? []).flatMap((el) => el.paragraph?.elements ?? []).flatMap((pe) => (pe.textRun ? [pe.textRun] : []));
+const cellElementsOf = (cell: docs_v1.Schema$TableCell): ParagraphElement[] =>
+  (cell.content ?? []).flatMap((el) => el.paragraph?.elements ?? []).filter((pe) => pe.textRun || elementTokenOf(pe) !== undefined);
+
+const cellTextOf = (elements: ParagraphElement[]): string => elements.map((pe) => pe.textRun?.content ?? '').join('');
+
+function renderCellElements(elements: ParagraphElement[], context: ReadContext, escape: Escaper, escapeToken: Escaper): string {
+  return elements.map((pe) => (pe.textRun ? renderRun(pe.textRun, context.opts, undefined, escape) : escapeToken(renderElement(pe, context.opts)))).join('');
+}
 
 function plainAlignmentOf(cell: docs_v1.Schema$TableCell, context: ReadContext): CssAlign | null | undefined {
   const content = cell.content ?? [];
@@ -330,21 +391,22 @@ function trackedEmptyCell(cell: docs_v1.Schema$TableCell, context: ReadContext):
 }
 
 function pipeCellText(cell: docs_v1.Schema$TableCell, context: ReadContext): string {
-  const runs = textRunsOf(cell);
+  const elements = cellElementsOf(cell);
+  const escapePipes: Escaper = (text) => text.replace(/\|/g, '\\|');
   const inlineWith = (escape: Escaper): string => {
-    const escapeWithPipes: Escaper = (text) => escape(text).replace(/\|/g, '\\|');
-    return lineBreaksAsBr(withoutParagraphMark(runs.map((run) => renderRun(run, context.opts, undefined, escapeWithPipes)).join('')));
+    const escapeWithPipes: Escaper = (text) => escapePipes(escapeElementLookalikes(escape(text)));
+    return lineBreaksAsBr(withoutParagraphMark(renderCellElements(elements, context, escapeWithPipes, escapePipes)));
   };
-  const literalText = runs.map((run) => run.content ?? '').join('').replace(/\|/g, '');
+  const literalText = cellTextOf(elements).replace(/\|/g, '');
   const inline = inlineWith(literalTextEscaper(literalText, inlineWith, unescapePipes)) || trackedEmptyCell(cell, context);
   return cellNeedsParagraphTag(inline) ? `<p>${inline}</p>` : inline;
 }
 
 function htmlCellText(cell: docs_v1.Schema$TableCell, context: ReadContext): string {
-  const runs = textRunsOf(cell);
+  const elements = cellElementsOf(cell);
   const inlineWith = (escape: Escaper): string =>
-    lineBreaksAsBr(withoutParagraphMark(runs.map((run) => renderRun(run, context.opts, undefined, (text) => escapeTableTags(escape(text)))).join('')));
-  const inline = inlineWith(literalTextEscaper(runs.map((run) => run.content ?? '').join(''), inlineWith)) || trackedEmptyCell(cell, context);
+    lineBreaksAsBr(withoutParagraphMark(renderCellElements(elements, context, (text) => escapeElementLookalikes(escapeTableTags(escape(text))), (token) => token)));
+  const inline = inlineWith(literalTextEscaper(cellTextOf(elements), inlineWith)) || trackedEmptyCell(cell, context);
   return cellNeedsParagraphTag(inline) || inline.startsWith('>') ? `<p>${inline}</p>` : inline;
 }
 
@@ -380,6 +442,15 @@ function wrapEmphasis(text: string, s: docs_v1.Schema$TextStyle, isCode: boolean
   return out;
 }
 
+/** An element as the read spells it, inside the suggestion marker a tracked read puts around it. */
+function renderElement(element: ParagraphElement, opts: RenderOpts): string {
+  const token = elementTokenOf(element) ?? '';
+  if (!opts.tracked) return token;
+  const { inserted, deleted } = suggestionIdsOf(element);
+  if (inserted) return `<ins data-sug="${inserted}">${token}</ins>`;
+  return deleted ? `<del data-sug="${deleted}">${token}</del>` : token;
+}
+
 function renderRun(run: docs_v1.Schema$TextRun, opts: RenderOpts, paragraphFamily: string | undefined, escape: Escaper): string {
   let text = run.content ?? '';
   const trailingNl = text.endsWith('\n');
@@ -400,4 +471,28 @@ function renderRun(run: docs_v1.Schema$TextRun, opts: RenderOpts, paragraphFamil
   }
 
   return trailingNl ? `${text}\n` : text;
+}
+
+function dropdownListIdsIn(content: docs_v1.Schema$StructuralElement[]): string[] {
+  return content.flatMap((el) => {
+    if (el.paragraph) return (el.paragraph.elements ?? []).flatMap((pe) => ((pe as ParagraphElement).dropdown?.dropdownProperties?.dropdownDefinitionId ? [(pe as ParagraphElement).dropdown!.dropdownProperties!.dropdownDefinitionId!] : []));
+    const cells = (el.table?.tableRows ?? []).flatMap((row) => row.tableCells ?? []);
+    return dropdownListIdsIn(cells.flatMap((cell) => cell.content ?? []));
+  });
+}
+
+/** Each pick-from-a-list list the tab's dropdowns use, once, as the `<datalist>` lines that go after the style block. */
+export function renderDatalists(doc: docs_v1.Schema$Document, tabId?: string): string {
+  const container = tabContainer(doc, tabId) as DocumentTabWithElements | undefined;
+  const definitions = container?.dropdownDefinitions ?? {};
+  const segments = [container?.body?.content ?? [], ...Object.values(container?.headers ?? {}).map((h) => h.content ?? []), ...Object.values(container?.footers ?? {}).map((f) => f.content ?? [])];
+  const used = [...new Set(segments.flatMap(dropdownListIdsIn))];
+  return used
+    .flatMap((id) => {
+      const properties = definitions[id]?.dropdownDefinitionProperties;
+      if (!properties) return [];
+      const options = (properties.options ?? []).map((option) => `<option>${escapeAttribute(option.displayValue ?? '')}</option>`).join('');
+      return [`<datalist id="${escapeAttribute(id)}" title="${escapeAttribute(properties.title ?? '')}">${options}</datalist>`];
+    })
+    .join('\n');
 }

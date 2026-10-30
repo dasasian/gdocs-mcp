@@ -46,6 +46,7 @@ const NEEDS_TAG: [string, string][] = [
   ['code fence with a language', '```js'],
   ['tilde fence', '~~~'],
   ['four spaces', '    aligned'],
+  ['horizontal rule', '---'],
 ];
 
 const NEEDS_ESCAPE: [string, string, string][] = [
@@ -68,7 +69,6 @@ const STAYS_CLEAN = [
   'Signed: ____ Date: ____',
   'file_name_here',
   '<Client Name>',
-  '---',
   '***',
   'AT&T and &copy;',
   '| a | b |',

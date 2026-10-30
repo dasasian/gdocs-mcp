@@ -1,5 +1,5 @@
 import type { GoogleClients } from '../google/clients.js';
-import { renderMarkdown } from './transformer.js';
+import { renderMarkdown, renderDatalists } from './transformer.js';
 import { styleRulesOf, renderStyleBlock } from './style-block.js';
 import { resolveTabId, listSegments, resolveSegmentId, type SegmentInfo, type SegmentKind, type SegmentPage } from './structure.js';
 
@@ -45,7 +45,8 @@ export async function readDoc(
   const title = res.data.title ?? '';
   const segment = opts.segment ?? 'body';
   const styleBlock = renderStyleBlock(styleRulesOf(res.data, tabId));
-  const withStyleBlock = (markdown: string): string => [styleBlock, markdown].filter(Boolean).join('\n\n');
+  const datalists = renderDatalists(res.data, tabId);
+  const withStyleBlock = (markdown: string): string => [styleBlock, datalists, markdown].filter(Boolean).join('\n\n');
 
   if (segment === 'all') {
     const parts = [`<!-- segment: body -->\n${renderMarkdown(res.data, { tracked, tabId })}`];
