@@ -9,7 +9,8 @@ import { paragraphCssChange, paragraphStyleUpdate, StyleSyntaxError } from './cs
 import { splitEditLine, type ParagraphLine, type ParagraphMarkup } from './paragraph-markup.js';
 import { parseStyleBlock, namedStyleRequests, styleRulesOf, renderStyleBlock } from './style-block.js';
 import { clearDirectRunStyling, pageBreakRequests, parseBlocks, holdsBlockMarkdown, isTableRow, isTableSep, splitRow } from './write.js';
-import { renderMarkdownInto } from './render.js';
+import { planMarkdownRender, renderMarkdownInto, type RenderIntoOptions } from './render.js';
+import { refusal } from './table-pairing.js';
 import { parsePageBreakLine } from './page-break.js';
 import { editTableMarkup, mentionsTableMarkup, type TableEditInput } from './table-edit.js';
 import { contextAround } from './context.js';
@@ -483,8 +484,8 @@ function blockInsertionRange(context: BlockEditContext, matched: DocRange, side:
   return { startIndex: at, endIndex: at };
 }
 
-async function applyBlockEdit(context: BlockEditContext, matched: DocRange, side: InsertionSide | undefined, revisionId: string | undefined) {
-  const { clients, documentId, doc, markdown, tabId, segmentId, baseDir } = context;
+function blockRenderOptions(context: BlockEditContext, matched: DocRange, side: InsertionSide | undefined, revisionId: string | undefined): RenderIntoOptions {
+  const { doc, tabId, segmentId, baseDir } = context;
   const { startIndex, endIndex } = blockInsertionRange(context, matched, side);
   const startsAParagraph = paragraphEdgesAt(doc, tabId, segmentId, startIndex).atStart;
   const trimmed = startsAParagraph ? { before: 0, after: 0 } : { before: spacesAround(doc, tabId, segmentId, startIndex).before, after: spacesAround(doc, tabId, segmentId, endIndex).after };
@@ -495,7 +496,7 @@ async function applyBlockEdit(context: BlockEditContext, matched: DocRange, side
     ...(to > from ? [{ deleteContentRange: { range: { startIndex: from, endIndex: to, tabId, segmentId } } }] : []),
     ...(startsAParagraph ? [] : [{ insertText: { location: { index: from, tabId, segmentId }, text: '\n' } }]),
   ];
-  return renderMarkdownInto(clients, documentId, markdown, {
+  return {
     tabId,
     segmentId,
     baseDir,
@@ -505,7 +506,22 @@ async function applyBlockEdit(context: BlockEditContext, matched: DocRange, side
     resetParagraphStyles: true,
     startsParagraph: true,
     endsInExistingParagraphMark: endsAtParagraphMark,
-  });
+  };
+}
+
+function applyBlockEdit(context: BlockEditContext, matched: DocRange, side: InsertionSide | undefined, revisionId: string | undefined) {
+  return renderMarkdownInto(context.clients, context.documentId, context.markdown, blockRenderOptions(context, matched, side, revisionId));
+}
+
+async function applyBlockEditsInOneBatch(context: BlockEditContext, edits: { matched: DocRange; side: InsertionSide | undefined }[], revisionId: string | undefined): Promise<void> {
+  const plans = edits.map(({ matched, side }) => planMarkdownRender(context.markdown, blockRenderOptions(context, matched, side, revisionId)));
+  if (plans.some(({ tables, images }) => tables.length > 0 || images.length > 0)) {
+    throw refusal(`Nothing was changed: replace_all matched ${edits.length} places and new_string holds a table or an image. Those are placed after the text, each with the doc read again, so the matches cannot all be written in one batch and a failure part-way would leave some changed. Edit one place at a time: quote enough context for one match.`);
+  }
+  const requests = plans.flatMap((plan) => plan.requests);
+  if (requests.length) {
+    await context.clients.docs.documents.batchUpdate({ documentId: context.documentId, requestBody: { requests, writeControl: writeControlFor(revisionId) } });
+  }
 }
 
 const holdsOnlyTableRows = (text: string): boolean => {
@@ -600,16 +616,14 @@ async function applyEdit(clients: GoogleClients, documentId: string, oldString: 
     parseBlocks(written);
     if (opts.suggest) refuseColumnWidthsIn(written);
     const context: BlockEditContext = { clients, documentId, doc: fetched.data, markdown: written, tabId, segmentId, baseDir: opts.baseDir };
-    const warnings: string[] = [];
-    const images: { src: string; objectId: string }[] = [];
-    for (const [order, matchStart] of highestIndexFirst.entries()) {
-      const edit = insertsOnly
-        ? insertionPoint(projection, shared, matchStart, needle.length)
-        : { side: undefined, matched: rangeOfSpan(projection, middleSpan(shared, matchStart, needle.length, false)) };
-      const applied = await applyBlockEdit(context, edit.matched, edit.side, order === 0 ? revisionId : undefined);
-      warnings.push(...applied.warnings);
-      images.push(...applied.images);
+    const edits = highestIndexFirst.map((matchStart) =>
+      insertsOnly ? insertionPoint(projection, shared, matchStart, needle.length) : { side: undefined, matched: rangeOfSpan(projection, middleSpan(shared, matchStart, needle.length, false)) },
+    );
+    if (edits.length > 1) {
+      await applyBlockEditsInOneBatch(context, edits, revisionId);
+      return { status: 'ok', replaced: edits.length };
     }
+    const { warnings, images } = await applyBlockEdit(context, edits[0].matched, edits[0].side, revisionId);
     return { status: 'ok', replaced: highestIndexFirst.length, ...(warnings.length ? { warnings } : {}), ...(images.length ? { images } : {}) };
   }
 

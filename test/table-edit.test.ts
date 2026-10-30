@@ -573,3 +573,29 @@ describe('a row quoted from a tracked read (#64)', () => {
     expect(batchUpdate).not.toHaveBeenCalled();
   });
 });
+
+describe('replace_all over several tables is one batch, or nothing (#65)', () => {
+  const twoTables = (): docs_v1.Schema$Document => {
+    const two = bodyDocWithTable(PRICING);
+    const second = tableElement(PRICING, two.body!.content![1].endIndex! + 1);
+    two.body!.content!.splice(2, 0, second, { startIndex: second.endIndex!, endIndex: second.endIndex! + 1, paragraph: { elements: [{ textRun: { content: '\n' } }] } });
+    return two;
+  };
+
+  it('a cell changed in both tables goes in one batch, the later table first', async () => {
+    const { clients, batchUpdate } = clientsFor(twoTables());
+    const result = await editDoc(clients, 'd', '| Client | $0 |', '| Customer | $0 |', { replaceAll: true });
+    expect(result.status).toBe('ok');
+    expect(batchUpdate).toHaveBeenCalledTimes(1);
+    const typed = allRequests(batchUpdate).filter((r) => r.insertText);
+    expect(typed.map((r) => r.insertText!.text)).toEqual(['Customer', 'Customer']);
+    expect(typed[0].insertText!.location!.index).toBeGreaterThan(typed[1].insertText!.location!.index!);
+  });
+
+  it('a row added to both tables is refused before anything is sent', async () => {
+    const { clients, batchUpdate } = clientsFor(twoTables());
+    const row = '| Client | $0 |';
+    await expect(editDoc(clients, 'd', row, `${row}\n| Tax | $1 |`,{ replaceAll: true })).rejects.toThrow(/one table at a time/);
+    expect(batchUpdate).not.toHaveBeenCalled();
+  });
+});

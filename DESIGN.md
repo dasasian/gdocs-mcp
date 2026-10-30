@@ -573,7 +573,7 @@ Two rules this design enforces:
 - **Cross-run:** matches across formatting boundaries (a bold word mid-sentence does not break the match).
 - **0 matches** → error "not found" (+ nearest-text hint).
 - **>1 matches** → error listing each with surrounding context; agent retries with more context (same escape hatch as local `Edit`). This is also how disambiguation works without polluting reads with anchor IDs.
-- **`replace_all`** flag, same semantics as local `Edit`.
+- **`replace_all`** flag, same semantics as local `Edit`, and all or nothing: the text of every match goes in one `batchUpdate`, so a failure leaves the doc as it was (and with `suggest`, no half of the suggestions). What cannot go in one batch is refused before anything is sent: a table or an image in `new_string` over more than one match (they are placed after the text, each with the doc read again, and an image from a file is uploaded first), and a row, column or merge change over more than one table (the table is read again before its cells are filled). A cell or style change over several tables is one batch. Edit one place at a time for those.
 
 **Output (`new_string`):** the same **markdown + inline HTML** `write_doc` takes —
 inline constructs (bold/italic/code/links + `<span style>`), a paragraph's own

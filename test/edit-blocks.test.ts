@@ -318,6 +318,43 @@ describe('a one-letter anchor on an empty doc gets the write_doc refusal (#65)',
   });
 });
 
+describe('replace_all with block content is one batch, or nothing (#65)', () => {
+  const threeNotes = (): Piece[] => [{ text: 'TODO one' }, { text: 'middle' }, { text: 'TODO two' }, { text: 'middle' }, { text: 'TODO three' }];
+
+  it('three matches go in one batch, the last in the doc first', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf(threeNotes()));
+    const result = await editDoc(clients, 'd', 'TODO', '## Task', { replaceAll: true });
+    expect(result.status).toBe('ok');
+    expect(result.replaced).toBe(3);
+    expect(batchUpdate).toHaveBeenCalledTimes(1);
+    const heads = inserted(requestsOf(batchUpdate)).map((i) => i.location!.index!);
+    expect(heads).toHaveLength(3);
+    expect(heads).toEqual([...heads].sort((a, b) => b - a));
+  });
+
+  it('a later match cannot fail on its own: every request after the first batch would be refused, and none is sent', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf(threeNotes()));
+    batchUpdate.mockResolvedValueOnce({ data: { replies: [] } }).mockRejectedValue(new Error('Invalid requests[7]'));
+    const result = await editDoc(clients, 'd', 'TODO', '## Task', { replaceAll: true });
+    expect(result.status).toBe('ok');
+    expect(batchUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('an image or a table in new_string over several matches is refused before anything is sent', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf(threeNotes()));
+    await expect(editDoc(clients, 'd', 'TODO', '![logo](https://example.com/logo.png)', { replaceAll: true })).rejects.toThrow(/Edit one place at a time/);
+    await expect(editDoc(clients, 'd', 'TODO', '| a | b |\n| --- | --- |\n| 1 | 2 |', { replaceAll: true })).rejects.toThrow(/Edit one place at a time/);
+    expect(batchUpdate).not.toHaveBeenCalled();
+  });
+
+  it('one match with an image still goes the long way, with its own batches', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: 'TODO one' }, { text: 'tail' }]));
+    const result = await editDoc(clients, 'd', 'TODO', '![logo](https://example.com/logo.png)', { replaceAll: true });
+    expect(result.status).toBe('ok');
+    expect(batchUpdate.mock.calls.length).toBeGreaterThan(1);
+  });
+});
+
 describe('the lines shared at both ends are kept (#60)', () => {
   const scopeDoc = (): Piece[] => [{ text: 'Scope', namedStyleType: 'HEADING_2' }, { text: 'This project covers the work.' }, { text: 'Tail' }];
 

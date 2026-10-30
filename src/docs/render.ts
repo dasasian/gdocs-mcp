@@ -1,7 +1,7 @@
 import type { docs_v1 } from 'googleapis';
 import type { GoogleClients } from '../google/clients.js';
 import { tableInsertedAt, writeControlFor } from './structure.js';
-import { markdownToRequests, type TablePlacement } from './write.js';
+import { markdownToRequests, type ImagePlacement, type TablePlacement } from './write.js';
 import { placeCells } from './table-layout.js';
 import { insertTableRequests, mergeRequests, lookRequests, lookOf, plainLook, rowsTouchedByMerges, fillLayoutRequests } from './table-write.js';
 import { uploadImageForInsert, resolveImageSource } from '../drive/images.js';
@@ -90,14 +90,25 @@ export interface RenderIntoOptions {
   endsInExistingParagraphMark?: boolean;
 }
 
+export interface RenderPlan {
+  requests: docs_v1.Schema$Request[];
+  tables: TablePlacement[];
+  images: ImagePlacement[];
+}
+
+/** The requests that write the markdown's text, and the tables and images that go in afterward, which need the doc read again. */
+export function planMarkdownRender(markdown: string, opts: RenderIntoOptions = {}): RenderPlan {
+  const { requests, tables, images } = markdownToRequests(markdown, opts.startIndex ?? 1, opts.tabId, opts.segmentId, { resetParagraphStyles: opts.resetParagraphStyles, startsParagraph: opts.startsParagraph, endsInExistingParagraphMark: opts.endsInExistingParagraphMark });
+  return { requests: [...(opts.preRequests ?? []), ...requests], tables, images };
+}
+
 export async function renderMarkdownInto(
   clients: GoogleClients,
   documentId: string,
   markdown: string,
   opts: RenderIntoOptions = {},
 ): Promise<{ warnings: string[]; images: { src: string; objectId: string }[] }> {
-  const { requests, tables, images } = markdownToRequests(markdown, opts.startIndex ?? 1, opts.tabId, opts.segmentId, { resetParagraphStyles: opts.resetParagraphStyles, startsParagraph: opts.startsParagraph, endsInExistingParagraphMark: opts.endsInExistingParagraphMark });
-  const all = [...(opts.preRequests ?? []), ...requests];
+  const { requests: all, tables, images } = planMarkdownRender(markdown, opts);
   if (all.length) {
     await clients.docs.documents.batchUpdate({
       documentId,
