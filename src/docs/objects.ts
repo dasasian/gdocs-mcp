@@ -1,6 +1,8 @@
 import type { docs_v1 } from 'googleapis';
 import { ALIGN_BY_CSS, type CssAlign } from './markdown-spec.js';
-import { parseInline, segmentTextStyle } from './inline.js';
+import { parseInlineWithElements, segmentTextStyle } from './inline.js';
+import { TokenTable } from './elements.js';
+import { elementRequests, type ListSpec } from './element-write.js';
 
 export interface CellTarget {
   tabId?: string;
@@ -16,8 +18,10 @@ export function fillCellRequests(
   tableEl: docs_v1.Schema$StructuralElement,
   rows: string[][],
   at: CellTarget = {},
+  context: { notes: Map<string, string>; lists: Map<string, ListSpec> } = { notes: new Map(), lists: new Map() },
 ): docs_v1.Schema$Request[] {
   const { tabId, segmentId } = at;
+  const tokens = new TokenTable();
   const cells: { index: number; md: string }[] = [];
   tableEl.table?.tableRows?.forEach((row, r) =>
     row.tableCells?.forEach((cell, c) => {
@@ -30,10 +34,10 @@ export function fillCellRequests(
 
   const requests: docs_v1.Schema$Request[] = [];
   for (const cell of cells) {
-    const segs = parseInline(cell.md);
+    const { segments: segs, elements } = parseInlineWithElements(tokens.encode(cell.md), tokens);
     const plain = segs.map((sg) => sg.text).join('');
-    if (!plain) continue;
-    requests.push({ insertText: { location: { index: cell.index, tabId, segmentId }, text: plain } });
+    if (!plain && elements.length === 0) continue;
+    if (plain) requests.push({ insertText: { location: { index: cell.index, tabId, segmentId }, text: plain } });
     let off = 0;
     for (const seg of segs) {
       const { textStyle, fields } = segmentTextStyle(seg);
@@ -48,6 +52,7 @@ export function fillCellRequests(
       }
       off += seg.text.length;
     }
+    requests.push(...elementRequests(elements.map(({ offset, token }) => ({ index: cell.index + offset, token })), { tabId, segmentId }, context));
   }
   return requests;
 }

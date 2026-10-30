@@ -480,6 +480,8 @@ interface InlineOp {
 // paragraph where it goes and record its position; the caller inserts the real
 // table there afterward (see document.ts renderMarkdownInto).
 export interface TablePlacement {
+  /** what the elements in its cells need from the markdown around the table: their notes and dropdown lists. */
+  context: { notes: Map<string, string>; lists: Map<string, ListSpec> };
   index: number;
   rows: string[][];
   aligns: (CellAlign | null)[];
@@ -515,6 +517,8 @@ interface ParagraphOp {
 }
 
 export interface BuildOptions {
+  /** the dropdown lists and notes of the markdown around this content, for a cell built apart from it. */
+  elementContext?: { notes: Map<string, string>; lists: Map<string, ListSpec> };
   /** clear the paragraph style the inserted text inherits from where it lands; for a wholesale replace. */
   resetParagraphStyles?: boolean;
   /** the text goes in a place with no direct styling at all, so there is none to inherit and clearing it would change nothing (and, as a suggestion, would show as a Format change nobody made). */
@@ -602,8 +606,8 @@ export function buildContentRequests(
   const breakOffsets: number[] = [];
   const tokens = new TokenTable();
   const elementOps: PlacedElement[] = [];
-  const notes = new Map(blocks.flatMap((block) => (block.type === 'note' ? [[block.label, block.text] as const] : [])));
-  const lists = new Map(blocks.flatMap((block) => (block.type === 'datalist' ? [[block.list.id, block.list] as const] : [])));
+  const notes = new Map([...(opts.elementContext?.notes ?? []), ...blocks.flatMap((block) => (block.type === 'note' ? [[block.label, block.text] as const] : []))]);
+  const lists = new Map([...(opts.elementContext?.lists ?? []), ...blocks.flatMap((block) => (block.type === 'datalist' ? [[block.list.id, block.list] as const] : []))]);
   const elementsBefore = (index: number): number => elementOps.filter((element) => element.index < index).length;
   const pageBreaks = (): PageBreakAt[] => breakOffsets.map((at) => ({ index: at + elementsBefore(at), ownParagraph: at > startIndex || opts.startsParagraph !== false }));
   const abs = (off: number): number => startIndex + off;
@@ -657,7 +661,7 @@ export function buildContentRequests(
     } else if (block.type === 'style') {
       styleRules.push(...block.rules);
     } else if (block.type === 'table') {
-      tables.push({ index: addPlaceholderParagraph(), rows: block.rows, aligns: block.aligns, layout: block.layout });
+      tables.push({ index: addPlaceholderParagraph(), rows: block.rows, aligns: block.aligns, layout: block.layout, context: { notes, lists } });
     } else if (block.type === 'image') {
       const lineStart = text.length;
       images.push({ index: addPlaceholderParagraph(), alt: block.alt, src: block.src, width: block.width, height: block.height });

@@ -190,7 +190,7 @@ async function settleLists(
   requests: docs_v1.Schema$Request[],
   revisionId: string | undefined,
 ): Promise<{ lists: Map<string, ResolvedList>; revisionId: string | undefined }> {
-  const dropdowns = requests.filter((request) => (request as { insertDropdown?: unknown }).insertDropdown);
+  const dropdowns = requests.filter((request) => (request as { insertDropdown?: { dropdownDefinitionId?: string } }).insertDropdown?.dropdownDefinitionId?.startsWith(LIST_PREFIX));
   const lists = new Map<string, ResolvedList>();
   if (!dropdowns.length) return { lists, revisionId };
   const documents = clients.docs.documents;

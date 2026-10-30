@@ -1,7 +1,7 @@
 import type { docs_v1 } from 'googleapis';
 import { patchBetween, cellStyleUpdate, type CellCss, type CellPatch } from './table-css.js';
 import { effectiveGrid, type Placement, type TableLayout } from './table-layout.js';
-import { buildContentRequests, cellBlocksOf } from './write.js';
+import { buildContentRequests, cellBlocksOf, type BuildOptions } from './write.js';
 import { contentOf } from './structure.js';
 import type { CellRef, Span, StructureOperation } from './table-compare.js';
 
@@ -242,12 +242,12 @@ export function lookRequests(before: TableLook, after: TableLook, site: TableSit
 }
 
 /** The words of every cell, typed into a table whose cells are empty. Highest index first, so no cell moves another. */
-export function fillLayoutRequests(table: docs_v1.Schema$Table, placement: Placement, tabId?: string, segmentId?: string): docs_v1.Schema$Request[] {
+export function fillLayoutRequests(table: docs_v1.Schema$Table, placement: Placement, tabId?: string, segmentId?: string, elementContext?: BuildOptions['elementContext']): docs_v1.Schema$Request[] {
   const filled = placement.cells.flatMap(({ row, column, cell }) => {
     const start = table.tableRows?.[row]?.tableCells?.[column]?.content?.[0]?.startIndex;
     const { blocks } = cellBlocksOf(cell);
     if (start == null || blocks.length === 0) return [];
-    const { requests } = buildContentRequests(blocks, start, tabId, segmentId, { startsParagraph: true, endsInExistingParagraphMark: true });
+    const { requests } = buildContentRequests(blocks, start, tabId, segmentId, { startsParagraph: true, endsInExistingParagraphMark: true, elementContext });
     return [{ start, requests }];
   });
   return filled.sort((a, b) => b.start - a.start).flatMap((cell) => cell.requests);

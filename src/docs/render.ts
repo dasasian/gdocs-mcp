@@ -63,13 +63,13 @@ async function insertTableAt(clients: GoogleClients, documentId: string, table: 
     const requests = [
       ...mergeRequests(placement, site),
       ...lookRequests(plainLook(R, C, rowsTouchedByMerges(placement)), lookOf(layout, placement), site),
-      ...fillLayoutRequests(tableEl.table, placement, tabId, segmentId),
+      ...fillLayoutRequests(tableEl.table, placement, tabId, segmentId, table.context),
     ];
     if (requests.length) await batchUpdateWithElements(clients, documentId, requests, undefined, tabId);
     return;
   }
 
-  const requests = fillCellRequests(tableEl, rows, { tabId, segmentId });
+  const requests = fillCellRequests(tableEl, rows, { tabId, segmentId }, table.context);
   if (requests.length) await batchUpdateWithElements(clients, documentId, requests, undefined, tabId);
 
   if (aligns.some((a) => a && a !== 'left')) {

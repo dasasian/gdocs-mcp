@@ -12,6 +12,8 @@ import { ElementRefusal } from '../src/docs/element-write.js';
 import { dateProperties } from '../src/docs/element-write.js';
 import { splitAtKeptElements } from '../src/docs/element-diff.js';
 import { TokenTable, parseElement } from '../src/docs/elements.js';
+import { fillCellRequests } from '../src/docs/objects.js';
+import { planMarkdownRender } from '../src/docs/render.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixture = (name: string): docs_v1.Schema$Document => JSON.parse(readFileSync(path.join(here, 'fixtures', name), 'utf8')) as docs_v1.Schema$Document;
@@ -150,6 +152,12 @@ describe('an edit keeps the elements it gives back and deletes the ones it drops
     expect(batch).not.toHaveBeenCalled();
   });
 
+  it('accepts a new chip for a person the doc already has a chip for: its text is ignored when it is made', async () => {
+    const batch = vi.fn().mockResolvedValue({ data: {} });
+    await editDoc(clientsFor(elementsDoc, batch), 'd', `wner: ${PERSON}, due`, `wner: ${PERSON}, <a class="chip" href="mailto:damith@dasasian.com">x</a>, due`);
+    expect(kinds(sentBy(batch))).toContain('insertPerson');
+  });
+
   it('refuses a new link chip to YouTube before sending, and says what to write', async () => {
     const batch = vi.fn();
     await expect(editDoc(clientsFor(elementsDoc, batch), 'd', 'Status: ', 'Status: <a class="chip" href="https://www.youtube.com/watch?v=x">Launch</a>')).rejects.toThrow(/\[Launch\]\(https:\/\/www.youtube.com/);
@@ -266,5 +274,42 @@ describe('project() gives each element one character (#58)', () => {
     const person = [...text].findIndex((char) => tokens.tokenOf(char)?.startsWith('<a class="chip" href="mailto'));
     expect(map[person]).toBe(9);
     expect(parseElement(tokens.tokenOf(text[person])!)).toMatchObject({ kind: 'person', email: 'damith@dasasian.com' });
+  });
+});
+
+describe('elements in table cells are written, not typed as text (#58)', () => {
+  const tableEl = (starts: number[]): docs_v1.Schema$StructuralElement => ({
+    table: { tableRows: [{ tableCells: starts.map((start) => ({ content: [{ startIndex: start, endIndex: start + 1, paragraph: { elements: [] } }] })) }] },
+  });
+  const noContext = { notes: new Map<string, string>(), lists: new Map() };
+
+  it('a pipe table cell holding a person chip, a date and a dropdown makes them', () => {
+    const requests = fillCellRequests(tableEl([5, 7, 9]), [[PERSON, DATE, DROPDOWN]], {}, noContext);
+    expect(kinds(requests).filter((k) => k !== 'updateTextStyle')).toEqual(['insertDropdown', 'insertDate', 'insertPerson']);
+    expect(requests.some((r) => r.insertText)).toBe(false);
+    expect(requests.find((r) => r.insertPerson)?.insertPerson?.location?.index).toBe(5);
+    expect(requests.find((r) => r.insertDate)?.insertDate?.location?.index).toBe(7);
+  });
+
+  it('puts the words of a cell in first and the element after them', () => {
+    const requests = fillCellRequests(tableEl([5]), [[`Owner ${PERSON}`]], {}, noContext);
+    expect(requests.find((r) => r.insertText)?.insertText?.text).toBe('Owner ');
+    expect(requests.find((r) => r.insertPerson)?.insertPerson?.location?.index).toBe(11);
+  });
+
+  it('a table written from markdown carries the datalist to its cells', () => {
+    const { tables } = planMarkdownRender(`${DATALIST}\n\n| A | B |\n| --- | --- |\n| x | ${DROPDOWN} |`);
+    expect(tables[0].context.lists.get('kix.pzpzmipgftxw')?.options).toEqual(['Draft', 'Final']);
+    expect(fillCellRequests(tableEl([5, 7]), tables[0].rows.slice(1), {}, tables[0].context).find((r) => r.insertDropdown)).toBeDefined();
+  });
+
+  it('refuses a table edit that adds a dropdown of an unknown list before it sends the new row', async () => {
+    const batch = vi.fn().mockResolvedValue({ data: {} });
+    const table = '| A | B |\n| --- | --- |\n| x | y |';
+    const cell = (start: number, text: string) => ({ startIndex: start, endIndex: start + 2, content: [{ startIndex: start, endIndex: start + 2, paragraph: { elements: [{ startIndex: start, endIndex: start + 2, textRun: { content: `${text}\n` } }] } }], tableCellStyle: { rowSpan: 1, columnSpan: 1 } });
+    const doc = fixture('elements-doc.json');
+    doc.tabs![0].documentTab!.body!.content = [{ startIndex: 1, endIndex: 30, table: { rows: 2, columns: 2, tableRows: [{ tableCells: [cell(3, 'A'), cell(6, 'B')] }, { tableCells: [cell(10, 'x'), cell(13, 'y')] }] } }];
+    await expect(editDoc(clientsFor(doc, batch), 'd', table, `${table}\n| z | <input class="chip" list="nope" value="A"> |`)).rejects.toThrow(/no dropdown list "nope"/);
+    expect(batch).not.toHaveBeenCalled();
   });
 });

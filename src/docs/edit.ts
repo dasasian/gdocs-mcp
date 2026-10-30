@@ -19,7 +19,7 @@ import { explainingCommentOnlyAccess, MUST_SUGGEST_MESSAGE } from './access.js';
 import { parseInlineWithElements } from './inline.js';
 import { splitAtKeptElements, type Gap } from './element-diff.js';
 import { elementRequests, noteTextRequests, creationIssuesIn, listRequest, batchUpdateWithElements, ElementRefusal, type ListSpec, type PlacedElement } from './element-write.js';
-import { unsuggestableDropdownIssues } from './element-checks.js';
+import { unsuggestableDropdownIssues, refuseUnwritableTableEdit } from './element-checks.js';
 import { chipTextChange, parseElement, type DropdownDefinition, type TokenTable } from './elements.js';
 import { renderDatalists } from './transformer.js';
 import { listSpecOfLine } from './write.js';
@@ -600,6 +600,7 @@ async function applyEdit(clients: GoogleClients, documentId: string, oldString: 
   if (isEmpty) throw new Error(EMPTY_CONTENT_MESSAGE);
 
   if (quotesTable(oldString, newString)) {
+    refuseUnwritableTableEdit(oldString, newString, fetched.data, { tabId, segmentId, suggest: opts.suggest });
     const insertBlocks: TableEditInput['insertBlocks'] = (side, table, markdown, revisionId) => {
       const inside = (table.startIndex ?? 0) + 1;
       return applyBlockEdit({ clients, documentId, doc: fetched.data, markdown, tabId, segmentId, baseDir: opts.baseDir }, { startIndex: inside, endIndex: inside + 1 }, side, revisionId);
@@ -777,7 +778,8 @@ function refuseElementsThatCannotBeWritten(
   const tokensOf = (text: string): string[] => [...text].flatMap((char) => tokens.tokenOf(char) ?? []);
   const was = new Set(tokensOf(oldMiddle));
   const made = [...new Set(tokensOf(written))].filter((token) => !was.has(token));
-  const chipIssues = made.flatMap((token) => [...was].flatMap((before) => chipTextChange(parseElement(before), parseElement(token)) ?? []));
+  const stillThere = new Set(tokensOf(written));
+  const chipIssues = made.flatMap((token) => [...was].filter((before) => !stillThere.has(before)).flatMap((before) => chipTextChange(parseElement(before), parseElement(token)) ?? []));
   const suggestIssues = where.suggest ? unsuggestableDropdownIssues([...made, ...definitions.lines].join('\n'), where.doc, where.tabId).map((issue) => `Docs cannot suggest this: ${issue}`) : [];
   const issues = [...chipIssues, ...suggestIssues];
   if (issues.length) throw new ElementRefusal(issues);

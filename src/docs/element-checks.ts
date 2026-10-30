@@ -1,6 +1,6 @@
 import type { docs_v1 } from 'googleapis';
 import { tabContainer } from './structure.js';
-import { parseElement, tokensIn, chipTextChange, elementTokenOf, type DocumentTabWithElements, type Element, type ParagraphElement } from './elements.js';
+import { creationIssue, parseElement, tokensIn, chipTextChange, elementTokenOf, type DocumentTabWithElements, type ParagraphElement } from './elements.js';
 import { creationIssuesIn, ElementRefusal } from './element-write.js';
 import { listSpecOfLine } from './write.js';
 
@@ -8,23 +8,24 @@ function paragraphsOf(content: docs_v1.Schema$StructuralElement[]): docs_v1.Sche
   return content.flatMap((el) => (el.paragraph ? [el.paragraph] : (el.table?.tableRows ?? []).flatMap((row) => (row.tableCells ?? []).flatMap((cell) => paragraphsOf(cell.content ?? [])))));
 }
 
-function elementsOfDoc(doc: docs_v1.Schema$Document, tabId: string | undefined): Element[] {
+function tokensOfDoc(doc: docs_v1.Schema$Document, tabId: string | undefined): string[] {
   const container = tabContainer(doc, tabId);
   const segments = [container?.body?.content ?? [], ...Object.values(container?.headers ?? {}).map((h) => h.content ?? []), ...Object.values(container?.footers ?? {}).map((f) => f.content ?? [])];
   return segments.flatMap(paragraphsOf).flatMap((paragraph) =>
     (paragraph.elements ?? []).flatMap((pe) => {
       const token = elementTokenOf(pe as ParagraphElement);
-      return token === undefined ? [] : [parseElement(token)];
+      return token === undefined ? [] : [token];
     }),
   );
 }
 
 /** A write that gives a chip of the doc other words with the same href: a chip's text is Google's, so it is refused. */
 export function chipTextIssues(markdown: string, doc: docs_v1.Schema$Document, tabId: string | undefined): string[] {
-  const chips = elementsOfDoc(doc, tabId);
+  const writtenTokens = new Set(tokensIn(markdown));
+  const dropped = tokensOfDoc(doc, tabId).filter((token) => !writtenTokens.has(token)).map(parseElement);
   return tokensIn(markdown).flatMap((token) => {
     const written = parseElement(token);
-    const change = chips.map((chip) => chipTextChange(chip, written)).find((issue) => issue !== undefined);
+    const change = dropped.map((chip) => chipTextChange(chip, written)).find((issue) => issue !== undefined);
     return change ? [change] : [];
   });
 }
@@ -66,6 +67,28 @@ export function refuseUnwritableElements(markdown: string, doc: docs_v1.Schema$D
     ...creationIssuesIn(markdown, opts.segmentId),
     ...(doc ? chipTextIssues(markdown, doc, opts.tabId) : []),
     ...(doc && opts.suggest ? unsuggestableDropdownIssues(markdown, doc, opts.tabId).map((issue) => `Docs cannot suggest this: ${issue}`) : []),
+  ];
+  if (issues.length) throw new ElementRefusal(issues);
+}
+
+/**
+ * Refuses, before the first request of a table edit, an element the edit would make that cannot be made, a chip given
+ * other words, a dropdown whose list the doc does not have and the edit does not define, or a change Docs cannot suggest.
+ * A table edit sends its row and column changes before it types the cells, so a refusal found later is too late.
+ */
+export function refuseUnwritableTableEdit(oldString: string, newString: string, doc: docs_v1.Schema$Document, opts: { tabId?: string; segmentId?: string; suggest?: boolean }): void {
+  const was = new Set(tokensIn(oldString));
+  const made = [...new Set(tokensIn(newString))].filter((token) => !was.has(token));
+  const definitions = (tabContainer(doc, opts.tabId) as DocumentTabWithElements | undefined)?.dropdownDefinitions ?? {};
+  const lists = newString.split('\n').filter((line) => listSpecOfLine(line) !== undefined);
+  const issues = [
+    ...made.flatMap((token) => creationIssue(parseElement(token), opts.segmentId) ?? []),
+    ...made.flatMap((token) => [...was].filter((before) => !tokensIn(newString).includes(before)).flatMap((before) => chipTextChange(parseElement(before), parseElement(token)) ?? [])),
+    ...made.flatMap((token) => {
+      const element = parseElement(token);
+      return element.kind === 'dropdown' && !definitions[element.listId] ? [`this doc has no dropdown list "${element.listId}". Define it first with an edit_doc whose new_string holds its <datalist> line, or use a list the doc has.`] : [];
+    }),
+    ...(opts.suggest ? unsuggestableDropdownIssues([...made, ...lists].join('\n'), doc, opts.tabId).map((issue) => `Docs cannot suggest this: ${issue}`) : []),
   ];
   if (issues.length) throw new ElementRefusal(issues);
 }
