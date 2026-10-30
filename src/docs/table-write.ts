@@ -9,7 +9,14 @@ export interface TableSite {
   tableStart: number;
   tabId?: string;
   segmentId?: string;
+  /** where each row the edit counts sits in the doc's table, when rows suggested for deletion are still in it. */
+  rowAt?: number[];
+  /** where each column the edit counts sits in the doc's table, when columns suggested for deletion are still in it. */
+  columnAt?: number[];
 }
+
+const actualRow = (site: TableSite, row: number): number => site.rowAt?.[row] ?? row;
+const actualColumn = (site: TableSite, column: number): number => site.columnAt?.[column] ?? column;
 
 /** Everything a table's look is made of, as Docs holds it: the style at each grid position, column widths, row heights and how many rows repeat. */
 export interface TableLook {
@@ -114,12 +121,12 @@ export function mergeRequests(placement: Placement, site: TableSite): docs_v1.Sc
     .filter(({ cell }) => cell.colspan > 1 || cell.rowspan > 1)
     .map(({ row, column, cell }) => ({
       mergeTableCells: {
-        tableRange: { tableCellLocation: { tableStartLocation: location(site), rowIndex: row, columnIndex: column }, rowSpan: cell.rowspan, columnSpan: cell.colspan },
+        tableRange: { tableCellLocation: { tableStartLocation: location(site), rowIndex: actualRow(site, row), columnIndex: actualColumn(site, column) }, rowSpan: cell.rowspan, columnSpan: cell.colspan },
       },
     }));
 }
 
-const cellLocation = (site: TableSite, ref: CellRef): docs_v1.Schema$TableCellLocation => ({ tableStartLocation: location(site), rowIndex: ref.row, columnIndex: ref.column });
+const cellLocation = (site: TableSite, ref: CellRef): docs_v1.Schema$TableCellLocation => ({ tableStartLocation: location(site), rowIndex: actualRow(site, ref.row), columnIndex: actualColumn(site, ref.column) });
 
 const tableRangeOf = (site: TableSite, span: Span): docs_v1.Schema$TableRange => ({ tableCellLocation: cellLocation(site, span), rowSpan: span.rowSpan, columnSpan: span.columnSpan });
 
@@ -140,8 +147,60 @@ function structureRequest(operation: StructureOperation, site: TableSite): docs_
   }
 }
 
-/** The requests for a comparison's operations, in the order given: each addresses the table as the ones before it leave it. */
-export const structureRequests = (operations: StructureOperation[], site: TableSite): docs_v1.Schema$Request[] => operations.map((operation) => structureRequest(operation, site));
+/**
+ * Rows or columns of a table as the doc holds them while some are only suggested for deletion: they stay until accepted, so
+ * the place of the n-th row the edit counts moves as rows are deleted and inserted.
+ */
+class SuggestedAxis {
+  private readonly deleted: boolean[];
+
+  constructor(count: number) {
+    this.deleted = Array.from({ length: count }, () => false);
+  }
+
+  actual(logical: number): number {
+    let seen = -1;
+    for (let at = 0; at < this.deleted.length; at++) {
+      if (!this.deleted[at]) seen++;
+      if (seen === logical) return at;
+    }
+    return this.deleted.length;
+  }
+
+  markDeleted(logical: number): number {
+    const at = this.actual(logical);
+    this.deleted[at] = true;
+    return at;
+  }
+
+  insertNextTo(logical: number, after: boolean): number {
+    const at = this.actual(logical);
+    this.deleted.splice(after ? at + 1 : at, 0, false);
+    return at;
+  }
+}
+
+/** The requests for a comparison's operations, in the order given: each addresses the table as the ones before it leave it. With `suggested`, a deleted row or column stays in the table until accepted, so each request is addressed where its row or column now sits. */
+export function structureRequests(operations: StructureOperation[], site: TableSite, suggested?: { rows: number; columns: number }): docs_v1.Schema$Request[] {
+  if (!suggested) return operations.map((operation) => structureRequest(operation, site));
+  const rows = new SuggestedAxis(suggested.rows);
+  const columns = new SuggestedAxis(suggested.columns);
+  const at = (row: number, column: number): docs_v1.Schema$TableCellLocation => ({ tableStartLocation: location(site), rowIndex: row, columnIndex: column });
+  return operations.map((operation): docs_v1.Schema$Request => {
+    switch (operation.kind) {
+      case 'deleteRow':
+        return { deleteTableRow: { tableCellLocation: at(rows.markDeleted(operation.at.row), columns.actual(operation.at.column)) } };
+      case 'deleteColumn':
+        return { deleteTableColumn: { tableCellLocation: at(rows.actual(operation.at.row), columns.markDeleted(operation.at.column)) } };
+      case 'insertRow':
+        return { insertTableRow: { tableCellLocation: at(rows.insertNextTo(operation.at.row, operation.below), columns.actual(operation.at.column)), insertBelow: operation.below } };
+      case 'insertColumn':
+        return { insertTableColumn: { tableCellLocation: at(rows.actual(operation.at.row), columns.insertNextTo(operation.at.column, operation.right)), insertRight: operation.right } };
+      default:
+        return structureRequest(operation, site);
+    }
+  });
+}
 
 /** The requests that take a table from one look to another. A cell that already looks right gets nothing. Neighbours that change the same way share one request. */
 export function lookRequests(before: TableLook, after: TableLook, site: TableSite): docs_v1.Schema$Request[] {
@@ -150,7 +209,7 @@ export function lookRequests(before: TableLook, after: TableLook, site: TableSit
     const { style, fields } = cellStyleUpdate(patch);
     return {
       updateTableCellStyle: {
-        tableRange: { tableCellLocation: { tableStartLocation: location(site), rowIndex: row, columnIndex: column }, rowSpan, columnSpan },
+        tableRange: { tableCellLocation: { tableStartLocation: location(site), rowIndex: actualRow(site, row), columnIndex: actualColumn(site, column) }, rowSpan, columnSpan },
         tableCellStyle: style,
         fields: fields.join(','),
       },
@@ -161,7 +220,7 @@ export function lookRequests(before: TableLook, after: TableLook, site: TableSit
     requests.push({
       updateTableColumnProperties: {
         tableStartLocation: location(site),
-        columnIndices: [column],
+        columnIndices: [actualColumn(site, column)],
         tableColumnProperties: width === undefined ? { widthType: 'EVENLY_DISTRIBUTED' } : { widthType: 'FIXED_WIDTH', width: { magnitude: width, unit: 'PT' } },
         fields: 'width,widthType',
       },
@@ -172,7 +231,7 @@ export function lookRequests(before: TableLook, after: TableLook, site: TableSit
     requests.push({
       updateTableRowStyle: {
         tableStartLocation: location(site),
-        rowIndices: [row],
+        rowIndices: [actualRow(site, row)],
         tableRowStyle: { minRowHeight: { magnitude: typeof height === 'number' ? height : 0, unit: 'PT' } },
         fields: 'minRowHeight',
       },

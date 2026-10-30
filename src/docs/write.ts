@@ -483,6 +483,8 @@ interface ParagraphOp {
 export interface BuildOptions {
   /** clear the paragraph style the inserted text inherits from where it lands; for a wholesale replace. */
   resetParagraphStyles?: boolean;
+  /** the text goes in a place with no direct styling at all, so there is none to inherit and clearing it would change nothing (and, as a suggestion, would show as a Format change nobody made). */
+  insertedTextInheritsNoStyling?: boolean;
   /** false when `startIndex` is inside a paragraph's text, so a page break first in the content follows that text instead of starting a paragraph. Default true. */
   startsParagraph?: boolean;
   /** true when the paragraph mark after `startIndex` already exists, so the content's last paragraph ends with it instead of a mark of its own. */
@@ -636,9 +638,9 @@ export function buildContentRequests(
   const insertedText = opts.endsInExistingParagraphMark ? text.slice(0, -1) : text;
   if (insertedText) {
     requests.push({ insertText: { location: { index: startIndex, tabId, segmentId }, text: insertedText } });
-    requests.push(clearDirectRunStyling(startIndex, insertedText.length, tabId, segmentId));
+    if (!opts.insertedTextInheritsNoStyling) requests.push(clearDirectRunStyling(startIndex, insertedText.length, tabId, segmentId));
   }
-  if (opts.resetParagraphStyles) {
+  if (opts.resetParagraphStyles && !opts.insertedTextInheritsNoStyling) {
     requests.push(clearDirectParagraphStyling(startIndex, text.length, tabId, segmentId));
     requests.push({ deleteParagraphBullets: { range: { startIndex, endIndex: startIndex + text.length, tabId, segmentId } } });
   }

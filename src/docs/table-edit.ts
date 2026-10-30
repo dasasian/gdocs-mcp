@@ -7,7 +7,7 @@ import { threadsOnRangesIn, threadsWithoutRange } from './comments.js';
 import { movedCommentsToken } from './loss.js';
 import { parseBlocks, buildContentRequests, cellBlocksOf, clearDirectRunStyling, type CellBlock } from './write.js';
 import { placeCells, effectiveGrid, type LayoutCell, type Placement, type TableLayout } from './table-layout.js';
-import { lookOf, lookRequests, structureRequests } from './table-write.js';
+import { lookOf, lookRequests, structureRequests, type TableSite } from './table-write.js';
 import { compareTables, plainTextOf, type MovedLine, type TableComparison } from './table-compare.js';
 import { refusal } from './table-pairing.js';
 import { refuseColumnWidthChange } from './suggest.js';
@@ -169,6 +169,27 @@ function restyleRequests(
   return requests;
 }
 
+const isZero = (dimension: docs_v1.Schema$Dimension | null | undefined): boolean => !dimension?.magnitude;
+
+function isDefaultParagraph(paragraph: docs_v1.Schema$Paragraph): boolean {
+  const style = paragraph.paragraphStyle ?? {};
+  return (
+    !paragraph.bullet &&
+    (style.namedStyleType ?? 'NORMAL_TEXT') === 'NORMAL_TEXT' &&
+    (style.alignment ?? 'START') === 'START' &&
+    (style.lineSpacing ?? 100) === 100 &&
+    [style.spaceAbove, style.spaceBelow, style.indentStart, style.indentEnd, style.indentFirstLine, style.borderLeft?.width].every(isZero)
+  );
+}
+
+/** True for a cell of words with no style of their own: plain runs in default paragraphs. A cell with no words yet is not, since Docs may have copied a neighbour's style into it. */
+function holdsOnlyUnstyledText(cell: docs_v1.Schema$TableCell): boolean {
+  const paragraphs = (cell.content ?? []).flatMap((el) => (el.paragraph ? [el.paragraph] : []));
+  const runs = paragraphs.flatMap((paragraph) => paragraph.elements ?? []).flatMap((pe) => (pe.textRun ? [pe.textRun] : []));
+  const hasWords = runs.some((run) => (run.content ?? '').trim() !== '');
+  return hasWords && paragraphs.length === (cell.content ?? []).length && paragraphs.every(isDefaultParagraph) && runs.every((run) => Object.keys(run.textStyle ?? {}).length === 0);
+}
+
 function cellRequests(
   docCell: docs_v1.Schema$TableCell,
   before: LayoutCell,
@@ -186,14 +207,15 @@ function cellRequests(
   if (was && now && !was.className && !now.className && Boolean(was.quote) === Boolean(now.quote) && plainTextOf(was.text) === plainTextOf(now.text)) {
     return { start: range.start, requests: restyleRequests(was, now, range, tabId, segmentId) };
   }
-  const retyped = buildContentRequests(afterBlocks, range.start, tabId, segmentId, { startsParagraph: true, endsInExistingParagraphMark: true, resetParagraphStyles: true });
+  const insertedTextInheritsNoStyling = holdsOnlyUnstyledText(docCell);
+  const retyped = buildContentRequests(afterBlocks, range.start, tabId, segmentId, { startsParagraph: true, endsInExistingParagraphMark: true, resetParagraphStyles: true, insertedTextInheritsNoStyling });
   const deletion: docs_v1.Schema$Request[] = range.end > range.start ? [{ deleteContentRange: { range: { startIndex: range.start, endIndex: range.end, tabId, segmentId } } }] : [];
   return { start: range.start, requests: [...deletion, ...retyped.requests] };
 }
 
-function surgicalRequests(found: TableElementAndTable, before: TableLayout, after: TableLayout, tabId: string | undefined, segmentId: string | undefined): docs_v1.Schema$Request[] {
+function surgicalRequests(found: TableElementAndTable, before: TableLayout, after: TableLayout, tabId: string | undefined, segmentId: string | undefined, axes: Pick<TableSite, 'rowAt' | 'columnAt'> = {}): docs_v1.Schema$Request[] {
   const placements = { before: placeCells(before), after: placeCells(after) };
-  const site = { tableStart: found.element.startIndex ?? 0, tabId, segmentId };
+  const site: TableSite = { tableStart: found.element.startIndex ?? 0, tabId, segmentId, ...axes };
   const requests = lookRequests(lookOf(before, placements.before), lookOf(after, placements.after), site);
   const afterAt = new Map(placements.after.cells.map((placed) => [`${placed.row},${placed.column}`, placed.cell]));
   const changes = placements.before.cells.flatMap((placed) => {
@@ -240,6 +262,26 @@ function tableStartingAt(doc: docs_v1.Schema$Document, startIndex: number, tabId
   const element = contentOf(doc, tabId, segmentId).find((el) => el.table && el.startIndex === startIndex);
   if (!element?.table) throw new Error(`The table that began at index ${startIndex} is no longer there after the rows and columns were changed. Read the doc again to see what it holds now.`);
   return { element, table: element.table };
+}
+
+const deletedBy = (node: { suggestedDeletionIds?: string[] | null }, suggestionIds: ReadonlySet<string>): boolean => (node.suggestedDeletionIds ?? []).some((id) => suggestionIds.has(id));
+
+function deletionIdsIn(table: docs_v1.Schema$Table): Set<string> {
+  const nodes = (table.tableRows ?? []).flatMap((row) => [row, ...(row.tableCells ?? [])]);
+  return new Set(nodes.flatMap((node) => node.suggestedDeletionIds ?? []));
+}
+
+interface SettledTable extends TableElementAndTable {
+  rowAt: number[];
+  columnAt: number[];
+}
+
+/** The table without the rows and columns this edit has just suggested deleting, which stay in the doc until accepted, and where each remaining row and column sits in the doc's table. */
+function withoutDeletedBy(found: TableElementAndTable, suggestionIds: ReadonlySet<string>): SettledTable {
+  const rows = (found.table.tableRows ?? []).map((row, at) => ({ row, at })).filter(({ row }) => !deletedBy(row, suggestionIds));
+  const kept = rows.map(({ row }) => ({ ...row, tableCells: (row.tableCells ?? []).filter((cell) => !deletedBy(cell, suggestionIds)) }));
+  const columnAt = (rows[0]?.row.tableCells ?? []).flatMap((cell, at) => (deletedBy(cell, suggestionIds) ? [] : [at]));
+  return { element: found.element, table: { ...found.table, tableRows: kept }, rowAt: rows.map(({ at }) => at), columnAt };
 }
 
 const mergesOf = (placement: Placement): string =>
@@ -341,11 +383,12 @@ export async function editTableMarkup(clients: GoogleClients, documentId: string
   if (refused) return refused;
   let changed = 0;
   let revisionId = doc.revisionId ?? undefined;
-  const send = async (requests: docs_v1.Schema$Request[]): Promise<void> => {
-    if (requests.length === 0) return;
-    await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests, writeControl: writeControlFor(revisionId) } });
+  const send = async (requests: docs_v1.Schema$Request[]): Promise<string[]> => {
+    if (requests.length === 0) return [];
+    const res = await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests, writeControl: writeControlFor(revisionId) } });
     revisionId = undefined;
     changed++;
+    return ((res?.data as { suggestionResponses?: { createdSuggestionIds?: string[] }[] } | undefined)?.suggestionResponses ?? []).flatMap((response) => response.createdSuggestionIds ?? []);
   };
   const insertNextToTable = async (side: BlockSide, found: TableInDoc, markdown: string): Promise<void> => {
     if (!markdown) return;
@@ -360,13 +403,17 @@ export async function editTableMarkup(clients: GoogleClients, documentId: string
       await send(surgicalRequests(found, before, after, tabId, segmentId));
     } else {
       const tableStart = found.element.startIndex ?? 0;
-      await send(structureRequests(comparison.operations, { tableStart, tabId, segmentId }));
+      const shape = input.suggest ? { rows: placeCells(before).rowCount, columns: placeCells(before).columnCount } : undefined;
+      const reportedSuggestions = await send(structureRequests(comparison.operations, { tableStart, tabId, segmentId }, shape));
       const fresh = (await clients.docs.documents.get({ documentId, includeTabsContent: true })).data;
-      const freshTable = tableStartingAt(fresh, tableStart, tabId, segmentId);
+      const freshInDoc = tableStartingAt(fresh, tableStart, tabId, segmentId);
+      const pendingBefore = deletionIdsIn(found.table);
+      const mine = new Set([...reportedSuggestions, ...[...deletionIdsIn(freshInDoc.table)].filter((id) => !pendingBefore.has(id))]);
+      const freshTable = withoutDeletedBy(freshInDoc, mine);
       const freshLayout = readTableLayout(fresh, freshTable.table, { tabId });
       const wanted = withNeighbourStyle(after, comparison);
       requireExpectedShape(freshLayout, wanted);
-      await send(surgicalRequests(freshTable, freshLayout, wanted, tabId, segmentId));
+      await send(surgicalRequests(freshTable, freshLayout, wanted, tabId, segmentId, { rowAt: freshTable.rowAt, columnAt: freshTable.columnAt }));
     }
     await insertNextToTable('before', found, around.before);
   }

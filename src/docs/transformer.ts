@@ -320,6 +320,15 @@ function plainAlignmentOf(cell: docs_v1.Schema$TableCell, context: ReadContext):
   return Object.keys(other).length ? undefined : (align ?? null);
 }
 
+/** In a tracked read, an empty cell of a suggested row or column has no text to tag, so it is marked by its own suggestion. */
+function trackedEmptyCell(cell: docs_v1.Schema$TableCell, context: ReadContext): string {
+  const inserted = cell.suggestedInsertionIds?.[0];
+  const deleted = cell.suggestedDeletionIds?.[0];
+  if (!context.opts.tracked) return '';
+  if (inserted) return `<ins data-sug="${inserted}"></ins>`;
+  return deleted ? `<del data-sug="${deleted}"></del>` : '';
+}
+
 function pipeCellText(cell: docs_v1.Schema$TableCell, context: ReadContext): string {
   const runs = textRunsOf(cell);
   const inlineWith = (escape: Escaper): string => {
@@ -327,7 +336,7 @@ function pipeCellText(cell: docs_v1.Schema$TableCell, context: ReadContext): str
     return lineBreaksAsBr(withoutParagraphMark(runs.map((run) => renderRun(run, context.opts, undefined, escapeWithPipes)).join('')));
   };
   const literalText = runs.map((run) => run.content ?? '').join('').replace(/\|/g, '');
-  const inline = inlineWith(literalTextEscaper(literalText, inlineWith, unescapePipes));
+  const inline = inlineWith(literalTextEscaper(literalText, inlineWith, unescapePipes)) || trackedEmptyCell(cell, context);
   return cellNeedsParagraphTag(inline) ? `<p>${inline}</p>` : inline;
 }
 
@@ -335,7 +344,7 @@ function htmlCellText(cell: docs_v1.Schema$TableCell, context: ReadContext): str
   const runs = textRunsOf(cell);
   const inlineWith = (escape: Escaper): string =>
     lineBreaksAsBr(withoutParagraphMark(runs.map((run) => renderRun(run, context.opts, undefined, (text) => escapeTableTags(escape(text)))).join('')));
-  const inline = inlineWith(literalTextEscaper(runs.map((run) => run.content ?? '').join(''), inlineWith));
+  const inline = inlineWith(literalTextEscaper(runs.map((run) => run.content ?? '').join(''), inlineWith)) || trackedEmptyCell(cell, context);
   return cellNeedsParagraphTag(inline) || inline.startsWith('>') ? `<p>${inline}</p>` : inline;
 }
 

@@ -14,10 +14,12 @@ interface Reads {
   quotes?: string[];
   /** comments on a range, each with the range it sits on. */
   onRanges?: { quote: string; range: { startIndex: number; endIndex: number; segmentId?: string } }[];
+  /** the ids Docs reports for the suggestions each batch makes. */
+  suggestionIds?: string[];
 }
 
-function clientsFor(doc: docs_v1.Schema$Document, { afterStructure, quotes = [], onRanges = [] }: Reads = {}) {
-  const batchUpdate = vi.fn().mockResolvedValue({ data: { replies: [] } });
+function clientsFor(doc: docs_v1.Schema$Document, { afterStructure, quotes = [], onRanges = [], suggestionIds = [] }: Reads = {}) {
+  const batchUpdate = vi.fn().mockResolvedValue({ data: { replies: [], suggestionResponses: [{ createdSuggestionIds: suggestionIds }] } });
   const comments = [
     ...quotes.map((plainTextQuote, i) => ({ commentId: `drive${i}`, plainTextQuote })),
     ...onRanges.map(({ quote }, i) => ({ commentId: `range${i}`, anchorId: `anchor${i}`, plainTextQuote: quote })),
@@ -480,5 +482,94 @@ describe('a table in a header behaves the same (#62 rule 9)', () => {
     const { clients } = clientsFor(before, { afterStructure: after, quotes: ['Ann'] });
     const result = await editDoc(clients, 'd', '<tr><td>Ann</td><td>1</td></tr>\n<tr><td>Bob</td><td>2</td></tr>', '<tr><td>Bob</td><td>2</td></tr>\n<tr><td>Ann</td><td>1</td></tr>', { segment: 'header' });
     expect(result.status).toBe('ok');
+  });
+});
+
+describe('a suggested row or column delete stays in the table until accepted (#64)', () => {
+  const tableOf = (doc: docs_v1.Schema$Document): docs_v1.Schema$Table => doc.body!.content![0].table!;
+  const withRowsSuggestedDeleted = (doc: docs_v1.Schema$Document, rows: number[], id: string): docs_v1.Schema$Document => {
+    const copy = JSON.parse(JSON.stringify(doc)) as docs_v1.Schema$Document;
+    for (const row of rows) tableOf(copy).tableRows![row].suggestedDeletionIds = [id];
+    return copy;
+  };
+  const withColumnSuggestedDeleted = (doc: docs_v1.Schema$Document, column: number, id: string): docs_v1.Schema$Document => {
+    const copy = JSON.parse(JSON.stringify(doc)) as docs_v1.Schema$Document;
+    for (const row of tableOf(copy).tableRows!) row.tableCells![column].suggestedDeletionIds = [id];
+    return copy;
+  };
+  const SUGGESTION = 'suggest.row';
+
+  it('a deleted row is sent once and reported ok, though the row is still in the doc afterwards', async () => {
+    const before = withRows(...PRICES);
+    const { clients, batchUpdate } = clientsFor(before, { afterStructure: withRowsSuggestedDeleted(before, [2], SUGGESTION), suggestionIds: [SUGGESTION] });
+    const result = await editDoc(clients, 'd', pipe('Build', '$3,000'), '', { suggest: true });
+    expect(result.status).toBe('ok');
+    expect(batchKinds(batchUpdate)).toEqual([['deleteTableRow']]);
+    expect(allRequests(batchUpdate)[0].deleteTableRow!.tableCellLocation).toMatchObject({ rowIndex: 2 });
+  });
+
+  it('is found by the deletion ids in the doc even when Docs reports no id for the batch', async () => {
+    const before = withRows(...PRICES);
+    const { clients } = clientsFor(before, { afterStructure: withRowsSuggestedDeleted(before, [2], SUGGESTION) });
+    expect((await editDoc(clients, 'd', pipe('Build', '$3,000'), '', { suggest: true })).status).toBe('ok');
+  });
+
+  it('a deleted column is sent once and reported ok', async () => {
+    const before = withRows(plain('Item', 'Price', 'Qty'), plain('Tea', '3', '1'));
+    const { clients, batchUpdate } = clientsFor(before, { afterStructure: withColumnSuggestedDeleted(before, 1, SUGGESTION), suggestionIds: [SUGGESTION] });
+    const result = await editDoc(clients, 'd', '| Item | Price | Qty |\n| --- | --- | --- |\n| Tea | 3 | 1 |', '| Item | Qty |\n| --- | --- |\n| Tea | 1 |', { suggest: true });
+    expect(result.status).toBe('ok');
+    expect(batchKinds(batchUpdate)).toEqual([['deleteTableColumn']]);
+  });
+
+  it('an insert after a deleted row is addressed where its anchor now sits, and the new cells are typed in the right row', async () => {
+    const before = withRows(...PRICES);
+    const afterDocsApplied = withRowsSuggestedDeleted(withRows(PRICES[0], PRICES[1], PRICES[2], BLANK, PRICES[3]), [1], SUGGESTION);
+    const { clients, batchUpdate } = clientsFor(before, { afterStructure: afterDocsApplied, suggestionIds: [SUGGESTION] });
+    const edited = [PRICES[2], pipe('Hosting', '$300'), PRICES[3]];
+    const result = await editDoc(clients, 'd', `${pipe('Design', '$1,200')}\n${pipe('Build', '$3,000')}\n${pipe('Total', '$4,200')}`, `${pipe('Build', '$3,000')}\n${pipe('Hosting', '$300')}\n${pipe('Total', '$4,200')}`, { suggest: true });
+    expect(edited.length).toBe(3);
+    expect(result.status).toBe('ok');
+    const [first] = allRequests(batchUpdate).filter((r) => r.deleteTableRow || r.insertTableRow);
+    expect(first.deleteTableRow!.tableCellLocation).toMatchObject({ rowIndex: 1 });
+    const insert = allRequests(batchUpdate).find((r) => r.insertTableRow)!;
+    expect(insert.insertTableRow!.tableCellLocation).toMatchObject({ rowIndex: 2, columnIndex: 0 });
+    expect(insert.insertTableRow!.insertBelow).toBe(true);
+    expect(typed(batchUpdate)).toEqual(['$300', 'Hosting']);
+    const blankRow = tableOf(afterDocsApplied).tableRows![3];
+    const firstCellStart = blankRow.tableCells![0].content![0].startIndex;
+    expect(allRequests(batchUpdate).filter((r) => r.insertText).map((r) => r.insertText!.location!.index)).toContain(firstCellStart);
+  });
+});
+
+describe('a retyped cell with no style of its own sends no style reset (#64)', () => {
+  it('5 to 6 in a plain cell is a delete and an insert, with nothing to clear', async () => {
+    const { clients, batchUpdate } = clientsFor(withRows(plain('Item', 'Price'), plain('Cake', '5')));
+    await editDoc(clients, 'd', pipe('Cake', '5'), pipe('Cake', '6'), { suggest: true });
+    expect(kinds(batchUpdate)).toEqual(['deleteContentRange', 'insertText']);
+  });
+
+  it('a cell whose words are styled is still cleared, so the new words do not inherit the style', async () => {
+    const { clients, batchUpdate } = clientsFor(withRows(plain('Item', 'Price'), { cells: [{ text: 'Cake', runStyle: { bold: true } }, { text: '5' }] }));
+    await editDoc(clients, 'd', '| **Cake** | 5 |', '| **Pie** | 5 |', { suggest: true });
+    expect(kinds(batchUpdate)).toContain('updateTextStyle');
+  });
+
+  it('a cell with a paragraph style is still reset', async () => {
+    const doc = withRows(plain('Item', 'Price'), { cells: [{ text: 'Cake' }, { text: '5', paragraphStyle: { indentStart: { magnitude: 36, unit: 'PT' } } }] });
+    const row = renderMarkdown(doc).split('\n').find((line) => line.includes('Cake'))!;
+    const { clients, batchUpdate } = clientsFor(doc);
+    await editDoc(clients, 'd', row, row.replace('>5<', '>6<'), { suggest: true });
+    expect(kinds(batchUpdate)).toContain('updateParagraphStyle');
+  });
+});
+
+describe('a row quoted from a tracked read (#64)', () => {
+  it('is not found, and the refusal shows the table as it can be quoted', async () => {
+    const { clients, batchUpdate } = clientsFor(withRows(...PRICES));
+    const result = await editDoc(clients, 'd', '| <ins data-sug="s1">Build</ins> | <ins data-sug="s1">$3,000</ins> |', '');
+    expect(result.status).toBe('not_found');
+    expect(result.message).toContain('| Build | $3,000 |');
+    expect(batchUpdate).not.toHaveBeenCalled();
   });
 });

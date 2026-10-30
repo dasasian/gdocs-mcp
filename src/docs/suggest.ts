@@ -40,9 +40,10 @@ export function refuseColumnWidthsIn(markdown: string): void {
 
 /** Refuses a table edit that sets a column width: any width that differs, or any width at all when columns are added or removed. */
 export function refuseColumnWidthChange(before: TableLayout, after: TableLayout, changesColumns: boolean): void {
-  const widths = (layout: TableLayout): (number | undefined)[] => layout.columns.map((column) => column.width);
+  const count = Math.max(before.columns.length, after.columns.length);
+  const widths = (layout: TableLayout): (number | undefined)[] => Array.from({ length: count }, (_, c) => layout.columns[c]?.width);
   const anyWidth = [...widths(before), ...widths(after)].some((width) => width !== undefined);
-  const differs = JSON.stringify(widths(before)) !== JSON.stringify(widths(after));
+  const differs = widths(before).some((width, c) => width !== widths(after)[c]);
   if (changesColumns ? anyWidth : differs) throw cannotSuggest(COLUMN_WIDTH.what, COLUMN_WIDTH.request);
 }
 

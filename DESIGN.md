@@ -311,6 +311,27 @@ Details the checks against Docs settled (#62):
 - **Pipe rows are a table edit too.** An old_string of nothing but pipe rows, with a new_string of nothing but pipe rows or empty, is read as a change to the table, not as text: that is how `read_doc` shows a table with no style.
 - **The Drive API takes `quotedFileContent` on a new comment with or without an anchor and lists it back** (the quote is not checked against the doc), so a comment quoting a cell can be made through the API and the count is testable live. A quote is matched to a moved line when it is inside one of its cells or when one of its cells is inside the quote, which can overcount and does not miss a quote that spans cells. A comment with a range (§7) is matched by its range instead, in a header or footer too.
 
+**A suggested table edit (§6).** A row or column deleted as a suggestion stays in
+the table until a person accepts, so the edit does three things in `suggest` mode.
+The requests after a delete address the rows and columns where they now sit (a row
+inserted below a row that follows a suggested-deleted one goes under it, not under
+the deleted one). The shape check and the typing that follow the structure batch
+leave out the rows and columns this edit just suggested deleting, found by the ids
+Docs reports and, as a backstop, by deletion ids that were not in the table before;
+those ids are not the table's pending suggestions from other people, which are in
+the table as the read shows it and so are quoted, counted and edited as ordinary
+rows. And a cell that holds only unstyled words (plain runs, default paragraph) is
+retyped without the reset of run and paragraph style, because resetting a style
+that is not set is a no-op that Docs still records, and as a suggestion it showed
+as a "Format: style" nobody made (checked live). A cell with no words yet is still
+reset: Docs may have copied a neighbour's link or style into a new row.
+In `read_doc(mode: "tracked")` every run in a cell is tagged `<ins>/<del>` as in a
+paragraph, in pipe and HTML tables, so a suggested row reads as tagged cells. An
+empty cell has no run to tag, so it carries the suggestion on the cell itself,
+`<ins data-sug="…"></ins>`. The tags are for reading: quote the text without them in
+`edit_doc`; a row quoted with its tags is not found, and the refusal prints the
+table as it can be quoted. `clean`, `accepted` and `rejected` are Docs' own views.
+
 **No stray empty paragraphs.** `insertTable` adds a paragraph before the table,
 and the API refuses to delete it afterwards ("Invalid deletion range", checked
 live). So the writer inserts the table at the end of the text of the paragraph
