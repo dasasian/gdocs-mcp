@@ -18,7 +18,7 @@ import { refuseColumnWidthsIn, suggestingSession } from './suggest.js';
 import { explainingCommentOnlyAccess, MUST_SUGGEST_MESSAGE } from './access.js';
 import { parseInlineWithElements } from './inline.js';
 import { splitAtKeptElements, type Gap } from './element-diff.js';
-import { elementRequests, creationIssuesIn, listRequest, batchUpdateWithElements, ElementRefusal, type ListSpec, type PlacedElement } from './element-write.js';
+import { elementRequests, noteTextRequests, creationIssuesIn, listRequest, batchUpdateWithElements, ElementRefusal, type ListSpec, type PlacedElement } from './element-write.js';
 import { unsuggestableDropdownIssues } from './element-checks.js';
 import { chipTextChange, parseElement, type DropdownDefinition, type TokenTable } from './elements.js';
 import { renderDatalists } from './transformer.js';
@@ -585,7 +585,12 @@ async function applyEdit(clients: GoogleClients, documentId: string, oldString: 
   const datalistEdit = await editDatalists(clients, documentId, fetched.data, tabId, oldString, newString, revisionId);
   if (datalistEdit) return datalistEdit;
   const noteEdit = noteEditOf(fetched.data, tabId, oldString, newString);
-  if (noteEdit) return typeof noteEdit === 'string' ? { status: 'not_found', message: noteEdit } : applyEdit(clients, documentId, noteEdit.oldText, noteEdit.newText, { ...opts, footnoteId: noteEdit.footnoteId });
+  if (noteEdit && noteEdit.oldText.trim() === '') {
+    const requests = noteTextRequests(noteEdit.newText, noteEdit.footnoteId, tabId);
+    if (requests.length) await clients.docs.documents.batchUpdate({ documentId, requestBody: { requests, writeControl: writeControlFor(revisionId) } });
+    return { status: 'ok', replaced: requests.length ? 1 : 0 };
+  }
+  if (noteEdit) return applyEdit(clients, documentId, noteEdit.oldText, noteEdit.newText, { ...opts, footnoteId: noteEdit.footnoteId });
 
   const block = renderStyleBlock(styleRulesOf(fetched.data, tabId));
   const isEmpty = isEmptyContent(fetched.data, tabId, segmentId);

@@ -115,6 +115,12 @@ describe('an edit keeps the elements it gives back and deletes the ones it drops
     expect(requests.find((r) => r.insertText)?.insertText).toMatchObject({ text: 'Calendar days', location: { segmentId: 'kix.xm1udxkuirip' } });
   });
 
+  it('writes the words of an empty note by quoting its bare [^1]: line', async () => {
+    const batch = vi.fn().mockResolvedValue({ data: {} });
+    await editDoc(clientsFor(elementsDoc, batch), 'd', '[^1]:', '[^1]: Business days only');
+    expect(sentBy(batch)).toEqual([{ insertText: { location: { index: 1, segmentId: 'kix.xm1udxkuirip' }, text: 'Business days only' } }]);
+  });
+
   it('changes a dropdown choice by making the dropdown again and choosing in a second batch', async () => {
     const calls: docs_v1.Schema$Request[][] = [];
     const batch = vi.fn(async (params: { requestBody: { requests: docs_v1.Schema$Request[] } }) => {

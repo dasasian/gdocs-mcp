@@ -79,20 +79,25 @@ export function dateProperties(element: Extract<Element, { kind: 'date' }>): Rec
   };
 }
 
+/** The requests that put a note's words into a footnote's own segment, after the space Docs starts it with. */
+export function noteTextRequests(note: string, footnoteId: string, tabId: string | undefined): docs_v1.Schema$Request[] {
+  if (!note) return [];
+  const segments = parseInline(note);
+  let offset = 0;
+  const styles = segments.flatMap((segment) => {
+    const start = NOTE_START + offset;
+    offset += segment.text.length;
+    const { textStyle, fields } = segmentTextStyle(segment);
+    return fields.length ? [{ updateTextStyle: { range: { startIndex: start, endIndex: start + segment.text.length, tabId, segmentId: footnoteId }, textStyle, fields: fields.join(',') } }] : [];
+  });
+  return [{ insertText: { location: { index: NOTE_START, tabId, segmentId: footnoteId }, text: segments.map((segment) => segment.text).join('') } }, ...styles];
+}
+
 function footnoteRequests(label: string, notes: Map<string, string>, site: ElementSite): FollowUp {
   const note = notes.get(label) ?? '';
   return (reply) => {
     const footnoteId = reply?.createFootnote?.footnoteId;
-    if (!footnoteId || !note) return [];
-    const segments = parseInline(note);
-    let offset = 0;
-    const styles = segments.flatMap((segment) => {
-      const start = NOTE_START + offset;
-      offset += segment.text.length;
-      const { textStyle, fields } = segmentTextStyle(segment);
-      return fields.length ? [{ updateTextStyle: { range: { startIndex: start, endIndex: start + segment.text.length, tabId: site.tabId, segmentId: footnoteId }, textStyle, fields: fields.join(',') } }] : [];
-    });
-    return [{ insertText: { location: { index: NOTE_START, tabId: site.tabId, segmentId: footnoteId }, text: segments.map((segment) => segment.text).join('') } }, ...styles];
+    return footnoteId ? noteTextRequests(note, footnoteId, site.tabId) : [];
   };
 }
 
