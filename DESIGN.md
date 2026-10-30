@@ -401,8 +401,10 @@ footnote and its text (checked live, #58). An edit next to an element was
 always safe; one whose range covered it was not.
 
 What sits between paragraphs is outside this rule: a section break is its own
-design (#57), and bookmarks are not in the API at all (docs/limitations.md);
-`write_doc` counts both before a replace (§4).
+design (#57), bookmarks are not in the API at all (docs/limitations.md), and
+a table of contents is not read; `write_doc` counts all three before a replace
+(§4). A table cell holds paragraphs, so the rule holds inside tables: a
+dropdown in a tracker's Status column reads and is kept like one in a sentence.
 
 Each element is spelled by the first of three rules that has a spelling for it:
 
@@ -427,10 +429,10 @@ list's title is `title`, a date's language is `lang`.
 | person chip | `<a class="chip" href="mailto:jane@x.com">Jane Doe</a>` | `insertPerson` |
 | link chip (a Drive file) | `<a class="chip" href="https://docs.google.com/document/d/…">Q3 Spec</a>` | `insertRichLink` |
 | dropdown | `<input class="chip" list="kix.la3o7ghprzoj" value="Draft">`, its list once as `<datalist id="kix.la3o7ghprzoj" title="Status"><option>Draft</option><option>Final</option></datalist>` | `insertDropdown`, `updateDropdownProperties` |
-| horizontal rule | `---` | refused: the API cannot make one |
+| horizontal rule | `---` | an empty paragraph with `border-bottom: 1pt solid #cccccc`: the API cannot make a rule, and this looks the same |
 | column break | `<span style="break-after:column"></span>` | refused: the API cannot make one |
-| equation | `<span class="equation">E = mc²</span>` (the text Docs shows) | refused: the API cannot make one |
-| page-number field | `<span class="page-number">7</span>` | refused: the API cannot make one |
+| equation | `<span class="equation" title="Google's API does not expose this equation; edit it in Google Docs"></span>` | refused: the API cannot make one |
+| page-number field | `<span class="page-number" title="Docs fills in the page number on each page"></span>` | refused: the API cannot make one |
 
 The writer's rules for all of them are the editing contract's (§4): **an element
 that comes back unchanged is kept**, so an edit around it, or across it, leaves
@@ -451,7 +453,8 @@ Footnotes exist in the body only; one in a header or footer is refused (the API
 cannot insert one there).
 
 **Dates.** `datetime` holds the moment, the text holds what Docs shows, and
-`lang` the language when it is not English. The text decides the format on
+`lang` the language when it is not English, as a language code the API takes
+(`fr`; it refuses `en-US`). The text decides the format on
 write: its shape is matched to the API's date formats (`Jan 1`, `January 01`,
 `Jan 1, 1970`, `1970-01-01`) and time formats (none, `12:00 PM`,
 `12:00 PM UTC`); a text no format matches gets the default. A date shown in a
@@ -463,8 +466,27 @@ chip. A link chip can be made only for a Google Drive file. Google refuses a
 YouTube, Calendar, Maps or web URL ("The URL is invalid"), and an id that
 names no file ("Error fetching chip data"), so the writer refuses them first
 and gives the plain link to write: `[Launch video](https://…)`. A link chip that
-already exists to such a URL reads and is kept like any other. Its text is the
-file's title, which Docs sets.
+already exists to such a URL reads and is kept like any other. A chip's text is
+Google's: a person's name comes from their account (`insertPerson` refuses a
+name: "Insert person requests should not specify a name"), and a link chip's
+text is the file's title. So a write that changes a chip's text and keeps its
+`href` is refused, saying what to change instead: the email in `href` for
+another person, `drive mv` to rename the file. A date's text is not like this:
+it chooses the format.
+
+**Horizontal rules.** Docs has a horizontal rule element, but no request makes
+one. `---` is written as an empty paragraph with a bottom border, which looks
+the same, as a quote is a paragraph with a left border (§2e). Both read as
+`---`: Docs' own rule, kept by an edit like any element, and the bordered
+paragraph, which has no other style.
+
+**Elements the API does not describe.** An equation is `{"equation":{}}` over
+several indexes, and a page-number field is `{"autoText":{"type":"PAGE_NUMBER"}}`:
+neither carries its text. Each reads as an empty span whose `title` says what
+is there and where to change it, so the span is not mistaken for leftover
+markup and the note travels with it into an `edit_doc` quote or a saved `.md`.
+Giving the span back keeps the element; a new one is refused, telling the
+agent to ask the user to insert it in Google Docs.
 
 **Dropdowns.** A list is defined once per tab and shared, so the read writes
 each list once, at the top after the `<style>` block, and each dropdown points
@@ -741,8 +763,8 @@ or footer is written without asking, like a new one. Replacing content
 is refused on the first call, and the refusal is a loss summary: the paragraphs
 of text, and everything the replace would take with it that a write cannot make
 again — comments, suggestions, tab stops (the Docs API cannot write them back),
-bookmarks, section breaks, and the elements a read shows but the API cannot
-make (§2f): column breaks, horizontal rules, equations, page-number fields, a
+bookmarks, section breaks, a table of contents, and the elements a read shows but the API cannot
+make (§2f): column breaks, equations, page-number fields, a
 date in a format the API can only read, and a link chip to anything but a Drive
 file. The other footnotes, chips and dropdowns are in the markdown and are
 written back, so they are not counted. A page-number field is an `autoText` element of type

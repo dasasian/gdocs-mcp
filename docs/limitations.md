@@ -2,7 +2,7 @@
 
 Everything here is a **constraint of the Google Docs / Drive APIs — not a bug in `gdocs-mcp`.** Where a constraint has a workaround or a partial mitigation, the last column says what the server does instead. If Google adds first-class support for any of these, we'll revisit.
 
-**Each row about a missing API feature names the request that fails, so it can be tried again.** Google adds requests over time (suggestions and comments arrived in 2026). After each check, open an issue to check again in a month; the interval is changed at each check.
+**Every gap, compromise and workaround has a row, and the row names the request that fails or is missing, so it can be tried again.** Google adds requests over time (suggestions and comments arrived in 2026). After each check, open an issue to check again in a month; the interval is changed at each check.
 
 Legend for "What gdocs-mcp does": **mitigated** = a tool works around it; **surfaced** = you're told about it in the tool result/description; **hard limit** = no workaround exists.
 
@@ -52,14 +52,15 @@ Legend for "What gdocs-mcp does": **mitigated** = a tool works around it; **surf
 
 ## Elements the API can read but not make
 
-Each of these reads (DESIGN.md §2f) and is kept by an edit that gives it back unchanged; an edit that drops one deletes it. Writing a new one is refused before anything is sent, naming the element. A `write_doc` replace counts each one that sits in the doc (a footnote cannot be in a header, so it has nothing to count).
+Each of these reads (DESIGN.md §2f) and is kept by an edit that gives it back unchanged; an edit that drops one deletes it. Writing a new one is refused before anything is sent, naming the element (a horizontal rule is worked around instead). A `write_doc` replace counts each one that sits in the doc (a footnote cannot be in a header, so it has nothing to count).
 
 | Limitation | Why (API reason) | What gdocs-mcp does |
 |---|---|---|
-| **A horizontal rule cannot be made.** | `horizontalRule` is a paragraph element; no batchUpdate request inserts one (no `insertHorizontalRule`). | **surfaced** — reads as `---`; a new `---` is refused. |
+| **A horizontal rule cannot be made.** | `horizontalRule` is a paragraph element; no batchUpdate request inserts one (no `insertHorizontalRule`). | **worked around** — reads as `---`; a new `---` is written as an empty paragraph with a 1pt #cccccc bottom border, which looks the same and also reads as `---`. A real rule is kept by an edit. |
 | **A column break cannot be made.** | `columnBreak` is a paragraph element; there is no `insertColumnBreak`, and `insertText` strips the control character (#48). | **surfaced** — reads as `<span style="break-after:column"></span>`; a new one is refused. |
-| **An equation cannot be made.** | `equation` is a paragraph element; no request inserts one. | **surfaced** — reads as `<span class="equation">…</span>`; a new one is refused. |
-| **A page-number or page-count field cannot be made.** | `autoText` of type `PAGE_NUMBER` / `PAGE_COUNT`; no request inserts one (#63). See also Headers & footers. | **surfaced** — reads as `<span class="page-number">7</span>`; a new one is refused. |
+| **An equation cannot be made or read.** | `equation` is a paragraph element with no fields (`{"equation":{}}`, checked live); no request inserts one. | **surfaced** — reads as an empty `<span class="equation" title="…">` whose title says to edit it in Google Docs; a new one is refused. |
+| **A page-number or page-count field cannot be made, and its number is not in the API.** | `autoText` of type `PAGE_NUMBER` / `PAGE_COUNT` carries only its type (checked live); no request inserts one (#63). See also Headers & footers. | **surfaced** — reads as an empty `<span class="page-number" title="…">`; a new one is refused. |
+| **A chip's text cannot be set.** | `insertPerson` refuses `personProperties.name` ("Insert person requests should not specify a name"); a link chip's title is the file's (checked live, #58). | **surfaced** — a write that changes a chip's text is refused, naming what to change instead. |
 | **A link chip can be made only for a Google Drive file.** | `insertRichLink` answers "The URL is invalid" for YouTube, Calendar, Maps and web URLs, and "Error fetching chip data" for a Drive id that names no file (checked live, #58). Docs makes YouTube chips in the editor. | **surfaced** — a new `<a class="chip">` to anything but a Drive file is refused with the plain link to write instead. |
 | **A date in an imported format cannot be made again.** | `DATE_FORMAT_CUSTOM` is output only; `insertDate` takes the four other formats. | **surfaced** — the date reads with the text Docs shows and is kept by an edit; a replace counts it. |
 | **A footnote cannot go in a header, footer or another footnote.** | `createFootnote` refuses those segments. | **surfaced** — refused, naming why. |
