@@ -34,12 +34,7 @@ export interface PageSetupResult {
 
 const pt = (magnitude: number): docs_v1.Schema$Dimension => ({ magnitude, unit: 'PT' });
 
-// Page setup only reads documentStyle + tab identity, so ask for just those —
-// on a content-heavy doc that's ~700 bytes instead of the whole body. The mask
-// has to be tabs-only (the API rejects mixing legacy top-level fields with tabs
-// content), so if a doc comes back with no tabs at all it's the legacy shape and
-// we re-read it unmasked. Modern docs never take that path.
-async function getForPageSetup(
+async function getTabsOnlyMaskedOrWholeLegacyDoc(
   clients: GoogleClients,
   documentId: string,
 ): Promise<docs_v1.Schema$Document> {
@@ -66,7 +61,7 @@ export async function getPageSetup(
   documentId: string,
   opts: { tabId?: string } = {},
 ): Promise<PageSetupInfo> {
-  const doc = await getForPageSetup(clients, documentId);
+  const doc = await getTabsOnlyMaskedOrWholeLegacyDoc(clients, documentId);
   const tabId = resolveTabId(doc, opts.tabId);
   const ds = documentStyleOf(doc, tabId);
   const mag = (d: docs_v1.Schema$Dimension | undefined): number | undefined => d?.magnitude ?? undefined;
@@ -99,7 +94,7 @@ export async function setPageSetup(
   setup: PageSetup,
   opts: { tabId?: string } = {},
 ): Promise<PageSetupResult> {
-  const doc = await getForPageSetup(clients, documentId);
+  const doc = await getTabsOnlyMaskedOrWholeLegacyDoc(clients, documentId);
   const revisionId = doc.revisionId ?? undefined;
   const tabId = resolveTabId(doc, opts.tabId);
 

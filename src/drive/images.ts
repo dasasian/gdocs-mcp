@@ -85,9 +85,10 @@ export interface DownloadedImage {
   sha256: string; // hash of the downloaded (Doc-side) bytes, for change detection
 }
 
-// Download every embedded image in a doc to `destDir`. Uses the image's ephemeral
-// contentUri (valid for the moment; fetched with the user's token). Returns the
-// objectId->file mapping so the caller can rewrite read_doc's image markers.
+/**
+ * Downloads every embedded image in a doc to `destDir`, from the image's ephemeral contentUri, fetched with the user's
+ * token. Returns the objectId->file mapping so the caller can rewrite read_doc's image markers.
+ */
 export async function downloadImages(
   clients: GoogleClients,
   documentId: string,
@@ -100,10 +101,8 @@ export async function downloadImages(
   const token = (await clients.auth.getAccessToken()).token;
   mkdirSync(destDir, { recursive: true });
 
-  // Fetch every image concurrently (they're independent), then write them in
-  // document order so the image-N numbering stays stable.
   const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-  const fetched = await Promise.all(
+  const fetchedAllAtOnce = await Promise.all(
     Object.entries(objects).map(async ([objectId, obj]) => {
       const contentUri = obj.inlineObjectProperties?.embeddedObject?.imageProperties?.contentUri;
       if (!contentUri) return null;
@@ -115,7 +114,7 @@ export async function downloadImages(
 
   const out: DownloadedImage[] = [];
   let n = 0;
-  for (const got of fetched) {
+  for (const got of fetchedAllAtOnce) {
     if (!got) continue;
     n += 1;
     const filename = `image-${n}.${extFromBytes(got.buf)}`;
