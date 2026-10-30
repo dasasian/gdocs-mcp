@@ -2,7 +2,7 @@
 
 Everything here is a **constraint of the Google Docs / Drive APIs — not a bug in `gdocs-mcp`.** Where a constraint has a workaround or a partial mitigation, the last column says what the server does instead. If Google adds first-class support for any of these, we'll revisit.
 
-**Each row about a missing API feature names the request that fails, so it can be tried again.** Google adds requests over time (suggestions and comments arrived in 2026). After each check, open an issue to check again in six months.
+**Each row about a missing API feature names the request that fails, so it can be tried again.** Google adds requests over time (suggestions and comments arrived in 2026). After each check, open an issue to check again in a month; the interval is changed at each check.
 
 Legend for "What gdocs-mcp does": **mitigated** = a tool works around it; **surfaced** = you're told about it in the tool result/description; **hard limit** = no workaround exists.
 
