@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- A new table fits the page. Docs' `insertTable` now gives every column a fixed width that ignores the page (175pt each from three columns on, so four columns were 700pt on a 468pt text width and overhung both margins), and a new table read back as an HTML `<table>` with those widths instead of the pipe table that was written. A new table's columns are now evenly distributed, as in a table made in Docs, so it spans the text width of its page, header or footer and a pipe table reads back as written. A table added with `suggest` keeps Docs' widths: Docs cannot suggest a column width (#73).
+
 ## [1.0.0] — 2026-10-30
 
 ### Added

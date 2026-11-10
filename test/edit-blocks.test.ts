@@ -423,3 +423,52 @@ describe('an anchor copied from the read across two paragraphs is found (#60)', 
     expect(batchUpdate).toHaveBeenCalled();
   });
 });
+
+describe('a new table spans the text width, like a table made in Docs (#73)', () => {
+  // Docs' insertTable gives each column a fixed width that ignores the page (175pt each for 3 or more columns, 700pt for
+  // four, seen live), so the writer has to ask for evenly distributed columns, which Docs fits to the page, cell, header or footer.
+  function growingTableClients(table: string[][]) {
+    const before = docOf([{ text: 'Intro' }]);
+    const after = docOf([{ text: 'Intro' }, { table }, { text: '' }]);
+    const batchUpdate = vi.fn().mockResolvedValue({ data: { replies: [], suggestionResponses: [] } });
+    const tableSent = () => batchUpdate.mock.calls.some((c) => (c[0].requestBody.requests as docs_v1.Schema$Request[]).some((r) => r.insertTable));
+    const get = vi.fn().mockImplementation(async () => ({ data: tableSent() ? after : before }));
+    const clients: GoogleClients = {
+      auth: {} as GoogleClients['auth'],
+      docs: { documents: { get, batchUpdate } } as unknown as GoogleClients['docs'],
+      drive: {} as GoogleClients['drive'],
+    };
+    return { clients, batchUpdate, tableStart: bodyOf([{ text: 'Intro' }, { table }])[1].startIndex! };
+  }
+  const allRequests = (batchUpdate: ReturnType<typeof vi.fn>): docs_v1.Schema$Request[] => batchUpdate.mock.calls.flatMap((c) => c[0].requestBody.requests as docs_v1.Schema$Request[]);
+  const columnRequests = (batchUpdate: ReturnType<typeof vi.fn>) => allRequests(batchUpdate).flatMap((r) => (r.updateTableColumnProperties ? [r.updateTableColumnProperties] : []));
+
+  it('a pipe table asks for evenly distributed columns, all of them in one request', async () => {
+    const { clients, batchUpdate, tableStart } = growingTableClients([['', '', '', ''], ['', '', '', '']]);
+    await editDoc(clients, 'd', 'Intro', 'Intro\n\n| Cenote | Near | Price | Notes |\n| --- | --- | --- | --- |\n| Gran | Tulum | 500 | turtles |');
+    expect(columnRequests(batchUpdate)).toEqual([{ tableStartLocation: { index: tableStart }, tableColumnProperties: { widthType: 'EVENLY_DISTRIBUTED' }, fields: 'widthType' }]);
+  });
+
+  it('an HTML table with no widths does too', async () => {
+    const { clients, batchUpdate, tableStart } = growingTableClients([['', '']]);
+    await editDoc(clients, 'd', 'Intro', 'Intro\n\n<table style="border:1pt solid #cccccc">\n<tr><td>a</td><td>b</td></tr>\n</table>');
+    expect(columnRequests(batchUpdate)).toEqual([{ tableStartLocation: { index: tableStart }, tableColumnProperties: { widthType: 'EVENLY_DISTRIBUTED' }, fields: 'widthType' }]);
+  });
+
+  it('a column with a width gets it after the rest are spread evenly', async () => {
+    const { clients, batchUpdate, tableStart } = growingTableClients([['', '']]);
+    await editDoc(clients, 'd', 'Intro', 'Intro\n\n<table>\n<col style="width:120pt"><col>\n<tr><td>a</td><td>b</td></tr>\n</table>');
+    expect(columnRequests(batchUpdate)).toEqual([
+      { tableStartLocation: { index: tableStart }, tableColumnProperties: { widthType: 'EVENLY_DISTRIBUTED' }, fields: 'widthType' },
+      { tableStartLocation: { index: tableStart }, columnIndices: [0], tableColumnProperties: { widthType: 'FIXED_WIDTH', width: { magnitude: 120, unit: 'PT' } }, fields: 'width,widthType' },
+    ]);
+  });
+
+  it('a suggested table cannot be given widths, so it keeps the ones Docs gives it and the suggestion is still made', async () => {
+    const { clients, batchUpdate } = growingTableClients([['', ''], ['', '']]);
+    const result = await editDoc(clients, 'd', 'Intro', 'Intro\n\n| A | B |\n|---|---|\n| 1 | 2 |', { suggest: true });
+    expect(result.status).toBe('ok');
+    expect(allRequests(batchUpdate).some((r) => r.insertTable)).toBe(true);
+    expect(columnRequests(batchUpdate)).toEqual([]);
+  });
+});

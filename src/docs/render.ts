@@ -3,7 +3,7 @@ import type { GoogleClients } from '../google/clients.js';
 import { INLINE_READ, tableInsertedAt, writeControlFor } from './structure.js';
 import { markdownToRequests, type ImagePlacement, type TablePlacement } from './write.js';
 import { placeCells } from './table-layout.js';
-import { insertTableRequests, mergeRequests, lookRequests, lookOf, plainLook, rowsTouchedByMerges, fillLayoutRequests } from './table-write.js';
+import { insertTableRequests, evenColumnsRequest, mergeRequests, lookRequests, lookOf, plainLook, rowsTouchedByMerges, fillLayoutRequests } from './table-write.js';
 import { uploadImageForInsert, resolveImageSource } from '../drive/images.js';
 import { fillCellRequests, columnAlignRequests } from './objects.js';
 import { batchUpdateWithElements } from './element-write.js';
@@ -57,10 +57,13 @@ async function insertTableAt(clients: GoogleClients, documentId: string, table: 
   const after = (await clients.docs.documents.get({ documentId, ...INLINE_READ })).data;
   const tableEl = tableInsertedAt(after, index, tabId, segmentId);
   if (!tableEl?.table?.tableRows) return;
+  const site = { tableStart: tableEl.startIndex ?? index, tabId, segmentId };
+  // Docs cannot suggest a column width, so a suggested table keeps the widths insertTable gave it.
+  const widths = clients.suggesting ? [] : [evenColumnsRequest(site)];
 
   if (layout && placement) {
-    const site = { tableStart: tableEl.startIndex ?? index, tabId, segmentId };
     const requests = [
+      ...widths,
       ...mergeRequests(placement, site),
       ...lookRequests(plainLook(R, C, rowsTouchedByMerges(placement)), lookOf(layout, placement), site),
       ...fillLayoutRequests(tableEl.table, placement, tabId, segmentId, table.context),
@@ -69,7 +72,7 @@ async function insertTableAt(clients: GoogleClients, documentId: string, table: 
     return;
   }
 
-  const requests = fillCellRequests(tableEl, rows, { tabId, segmentId }, table.context);
+  const requests = [...widths, ...fillCellRequests(tableEl, rows, { tabId, segmentId }, table.context)];
   if (requests.length) await batchUpdateWithElements(clients, documentId, requests, undefined, tabId);
 
   if (aligns.some((a) => a && a !== 'left')) {
