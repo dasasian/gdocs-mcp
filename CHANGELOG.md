@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `edit_doc`'s `replaced` counts the occurrences it changed when the edit quotes a table's markup, as it does everywhere else. It counted the tables the edit touched (or, for one table, the batches sent), so `replace_all` of `<td>Valladolid</td>` over 5 cells in 2 tables said `replaced: 2`.
+
 ## [1.0.0] — 2026-10-30
 
 ### Added
