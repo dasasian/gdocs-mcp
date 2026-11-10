@@ -423,3 +423,84 @@ describe('an anchor copied from the read across two paragraphs is found (#60)', 
     expect(batchUpdate).toHaveBeenCalled();
   });
 });
+
+// `- ` and `1. ` are how read_doc spells a list item, so an edit quotes them (#66).
+describe('a list item quoted with its marker (#66)', () => {
+  const listDoc = (): docs_v1.Schema$Document => {
+    const doc = docOf([
+      { text: 'Mon Jan 18: New Orleans to Miami', bullet: true },
+      { text: 'Tue 19 (Playa): Tulum day trip', bullet: true },
+      { text: 'Wed 20 (Playa): easy day', bullet: true },
+      { text: 'After' },
+    ]);
+    doc.lists = { l1: { listProperties: { nestingLevels: [{ glyphType: 'DECIMAL' }, { glyphType: 'GLYPH_TYPE_UNSPECIFIED' }] } } };
+    return doc;
+  };
+  const noNewParagraph = (requests: docs_v1.Schema$Request[]): boolean => requests.every((r) => !r.insertText?.text.includes('\n') && !r.createParagraphBullets && !r.deleteParagraphBullets);
+
+  it('old_string and new_string both keep the marker: the item changes in place, still one list item', async () => {
+    const doc = docOf([{ text: 'Mon: Miami', bullet: true }, { text: 'Tue 19 (Playa): Tulum day trip', bullet: true }, { text: 'After' }]);
+    const { clients, batchUpdate } = clientsFor(doc);
+    expect(renderMarkdown(doc)).toContain('- Tue 19 (Playa): Tulum day trip');
+    const result = await editDoc(clients, 'd', '- Tue 19 (Playa): Tulum day trip', '- Tue 19 (Playa): Cobá day trip');
+    expect(result.status).toBe('ok');
+    const requests = requestsOf(batchUpdate);
+    expect(inserted(requests).map((i) => i.text).join('')).toContain('Cobá');
+    expect(noNewParagraph(requests)).toBe(true);
+  });
+
+  it('the marker on old_string alone behaves like the same edit without it', async () => {
+    const doc = docOf([{ text: 'Tue: Tulum', bullet: true }, { text: 'After' }]);
+    const withMarker = clientsFor(doc);
+    await editDoc(withMarker.clients, 'd', '- Tue: Tulum', 'Tue: Cobá');
+    const without = clientsFor(doc);
+    await editDoc(without.clients, 'd', 'Tue: Tulum', 'Tue: Cobá');
+    expect(requestsOf(withMarker.batchUpdate)).toEqual(requestsOf(without.batchUpdate));
+  });
+
+  it('an ordered item, quoted as the read numbers it', async () => {
+    const doc = listDoc();
+    const { clients, batchUpdate } = clientsFor(doc);
+    expect(renderMarkdown(doc)).toContain('2. Tue 19 (Playa): Tulum day trip');
+    const result = await editDoc(clients, 'd', '2. Tue 19 (Playa): Tulum day trip', '2. Tue 19 (Playa): Cobá day trip');
+    expect(result.status).toBe('ok');
+    expect(noNewParagraph(requestsOf(batchUpdate))).toBe(true);
+  });
+
+  it('a nested item, quoted with its indent', async () => {
+    const doc = docOf([{ text: 'Parent', bullet: true }, { text: 'Child', bullet: true }, { text: 'After' }]);
+    (doc.body!.content![1].paragraph!.bullet as docs_v1.Schema$Bullet).nestingLevel = 1;
+    const { clients, batchUpdate } = clientsFor(doc);
+    expect(renderMarkdown(doc)).toContain('  - Child');
+    const result = await editDoc(clients, 'd', '  - Child', '  - Kid');
+    expect(result.status).toBe('ok');
+    expect(noNewParagraph(requestsOf(batchUpdate))).toBe(true);
+  });
+
+  it('a new item added after a quoted item is a new list item', async () => {
+    const doc = docOf([{ text: 'Tue: Tulum', bullet: true }, { text: 'After' }]);
+    const { clients, batchUpdate } = clientsFor(doc);
+    const result = await editDoc(clients, 'd', '- Tue: Tulum', '- Tue: Tulum\n- Wed: Cobá');
+    expect(result.status).toBe('ok');
+    const texts = inserted(requestsOf(batchUpdate)).map((i) => i.text);
+    expect(texts).toEqual(['\n', 'Wed: Cobá']);
+  });
+
+  it('two quoted items, one changed: only its text is retyped', async () => {
+    const doc = docOf([{ text: 'Mon', bullet: true }, { text: 'Tue: Tulum', bullet: true }, { text: 'After' }]);
+    const { clients, batchUpdate } = clientsFor(doc);
+    const result = await editDoc(clients, 'd', '- Mon\n- Tue: Tulum', '- Mon\n- Tue: Cobá');
+    expect(result.status).toBe('ok');
+    const requests = requestsOf(batchUpdate);
+    expect(inserted(requests).map((i) => i.text)).toEqual(['Tue: Cobá']);
+    expect(noNewParagraph(requests)).toBe(true);
+  });
+
+  it('a quoted item with its marker dropped in new_string is edited in place, as without any marker', async () => {
+    const doc = docOf([{ text: 'Tue: Tulum', bullet: true }, { text: 'After' }]);
+    const { clients, batchUpdate } = clientsFor(doc);
+    const result = await editDoc(clients, 'd', '- Tue: Tulum', 'Tue: Cobá');
+    expect(result.status).toBe('ok');
+    expect(noNewParagraph(requestsOf(batchUpdate))).toBe(true);
+  });
+});

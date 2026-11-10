@@ -77,6 +77,10 @@ const cellLine: LineNormalizer = (line) => {
   return isTableSep(line) ? [] : splitRow(line).map(stripMarkdown);
 };
 
+// read_doc prints a list item as `- text` or `1. text`, two spaces of indent per nesting level. The doc's own text has no marker.
+const LIST_MARKER = /^\s*(?:[-*+]|\d+[.)])\s+(?=\S)/;
+const listLine: LineNormalizer = (line) => [stripMarkdown(line.replace(LIST_MARKER, ''))];
+
 const isBlank = (line: string): boolean => line.trim() === '';
 
 export interface Located {
@@ -84,17 +88,21 @@ export interface Located {
   positions: number[];
   /** turns a slice of old_string into the text it matched, the way the whole of old_string became `needle`. */
   normalize: (text: string) => string;
+  /** true when old_string's list markers (`- `, `1. `) were dropped to find the match. */
+  listMarked?: true;
 }
 
 /**
  * Resolves old_string to its match positions: exact first, then markup-tolerant
  * (a markdown table matches as its cells' text), then with each blank line taken
- * as the single paragraph break the read shows between paragraphs.
+ * as the single paragraph break the read shows between paragraphs. A list marker
+ * (`- `, `1. `) copied from the read comes off last, and only where the match
+ * starts a paragraph: a marker is never part of the text it sits before.
  */
 export function locate(text: string, oldString: string): Located {
   const tried = new Set<string>();
   for (const dropBlankLines of [false, true]) {
-    for (const normalizeLine of [keepLine, cellLine, stripLine]) {
+    for (const normalizeLine of [keepLine, cellLine, stripLine, listLine]) {
       const normalize = (part: string): string =>
         part
           .split('\n')
@@ -104,8 +112,10 @@ export function locate(text: string, oldString: string): Located {
       const needle = normalize(oldString);
       if (tried.has(needle)) continue;
       tried.add(needle);
-      const positions = findAll(text, needle);
-      if (positions.length) return { needle, positions, normalize };
+      const found = findAll(text, needle);
+      const startsParagraph = normalizeLine === listLine && LIST_MARKER.test(oldString.split('\n').find((line) => !(dropBlankLines && isBlank(line))) ?? '');
+      const positions = startsParagraph ? found.filter((at) => at === 0 || text[at - 1] === '\n') : found;
+      if (positions.length) return { needle, positions, normalize, ...(normalizeLine === listLine ? { listMarked: true as const } : {}) };
     }
   }
   return { needle: oldString, positions: [], normalize: (part) => part };
@@ -382,6 +392,28 @@ function withoutTrailingBlanks(lines: string[]): string[] {
   return withoutLeadingBlanks([...lines].reverse()).reverse();
 }
 
+const markerKind = (line: string): 'ordered' | 'bullet' | undefined => (LIST_MARKER.test(line) ? (/^\s*\d/.test(line) ? 'ordered' : 'bullet') : undefined);
+const indentOf = (line: string): string => /^\s*/.exec(line)![0];
+
+/**
+ * An old_string that quotes list items with their markers matched paragraphs that are already list items, and a
+ * new_string that keeps a marker means "still that item", not "a list item inside it". Each such pair of lines is
+ * edited in place: the marker comes off the new line. A new line with no old line to pair with is a new item and keeps it.
+ */
+function withoutPairedMarkers(shared: SharedLines, located: Located): SharedLines {
+  if (!located.listMarked) return shared;
+  const oldLines = shared.middleOld.split('\n');
+  const middleNew = shared.middleNew
+    .split('\n')
+    .map((line, i) => {
+      const old = oldLines[i];
+      const same = old !== undefined && markerKind(old) !== undefined && markerKind(old) === markerKind(line) && indentOf(old) === indentOf(line);
+      return same ? line.replace(LIST_MARKER, '') : line;
+    })
+    .join('\n');
+  return { ...shared, middleNew };
+}
+
 function sharedLinesOf(oldString: string, newString: string, located: Located): SharedLines {
   if (oldString === newString) return NOTHING_SHARED(oldString, newString);
   const oldLines = oldString.split('\n');
@@ -627,7 +659,7 @@ async function applyEdit(clients: GoogleClients, documentId: string, oldString: 
     };
   }
 
-  const shared = sharedLinesOf(oldText, newText, located);
+  const shared = withoutPairedMarkers(sharedLinesOf(oldText, newText, located), located);
   const keepsAnything = shared.keepsPrefix || shared.keepsSuffix;
   const insertsOnly = keepsAnything && isBlank(shared.middleOld);
   const writesNewRule = createsRule(shared.middleNew, shared.middleOld, tokens);
