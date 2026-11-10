@@ -27,7 +27,7 @@ The agent reads and writes **GitHub-flavored markdown with inline HTML**:
 
 - **Content & inline emphasis** → markdown (`#`, `**bold**`, lists, tables, links).
 - **Docs-only formatting** markdown can't express (alignment, color, font, size, spacing, indent, image dimensions) → CSS, in the two places a web page puts it (§2a): a `<style>` block for the document's defaults, and `style="…"` on a `<p>` or `<span>` that differs from them. `<img width="400">` for images. A table with any style reads as an HTML `<table>` carrying the same CSS (§2d). Line breaks, code blocks and quotes follow CommonMark (§2e).
-- **Suggestions / tracked changes** → HTML `<ins>` / `<del>` with an ID marker (`data-sug` attribute or `<!-- sug:id -->`).
+- **Suggestions / tracked changes** → HTML `<ins>` / `<del>` with an ID marker (`data-sug` attribute or `<!-- sug:id -->`); a suggested format change, which changes no text, as `data-sug` plus `data-sug-css` on the run's `<span>` or the paragraph's tag (§6).
 - **Footnotes, chips, dropdowns, equations and every other element inside a paragraph** → shown in the read, so an edit can keep them (§2f).
 
 This single format does both jobs: formatting is **visible in the read** (so the agent can perceive *and* verify style changes), and it is a format the agent authors natively. It replaces an earlier "clean markdown + separate formatting sidecar" idea.
@@ -889,6 +889,37 @@ identical summaries apart (a contract with two 30s), so it is the one
 `context` shows the styled words unchanged and `summary` says what changed
 ("Format: bold"). In `read_doc(mode: "tracked")` the same suggestions render
 inline as `<ins>/<del>` + ids, so reviewing them is just reading the doc.
+
+A suggested format change changes no text, so it has no `<ins>/<del>`. Docs
+returns it beside the current style, `suggestedTextStyleChanges` on a run and
+`suggestedParagraphStyleChanges` on a paragraph, each keyed by suggestion id and
+holding a proposed style with a `<field>Suggested` flag for each field the
+suggestion sets; a flagged field the proposed style leaves out is one it clears
+(checked live). The tracked read shows the text as it is now, marked with the id
+and the CSS accepting that suggestion would set, in the vocabulary `style="…"`
+already uses:
+
+```
+<td><span data-sug="suggest.v5mh7qjnuid0" data-sug-css="color:#c62828">Valladolid</span></td>
+<p data-sug="suggest.mpwylek31qik" data-sug-css="text-align:center">**Nights:** Playa del Carmen 3</p>
+<span data-sug="suggest.a2mkwoqgmb5r" data-sug-css="font-weight:normal">**Proposal 3**</span>
+```
+
+- **The proposed style goes in `data-sug-css`, not `style`.** Everywhere else
+  `style="…"` is the style the text has now, and drop the marker and you have the
+  clean read. The writer reads `style` off any attribute whose name ends in it, so
+  the attribute is not named `data-sug-style`: quoting a marker must not apply it.
+  Like `<ins>/<del>`, the marker is for reading: quote the text without it.
+- **Only what the read can show, and only what would change.** A field the
+  suggestion sets to the value it has now is left out; a value it clears back to
+  the named style's reads as `inherit`; a field the read never shows (highlight,
+  small caps, baseline) is left out. A suggestion that changes nothing the read
+  shows still gets its marker, `data-sug-css=""`, so every id `list_suggestions`
+  names can be found.
+- **Each suggestion on its own,** as accepting it alone would leave the text. Two
+  suggestions on one run nest, one span each. A paragraph's goes on its tag: a
+  plain paragraph or a list item takes a `<p>` for it, and a second suggestion on
+  the same paragraph is a `<span>` inside.
 A suggestion that sits on no text (a change to a named style) is found in no
 paragraph, so it is listed last, from its `SuggestionThread`, with its summary
 as its context.

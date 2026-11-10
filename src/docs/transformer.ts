@@ -8,6 +8,7 @@ import type { TableLayout } from './table-layout.js';
 import { declarationsFor, styleAttribute } from './css.js';
 import { paragraphCssOf, effectiveStylesFor, type EffectiveStyles } from './style-block.js';
 import { rgbToHex } from './color.js';
+import { suggestedTextCss, suggestedParagraphCss } from './suggested-style.js';
 import { literalTextEscaper, needsParagraphTag, needsQuotedParagraphTag, cellNeedsParagraphTag, type Escaper } from './literal-text.js';
 import { hasQuoteBorder } from './quote.js';
 import { unescapePipes } from './write.js';
@@ -335,10 +336,12 @@ function fencedCode(code: string): string {
 function renderParagraph(para: docs_v1.Schema$Paragraph, context: ReadContext): string {
   const { opts, objects } = context;
   if (isRuleParagraph(para)) return RULE_LINE;
-  const code = codeParagraphText(para, context);
-  if (code !== undefined) return fencedCode(code);
   const named = para.paragraphStyle?.namedStyleType ?? 'NORMAL_TEXT';
   const eff = baselineStyles(context, named);
+  // A suggested paragraph style change goes on the paragraph's tag; a second one on the same paragraph, inside it.
+  const [marker = '', ...innerMarkers] = opts.tracked ? Object.entries(para.suggestedParagraphStyleChanges ?? {}).map(([id, change]) => suggestionMarker(id, suggestedParagraphCss(para.paragraphStyle, change, eff))) : [];
+  const code = marker ? undefined : codeParagraphText(para, context);
+  if (code !== undefined) return fencedCode(code);
   const paragraphFamily = eff.named?.textStyle?.weightedFontFamily?.fontFamily ?? eff.normal?.textStyle?.weightedFontFamily?.fontFamily ?? undefined;
   const inlineWith = (escape: Escaper): string => {
     const safe: Escaper = context.inTableCell ? (text) => escapeElementLookalikes(escapeTableTags(escape(text))) : (text) => escapeElementLookalikes(escape(text));
@@ -353,20 +356,20 @@ function renderParagraph(para: docs_v1.Schema$Paragraph, context: ReadContext): 
     return lineBreaksAsBr(withoutParagraphMark(joined));
   };
   const literalText = (para.elements ?? []).map((pe) => pe.textRun?.content ?? '').join('');
-  const inline = inlineWith(literalTextEscaper(literalText, inlineWith));
-  if (para.bullet) return inline;
+  const inline = innerMarkers.reduce((text, inner) => `<span${inner}>${text}</span>`, inlineWith(literalTextEscaper(literalText, inlineWith)));
+  if (para.bullet) return marker ? `<p${marker}>${inline}</p>` : inline;
   const level = LEVEL_BY_HEADING[para.paragraphStyle?.namedStyleType ?? 'NORMAL_TEXT'];
-  if (inline === '') return level ? `${'#'.repeat(level)} ` : '';
-  if (isQuoteParagraph(para, context)) return needsQuotedParagraphTag(inline) ? `> <p>${inline}</p>` : `> ${inline}`;
+  if (inline === '' && !marker) return level ? `${'#'.repeat(level)} ` : '';
+  if (isQuoteParagraph(para, context)) return marker || needsQuotedParagraphTag(inline) ? `> <p${marker}>${inline}</p>` : `> ${inline}`;
 
   const overrides = paragraphCssOf(para.paragraphStyle, eff);
   const style = styleAttribute(declarationsFor(overrides));
-  const styleAttr = style ? ` style="${style}"` : '';
-  if (level) return style ? `<h${level}${styleAttr}>${inline}</h${level}>` : `${'#'.repeat(level)} ${inline}`;
+  const attrs = `${style ? ` style="${style}"` : ''}${marker}`;
+  if (level) return attrs ? `<h${level}${attrs}>${inline}</h${level}>` : `${'#'.repeat(level)} ${inline}`;
   const className = CLASS_BY_NAMED_STYLE[named as keyof typeof CLASS_BY_NAMED_STYLE];
-  if (className) return `<p class="${className}"${styleAttr}>${inline}</p>`;
+  if (className) return `<p class="${className}"${attrs}>${inline}</p>`;
   const holdsImage = !context.inTableCell && (para.elements ?? []).some((pe) => pe.inlineObjectElement);
-  if (style || (!holdsImage && needsParagraphTag(inline))) return `<p${styleAttr}>${inline}</p>`;
+  if (attrs || (!holdsImage && needsParagraphTag(inline))) return `<p${attrs}>${inline}</p>`;
   return inline;
 }
 
@@ -452,6 +455,9 @@ function wrapEmphasis(text: string, s: docs_v1.Schema$TextStyle, isCode: boolean
   return out;
 }
 
+/** The attributes a tracked read puts on the run or paragraph a suggested format change sits on: its id, and the CSS accepting it would set. */
+const suggestionMarker = (id: string, css: string): string => ` data-sug="${escapeAttr(id)}" data-sug-css="${escapeAttr(css)}"`;
+
 /** An element as the read spells it, inside the suggestion marker a tracked read puts around it. */
 function renderElement(element: ParagraphElement, opts: RenderOpts): string {
   const token = elementTokenOf(element) ?? '';
@@ -476,6 +482,9 @@ function renderRun(run: docs_v1.Schema$TextRun, opts: RenderOpts, paragraphFamil
   if (opts.tracked) {
     const ins = run.suggestedInsertionIds?.[0];
     const del = run.suggestedDeletionIds?.[0];
+    for (const [id, change] of Object.entries(run.suggestedTextStyleChanges ?? {})) {
+      if (id !== ins && id !== del) text = `<span${suggestionMarker(id, suggestedTextCss(s, change))}>${text}</span>`;
+    }
     if (ins) text = `<ins data-sug="${ins}">${text}</ins>`;
     else if (del) text = `<del data-sug="${del}">${text}</del>`;
   }

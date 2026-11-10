@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `read_doc(mode: "tracked")` shows suggested format changes. A suggested color, bold, size or font on a run, and a suggested alignment, spacing or indent on a paragraph, read as the text as it is now marked with the suggestion's id and the CSS accepting it would set: `<span data-sug="suggest.…" data-sug-css="color:#c62828">Valladolid</span>`, `<p data-sug="suggest.…" data-sug-css="text-align:center">…</p>`. They used to read as if there were no suggestion, so a format suggestion made with `edit_doc(suggest: true)` could not be checked (checked live).
+
 ## [1.0.0] — 2026-10-30
 
 ### Added
