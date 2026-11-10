@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `edit_doc` finds a list item quoted with its marker, as `read_doc` prints it (`- Tue: Tulum`, `2. Wed`, an indented `  - child`); it said `not_found`. The marker is dropped only where the match starts a paragraph, and text that really starts with `- ` still matches as written. When `new_string` keeps the marker, the item is edited in place (it stays one list item of the same kind and level) instead of being rewritten as a new bullet. A `new_string` line with no old line to pair with is a new item. `add_comment`'s `quotedText` takes a marker too.
+
 ## [1.0.0] — 2026-10-30
 
 ### Added

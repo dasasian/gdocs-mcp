@@ -102,3 +102,29 @@ describe('a blank line in old_string matches a paragraph break (#60)', () => {
     expect(locate('A\n\nB\nA\nB', 'A\n\nB').positions).toEqual([0]);
   });
 });
+
+// read_doc prints a list item with its marker (`- ` or `1. `, two spaces of indent per level), and the doc's plain text has none.
+describe('a list marker copied from the read matches the item (#66)', () => {
+  const text = 'Mon\nTue 19 (Playa): Tulum day trip\nWed\n- a real dash\nstay: 3 days';
+  const at = (s: string): number => text.indexOf(s);
+  it('a bullet marker', () => {
+    const r = locate(text, '- **Tue 19 (Playa):** **Tulum day trip**');
+    expect(r.positions).toEqual([at('Tue')]);
+    expect(r.needle).toBe('Tue 19 (Playa): Tulum day trip');
+  });
+  it('an ordered marker', () => {
+    expect(locate(text, '2. Wed').positions).toEqual([at('Wed')]);
+  });
+  it('a nested item, indented', () => {
+    expect(locate(text, '    - Wed').positions).toEqual([at('Wed')]);
+  });
+  it('a marker on every line of several items', () => {
+    expect(locate(text, '- Mon\n- Tue 19 (Playa): Tulum day trip').positions).toEqual([0]);
+  });
+  it('text that really starts with the marker still matches as written', () => {
+    expect(locate(text, '- a real dash')).toMatchObject({ needle: '- a real dash', positions: [at('- a real dash')] });
+  });
+  it('a marker is only dropped at the start of a paragraph, not in the middle of one', () => {
+    expect(locate(text, '- 3 days').positions).toEqual([]);
+  });
+});
