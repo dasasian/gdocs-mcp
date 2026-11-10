@@ -345,6 +345,95 @@ describe('mv (#44)', () => {
   });
 });
 
+// `~` and `/` both root a path at My Drive, so every command must treat them alike.
+describe('~ paths (My Drive)', () => {
+  const LEASE = '/Work/2026/Reports/Lease';
+
+  it('cp to a new name under ~/ puts the copy in that folder', async () => {
+    const { clients, copy } = driveWith([...TREE]);
+    const r = await driveShell(clients, 'cp', [LEASE, '~/Archive/Lease 2027']);
+    expect(r.status).toBe('ok');
+    expect(copy.mock.calls[0][0].requestBody).toEqual({ name: 'Lease 2027', parents: ['archive'] });
+  });
+
+  it('cp to a new name directly under ~/ puts the copy in My Drive', async () => {
+    const { clients, copy } = driveWith([...TREE]);
+    const r = await driveShell(clients, 'cp', [LEASE, '~/[AI test] Yucatán trip copy']);
+    expect(r.status).toBe('ok');
+    expect(copy.mock.calls[0][0].requestBody).toEqual({ name: '[AI test] Yucatán trip copy', parents: ['ROOT'] });
+  });
+
+  it('cp into bare ~ copies into My Drive under the source name', async () => {
+    const { clients, copy } = driveWith([...TREE]);
+    const r = await driveShell(clients, 'cp', [LEASE, '~']);
+    expect(r.status).toBe('ok');
+    expect(copy.mock.calls[0][0].requestBody).toEqual({ name: 'Lease', parents: ['ROOT'] });
+  });
+
+  it('mv to a new name under ~/ renames into that folder', async () => {
+    const { clients, update } = driveWith([...TREE]);
+    const r = await driveShell(clients, 'mv', [LEASE, '~/Archive/Lease 2027']);
+    expect(r.status).toBe('ok');
+    expect(update.mock.calls[0][0].addParents).toBe('archive');
+    expect((update.mock.calls[0][0].requestBody as { name: string }).name).toBe('Lease 2027');
+  });
+
+  it('mv directly under ~/ moves into My Drive', async () => {
+    const { clients, update } = driveWith([...TREE]);
+    const r = await driveShell(clients, 'mv', [LEASE, '~/Renamed']);
+    expect(r.status).toBe('ok');
+    expect(update.mock.calls[0][0].addParents).toBe('ROOT');
+  });
+
+  it('says the destination folder in the path the caller gave when it is missing', async () => {
+    const { clients } = driveWith([...TREE]);
+    const r = await driveShell(clients, 'cp', [LEASE, '~/Nope/Lease']);
+    expect(r.status).toBe('not_found');
+    expect(r.message).toContain('"~/Nope"');
+  });
+
+  it('mkdir under ~/ creates in the right parent', async () => {
+    const { clients, create } = driveWith([...TREE]);
+    const r = await driveShell(clients, 'mkdir', ['~/Work/Drafts']);
+    expect(r.status).toBe('ok');
+    expect(create.mock.calls[0][0].requestBody).toEqual({ name: 'Drafts', mimeType: FOLDER, parents: ['work'] });
+  });
+
+  it('mkdir -p under ~/ creates the whole chain', async () => {
+    const { clients, create } = driveWith([...TREE]);
+    const r = await driveShell(clients, 'mkdir', ['-p', '~/Work/2027/Q1']);
+    expect(r.status).toBe('ok');
+    expect(create.mock.calls.map((c) => (c[0].requestBody as { name: string }).name)).toEqual(['2027', 'Q1']);
+  });
+
+  it('mkdir without -p names the missing folder under ~/', async () => {
+    const { clients } = driveWith([...TREE]);
+    const r = await driveShell(clients, 'mkdir', ['~/Work/2027/Q1']);
+    expect(r.message).toContain('2027');
+    expect(r.message).toContain('-p');
+  });
+
+  it('mkdir under ~/shared/<drive> creates in that drive', async () => {
+    const { clients, create } = driveWith(
+      [...TREE, { id: 'teamroot', name: 'Docs', mimeType: FOLDER, parents: ['sd1'] }],
+      [{ id: 'sd1', name: 'Team' }],
+    );
+    const r = await driveShell(clients, 'mkdir', ['~/shared/Team/Docs/Specs']);
+    expect(r.status).toBe('ok');
+    expect(create.mock.calls[0][0].requestBody).toEqual({ name: 'Specs', mimeType: FOLDER, parents: ['teamroot'] });
+  });
+
+  it('ls and find accept bare ~ and ~/', async () => {
+    const { clients } = driveWith([...TREE]);
+    for (const p of ['~', '~/']) {
+      const r = await driveShell(clients, 'ls', [p]);
+      expect((r.entries as { name: string }[]).map((e) => e.name).sort()).toEqual(['Archive', 'Work']);
+    }
+    expect((await driveShell(clients, 'ls', ['~/Work/2026'])).id).toBe('y2026');
+    expect((await driveShell(clients, 'find', ['~/Lease'])).query).toBe('~/Lease');
+  });
+});
+
 // Flags and operands in any order, because a terminal accepts them that way and
 // that is the whole point of borrowing the vocabulary.
 describe('argument order (#44)', () => {

@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `drive` `cp` and `mv` to a destination that does not exist yet, written with the `~` root (`~/New name`), no longer fail with `Destination folder "~/~" does not exist`: `~` was split off as if it were a folder name. `mkdir -p ~/shared/<drive>/…` had the same slip and named the wrong shared drive. `/` and `~` now behave alike in every `drive` command.
+
 ## [1.0.0] — 2026-10-30
 
 ### Added

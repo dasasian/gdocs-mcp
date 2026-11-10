@@ -81,20 +81,25 @@ async function resolveTarget(clients: GoogleClients, target: string): Promise<{ 
   return { error: fail(r.message, r.status === 'ambiguous' ? { status: 'ambiguous', candidates: r.candidates } : { status: 'not_found' }) };
 }
 
+/** `~` is only a rooting prefix (My Drive), never a folder name: drop it before splitting a path into its steps. */
+function stepsOf(path: string): string[] {
+  return splitPath(path.startsWith('~') ? path.slice(1) : path);
+}
+
 function dirname(path: string): string {
-  const segs = splitPath(path);
+  const segs = stepsOf(path);
   const prefix = path.startsWith('~') ? '~' : '';
   return segs.length <= 1 ? `${prefix}/` : `${prefix}/${segs.slice(0, -1).join('/')}`;
 }
 
 function basename(path: string): string {
-  const segs = splitPath(path);
+  const segs = stepsOf(path);
   return segs[segs.length - 1] ?? '';
 }
 
 async function ls(clients: GoogleClients, args: string[]): Promise<ShellResult> {
   const path = parseArgs(args).positional[0] ?? '/';
-  const segs = splitPath(path.startsWith('~') ? path.slice(1) : path);
+  const segs = stepsOf(path);
   const head = segs.length ? `/${segs[0]}` : '/';
 
   if (head === LOST_FOUND && segs.length === 1) {
@@ -149,7 +154,7 @@ async function mkdir(clients: GoogleClients, args: string[]): Promise<ShellResul
   if (!segs.length) return fail('mkdir needs a folder name, not just a root.');
 
   const prefix = path.startsWith('~') ? '~' : '';
-  const rootPrefix = path.replace(/^~/, '').startsWith(SHARED_ROOT) ? `${SHARED_ROOT}/${splitPath(path)[1]}` : '';
+  const rootPrefix = path.replace(/^~/, '').startsWith(SHARED_ROOT) ? `${SHARED_ROOT}/${stepsOf(path)[1]}` : '';
   let parentId: string | undefined;
   let existingDepth = 0;
   for (let i = segs.length; i >= 0; i--) {
