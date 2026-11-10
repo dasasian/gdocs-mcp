@@ -469,6 +469,15 @@ function softJoinedWords(newLines: string, continuesKeptLine: boolean): string |
   return lines.join(' ');
 }
 
+const LEADING_BLOCK_MARKER_RE = /^([ \t]*)(?:(\d+)(?=[.)][ \t])|(?=#{1,6}[ \t]|[-*+][ \t]|>|`{3}|~{3}))/;
+
+/**
+ * The new lines, with a block marker at the very start made text: `4. ` is `4\. `. For new lines that start mid-paragraph,
+ * as when `old_string` begins after a paragraph's first word, the first line continues that paragraph, and in CommonMark
+ * a continuation line is never a list item, heading, quote or fence. A later line starts its own line and keeps its markdown.
+ */
+const continuingParagraph = (newLines: string): string => newLines.replace(LEADING_BLOCK_MARKER_RE, (_marker, space: string, digits = '') => `${space}${digits}\\`);
+
 const wordsBeside = (words: string, keptLine: InsertionSide | undefined): string => (keptLine === 'after' ? ` ${words}` : keptLine === 'before' ? `${words} ` : words);
 
 const isBlankOrPageBreak = (line: string): boolean => isBlank(line) || parsePageBreakLine(line) !== undefined;
@@ -630,15 +639,17 @@ async function applyEdit(clients: GoogleClients, documentId: string, oldString: 
   const shared = sharedLinesOf(oldText, newText, located);
   const keepsAnything = shared.keepsPrefix || shared.keepsSuffix;
   const insertsOnly = keepsAnything && isBlank(shared.middleOld);
-  const writesNewRule = createsRule(shared.middleNew, shared.middleOld, tokens);
-  const joinedWords = writesNewRule ? undefined : softJoinedWords(shared.middleNew, insertsOnly && shared.continuesKeptLine);
+  const startsMidParagraph = !shared.keepsPrefix && positions.some((matchStart) => !startsParagraph(fetched.data, tabId, segmentId, projection.map[matchStart]));
+  const middleNew = startsMidParagraph ? continuingParagraph(shared.middleNew) : shared.middleNew;
+  const writesNewRule = createsRule(middleNew, shared.middleOld, tokens);
+  const joinedWords = writesNewRule ? undefined : softJoinedWords(middleNew, insertsOnly && shared.continuesKeptLine);
   const anchorPlainIndex = (matchStart: number): number => {
     if (!insertsOnly) return middleSpan(shared, matchStart, needle.length, false).from;
     return shared.keepsPrefix ? matchStart + shared.prefixLength - 1 : matchStart + needle.length - shared.suffixLength;
   };
   const joinsAnchorParagraphs =
     joinedWords !== undefined && positions.every((matchStart) => !HEADING_LIKE_STYLES.has(namedStyleAt(fetched.data, tabId, segmentId, projection.map[anchorPlainIndex(matchStart)])));
-  const written = joinsAnchorParagraphs ? wordsBeside(joinedWords, insertsOnly ? (shared.keepsPrefix ? 'after' : 'before') : undefined) : shared.middleNew;
+  const written = joinsAnchorParagraphs ? wordsBeside(joinedWords, insertsOnly ? (shared.keepsPrefix ? 'after' : 'before') : undefined) : middleNew;
   const writesNothing = isBlank(written);
   const highestIndexFirst = (opts.replaceAll ? positions : [positions[0]]).sort((x, y) => y - x);
 

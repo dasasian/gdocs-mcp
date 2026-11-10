@@ -236,6 +236,55 @@ describe('an anchor mid-paragraph splits it (#60 rule 3)', () => {
   });
 });
 
+describe('new_string that starts mid-paragraph continues it: a block marker at its start is text', () => {
+  const NIGHTS = 'Nights: Valladolid 4. Three hotels.';
+  const structural = (requests: docs_v1.Schema$Request[]) => requests.filter((r) => r.createParagraphBullets || r.updateParagraphStyle || r.deleteParagraphBullets);
+
+  it.each([
+    ['an ordered list item', '4. ', '4. Three hotels.', '4. Three hotles.'],
+    ['a list item closed by a parenthesis', '1) ', '1) Three hotels.', '1) Three hotles.'],
+    ['a dash bullet', '- ', '- Three hotels.', '- Three hotles.'],
+    ['a star bullet', '* ', '* Three hotels.', '* Three hotles.'],
+    ['a plus bullet', '+ ', '+ Three hotels.', '+ Three hotles.'],
+    ['a heading', '# ', '# Three hotels.', '# Three hotles.'],
+    ['a quote', '> ', '> Three hotels.', '> Three hotles.'],
+  ])('%s: the words are replaced inside the paragraph, which is not split', async (_name, marker, oldString, newString) => {
+    const text = `Nights: Valladolid ${marker}Three hotels.`;
+    const { clients, batchUpdate } = clientsFor(docOf([{ text }]));
+    const result = await editDoc(clients, 'd', oldString, newString);
+    expect(result.status).toBe('ok');
+    const requests = requestsOf(batchUpdate);
+    expect(batchUpdate).toHaveBeenCalledTimes(1);
+    expect(inserted(requests).map((i) => i.text)).toEqual([newString]);
+    expect(inserted(requests)[0].location!.index).toBe(1 + text.indexOf(marker));
+    expect(structural(requests)).toEqual([]);
+  });
+
+  it('lines added before a kept line mid-paragraph join it as words, marker and all', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: NIGHTS }]));
+    await editDoc(clients, 'd', 'Three hotels.', '4. Extra\nThree hotels.');
+    const requests = requestsOf(batchUpdate);
+    expect(inserted(requests).map((i) => i.text)).toEqual(['4. Extra ']);
+    expect(structural(requests)).toEqual([]);
+  });
+
+  it('a block on a later line is still a block, and the first line stays text', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: NIGHTS }]));
+    await editDoc(clients, 'd', '4. Three hotels.', '4. Three hotles.\n\n- Book by May');
+    const requests = requestsOf(batchUpdate);
+    const texts = inserted(requests).map((i) => i.text).join('');
+    expect(texts).toContain('4. Three hotles.');
+    const bullets = requests.filter((r) => r.createParagraphBullets).map((r) => r.createParagraphBullets!.range!);
+    expect(bullets).toHaveLength(1);
+  });
+
+  it('at the start of a paragraph the marker is still markdown', async () => {
+    const { clients, batchUpdate } = clientsFor(docOf([{ text: 'Intro' }, { text: 'Three hotels.' }]));
+    await editDoc(clients, 'd', 'Three hotels.', '1. Three hotels.');
+    expect(requestsOf(batchUpdate).some((r) => r.createParagraphBullets)).toBe(true);
+  });
+});
+
 describe('a centered image is a centered paragraph holding an <img> (#60 rule 4)', () => {
   const centeredImageDoc: docs_v1.Schema$Document = {
     body: {

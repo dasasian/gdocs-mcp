@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `edit_doc` no longer splits a paragraph when `new_string` starts with a list marker, `#`, `>` or a fence and `old_string` starts mid-paragraph. In `Nights: Valladolid 4. Three hotels.`, `4. Three hotels.` → `4. Three hotles.` returned ok and made `1. Three hotles.` a numbered item of its own. The first line written where the anchor starts mid-paragraph continues that paragraph, as a CommonMark continuation line does, so its marker is text; a later line keeps its markdown (checked live).
+
 ## [1.0.0] — 2026-10-30
 
 ### Added
