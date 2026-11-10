@@ -42,7 +42,7 @@ gdocs-mcp add-account
 
 > Running from source (not `npm install -g`)? Run `npm link` once after building — then `gdocs-mcp` works everywhere, exactly as below. (Or, without linking, replace `gdocs-mcp` with `node /abs/path/to/gdocs-mcp/dist/index.js` in the commands and in `.mcp.json`.)
 
-This opens a browser for consent (you'll see the "unverified app" notice — choose *Advanced → continue*). The token is stored under `~/.config/gdocs-mcp/tokens/<email>.json`. Repeat for each account.
+This opens a browser for consent (you'll see the "unverified app" notice — choose *Advanced → continue*). The token is stored in your OS keychain (see [where tokens live](#where-tokens-live)). Repeat for each account.
 
 Check what's authorized:
 
@@ -83,6 +83,24 @@ Account resolution, highest priority first:
 3. `GDOCS_DEFAULT_ACCOUNT` (env, from `.mcp.json`)
 4. the sole authorized account, if only one
 
+## Where tokens live
+
+Each account's OAuth token is one item in the OS credential store: the macOS Keychain, Windows Credential Manager, or the Secret Service on Linux (GNOME Keyring, KWallet, KeePassXC). The item's service is `gdocs-mcp` and its account is the email. `~/.config/gdocs-mcp/keychain-accounts.json` lists which emails are there (emails only, no secrets), since a keychain can't be listed cheaply.
+
+When there is no credential store (Linux without a Secret Service, a headless CI box), tokens go to `~/.config/gdocs-mcp/tokens/<email>.json` with `0600` permissions, as before, and the server says so once on stderr. `GDOCS_TOKEN_STORE` picks the store:
+
+| `GDOCS_TOKEN_STORE` | Behaviour |
+|---|---|
+| unset or `auto` | Keychain; token files when it is unavailable (logged once) |
+| `keychain` | Keychain only; an error when it is unavailable |
+| `file` | Token files only; the keychain is never touched |
+
+**Upgrading from token files.** The first time the server uses an account whose token is still a file, it copies the token into the keychain, reads it back and compares, and only then deletes the file. If any step fails, the file stays and the server keeps using it. A refreshed token is written back to the store it was read from. An older gdocs-mcp sharing the config dir reads only token files, so it loses an account once a newer one has moved it; to run both side by side, give the newer one `GDOCS_TOKEN_STORE=file`.
+
+With `GDOCS_MCP_CONFIG_DIR` set, the keychain service is `gdocs-mcp:<that dir>`, so two config dirs that authorize the same email keep separate tokens.
+
+On macOS the keychain may ask whether `node` may read the item, for example after Node is upgraded to a new binary. Choose *Always Allow*; the tool call waits for your answer.
+
 ## Applying changes
 
 The server is a long-running process, but it reads your **data** (tokens, `.gdocs-mcp.json`) from disk on every call. So most changes apply instantly — you only restart for **new server code**.
@@ -100,5 +118,6 @@ In short: day to day you never restart; only when you deliberately upgrade the s
 ## Troubleshooting
 
 - **`invalid_grant` / token expired after a week** — your consent screen is still in *Testing*. Set it to *In production* (step 2) and re-run `add-account`.
+- **`could not use the OS keychain …; keeping OAuth tokens in …` on stderr** — there's no credential store, so tokens stay in files. Set `GDOCS_TOKEN_STORE=file` to say that's intended and drop the notice.
 - **`File not found` opening a doc by URL** — that doc isn't accessible to the active account. Pass a different `account`, or set the right `GDOCS_DEFAULT_ACCOUNT`.
 - **`Google Drive API has not been used…`** — enable `drive.googleapis.com` (step 1).

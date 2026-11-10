@@ -66,6 +66,8 @@ export async function addAccount(): Promise<string> {
   const email = me.data.email;
   if (!email) throw new Error('could not determine account email');
 
-  await saveToken(email, tokens);
+  const store = await saveToken(email, tokens);
+  // eslint-disable-next-line no-console
+  console.error(`Stored the token in ${store === 'keychain' ? 'the OS keychain' : 'a token file'}.`);
   return email;
 }

@@ -971,10 +971,12 @@ Tokens are **global** (authorize each account once); defaults are **scoped per p
 ```
 ~/.config/gdocs-mcp/
   client_secret.json          # one shared OAuth app
-  tokens/
+  keychain-accounts.json      # emails whose tokens are in the OS keychain (no secrets)
+  tokens/                     # only when there is no keychain, or GDOCS_TOKEN_STORE=file
     damithsc@gmail.com.json    # per-account refresh tokens (0600)
-    work@company.com.json
 ```
+
+Tokens live in the OS credential store via `@napi-rs/keyring` (service `gdocs-mcp`, account = email), with the token files as the fallback (`src/auth/token-store.ts`). An account is in the keychain iff the index names it, so a half-finished migration can't shadow a file. A file token is moved on first use: write, read back, compare, index, then delete the file.
 
 | Piece | Design |
 |---|---|

@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **OAuth tokens are stored in the OS keychain** (macOS Keychain, Windows Credential Manager, Linux Secret Service) through `@napi-rs/keyring`, one item per account: service `gdocs-mcp`, account = the email. An existing token file is moved on first use: copied in, read back and compared, and only then deleted; if any step fails the file stays and keeps working. A refreshed token goes back to the store it came from. Where there is no credential store the server keeps using `~/.config/gdocs-mcp/tokens/` and says so once on stderr. `GDOCS_TOKEN_STORE=keychain` makes a missing keychain an error, and `GDOCS_TOKEN_STORE=file` keeps the old behaviour. `~/.config/gdocs-mcp/keychain-accounts.json` lists the keychain accounts for `list_accounts` (emails only). On Linux only the Secret Service is used, never the kernel keyring, which loses its contents on reboot.
+
 ## [1.0.0] — 2026-10-30
 
 ### Added
