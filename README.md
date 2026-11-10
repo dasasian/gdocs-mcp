@@ -78,7 +78,7 @@ You need a Google Cloud OAuth client (one-time). Each user creates their own —
    ```sh
    gdocs-mcp add-account
    ```
-   Repeat for each Google account you want to use.
+   Repeat for each Google account you want to use. The token goes into your OS keychain (macOS Keychain, Windows Credential Manager, or the Secret Service on Linux), or a `0600` file when there is none; see [where tokens live](docs/setup.md#where-tokens-live).
 
 ## Configure your MCP client
 

@@ -1,6 +1,6 @@
 import { OAuth2Client } from 'google-auth-library';
 import { google, type docs_v1, type drive_v3 } from 'googleapis';
-import { loadClientSecret, loadToken, resolveAccount, saveToken } from '../auth/accounts.js';
+import { loadClientSecret, loadToken, resolveAccount } from '../auth/accounts.js';
 
 export interface GoogleClients {
   account: string;
@@ -14,12 +14,12 @@ export interface GoogleClients {
 export async function clientsForAccount(explicitAccount?: string): Promise<GoogleClients> {
   const account = await resolveAccount(explicitAccount);
   const { clientId, clientSecret } = await loadClientSecret();
-  const tokens = await loadToken(account);
+  const stored = await loadToken(account);
 
   const auth = new OAuth2Client({ clientId, clientSecret });
-  auth.setCredentials(tokens);
+  auth.setCredentials(stored.tokens);
   auth.on('tokens', async (t) => {
-    await saveToken(account, { ...tokens, ...t });
+    await stored.save({ ...stored.tokens, ...t });
   });
 
   return {

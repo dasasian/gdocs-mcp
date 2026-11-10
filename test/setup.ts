@@ -8,3 +8,6 @@ import path from 'node:path';
 // filesystem side effect on a config path, tests stay sandboxed. (setupFiles are
 // evaluated before test files, so this env var is set prior to config.ts import.)
 process.env.GDOCS_MCP_CONFIG_DIR = mkdtempSync(path.join(os.tmpdir(), 'gdocs-test-cfg-'));
+// Same for the OS keychain: no test may read or write a real keychain item.
+// Token-store tests inject a fake keyring instead.
+process.env.GDOCS_TOKEN_STORE = 'file';

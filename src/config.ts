@@ -17,6 +17,17 @@ export const CONFIG_DIR = resolveConfigDir();
 
 export const CLIENT_SECRET_PATH = path.join(CONFIG_DIR, 'client_secret.json');
 export const TOKENS_DIR = path.join(CONFIG_DIR, 'tokens');
+// Emails (never secrets) of the accounts whose tokens live in the OS keychain.
+export const KEYCHAIN_INDEX_PATH = path.join(CONFIG_DIR, 'keychain-accounts.json');
+
+// Token store: unset/"auto" = OS keychain, falling back to TOKENS_DIR (logged
+// once) when it is unavailable; "keychain" = keychain or fail; "file" = files only.
+export const TOKEN_STORE = process.env.GDOCS_TOKEN_STORE;
+// Keychain items are global to the OS user while CONFIG_DIR is not, so a
+// non-default config dir gets its own service name: two config dirs authorizing
+// the same email must not overwrite each other's token.
+export const KEYCHAIN_SERVICE =
+  CONFIG_DIR === DEFAULT_CONFIG_DIR ? 'gdocs-mcp' : `gdocs-mcp:${path.resolve(CONFIG_DIR)}`;
 
 // Per-project default account (set in a project's .mcp.json env).
 export const PROJECT_DEFAULT_ACCOUNT = process.env.GDOCS_DEFAULT_ACCOUNT;

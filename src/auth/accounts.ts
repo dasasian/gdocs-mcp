@@ -1,7 +1,23 @@
-import { readFile, readdir, writeFile, mkdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { CLIENT_SECRET_PATH, TOKENS_DIR, PROJECT_DEFAULT_ACCOUNT } from '../config.js';
+import {
+  CLIENT_SECRET_PATH,
+  TOKENS_DIR,
+  KEYCHAIN_INDEX_PATH,
+  KEYCHAIN_SERVICE,
+  TOKEN_STORE,
+  PROJECT_DEFAULT_ACCOUNT,
+} from '../config.js';
+import {
+  createTokenStore,
+  nativeKeyring,
+  parseTokenStoreMode,
+  type LoadedToken,
+  type TokenStore,
+  type TokenStoreKind,
+  type Tokens,
+} from './token-store.js';
 
 export interface ProjectConfig {
   account?: string;
@@ -74,27 +90,35 @@ export async function loadClientSecret(): Promise<ClientSecret> {
   return { clientId: c.client_id, clientSecret: c.client_secret };
 }
 
-function tokenPath(email: string): string {
-  return path.join(TOKENS_DIR, `${email}.json`);
+// Built on first use, not at import (no side effects at import time).
+let tokenStore: TokenStore | undefined;
+function tokens(): TokenStore {
+  tokenStore ??= createTokenStore({
+    tokensDir: TOKENS_DIR,
+    indexPath: KEYCHAIN_INDEX_PATH,
+    mode: parseTokenStoreMode(TOKEN_STORE),
+    keyring: nativeKeyring(KEYCHAIN_SERVICE),
+    // stderr: stdout is the MCP stdio channel.
+    // eslint-disable-next-line no-console
+    warn: (m) => console.error(m),
+  });
+  return tokenStore;
 }
 
 export async function listAccounts(): Promise<string[]> {
-  if (!existsSync(TOKENS_DIR)) return [];
-  const files = await readdir(TOKENS_DIR);
-  return files.filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -'.json'.length));
+  return tokens().list();
 }
 
-// The one place token files are written — same path and 0600 mode for both the
-// initial add-account consent and later silent refreshes.
-export async function saveToken(email: string, tokens: unknown): Promise<void> {
-  await mkdir(TOKENS_DIR, { recursive: true });
-  await writeFile(tokenPath(email), JSON.stringify(tokens, null, 2), { mode: 0o600 });
+// A newly authorized token (add-account): the OS keychain when available, else
+// a 0600 file. Returns which store it went to.
+export async function saveToken(email: string, t: Tokens): Promise<TokenStoreKind> {
+  return tokens().save(email, t);
 }
 
-export async function loadToken(email: string): Promise<Record<string, unknown>> {
-  const p = tokenPath(email);
-  if (!existsSync(p)) throw new Error(`No token for account "${email}". Authorize it with \`gdocs-mcp add-account\`.`);
-  return JSON.parse(await readFile(p, 'utf8'));
+// `save` on the result writes a refreshed token back to the store it came from.
+// A file token found with no keychain copy is moved into the keychain first.
+export async function loadToken(email: string): Promise<LoadedToken> {
+  return tokens().load(email);
 }
 
 // Resolution order: explicit per-call → project `.gdocs-mcp.json` (cwd or a parent)
