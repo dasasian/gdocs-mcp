@@ -7,6 +7,8 @@ export interface GoogleClients {
   auth: OAuth2Client;
   docs: docs_v1.Docs;
   drive: drive_v3.Drive;
+  /** every `documents.batchUpdate` is sent as a suggestion (`suggestingClients`), so a request Docs cannot suggest is refused. */
+  suggesting?: true;
 }
 
 // Build authenticated Docs + Drive clients for the resolved account. Refreshed

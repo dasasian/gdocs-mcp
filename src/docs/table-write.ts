@@ -35,7 +35,7 @@ export function lookOf(layout: TableLayout, placement: Placement): TableLook {
   };
 }
 
-/** A table straight from `insertTable`. Docs gives a row a height of its own when a merge touches it, so those rows are `unknown` and get set. */
+/** A table straight from `insertTable`, once `evenColumnsRequest` has spread its columns. Docs gives a row a height of its own when a merge touches it, so those rows are `unknown` and get set. */
 export function plainLook(rowCount: number, columnCount: number, rowsMerged: ReadonlySet<number>): TableLook {
   return {
     grid: Array.from({ length: rowCount }, () => Array.from({ length: columnCount }, () => ({}))),
@@ -115,6 +115,16 @@ export function insertTableRequests(doc: docs_v1.Schema$Document, index: number,
 }
 
 const location = (site: TableSite) => ({ index: site.tableStart, tabId: site.tabId, segmentId: site.segmentId });
+
+/**
+ * Spreads every column of a new table evenly, as a table made in Docs is. `insertTable` gives each column a fixed width
+ * that ignores the page (500pt for one column, 250pt each for two, 175pt each from three on: 700pt for four), so a new
+ * table would overhang the margins. Evenly distributed columns share the width of what holds the table: the page less its
+ * margins, a header or a footer.
+ */
+export const evenColumnsRequest = (site: TableSite): docs_v1.Schema$Request => ({
+  updateTableColumnProperties: { tableStartLocation: location(site), tableColumnProperties: { widthType: 'EVENLY_DISTRIBUTED' }, fields: 'widthType' },
+});
 
 export function mergeRequests(placement: Placement, site: TableSite): docs_v1.Schema$Request[] {
   return placement.cells

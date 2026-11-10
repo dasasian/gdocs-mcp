@@ -78,7 +78,7 @@ export function suggestingClients(clients: GoogleClients, made: string[]): Googl
     made.push(...(res.data.suggestionResponses ?? []).flatMap((response) => response.createdSuggestionIds ?? []));
     return res;
   };
-  return withDocuments(clients, { batchUpdate: batchUpdate as DocumentsApi['batchUpdate'] });
+  return { ...withDocuments(clients, { batchUpdate: batchUpdate as DocumentsApi['batchUpdate'] }), suggesting: true };
 }
 
 export interface SuggestingSession {
