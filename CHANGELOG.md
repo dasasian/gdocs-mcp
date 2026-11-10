@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Requests to Google no longer fail with `Invalid response body … Premature close` on some Node releases.** `googleapis` 144 and `google-auth-library` 9 send HTTP through `gaxios` 6, which uses `node-fetch` 2. A Node security release (22.23.0, 24.17.0, 26.x) put a `data` listener on idle keep-alive sockets, and `node-fetch` 2 reads that as a body cut short, so a request on a reused socket failed, `add-account` and token refresh included ([nodejs/node#63989](https://github.com/nodejs/node/issues/63989)). Moved to `googleapis` 176 and `google-auth-library` 10.5, which use `gaxios` 7. CI now also runs Node 24 and 26.
+
 ## [1.0.0] — 2026-10-30
 
 ### Added
