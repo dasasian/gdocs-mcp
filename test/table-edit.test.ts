@@ -599,3 +599,33 @@ describe('replace_all over several tables is one batch, or nothing (#65)', () =>
     expect(batchUpdate).not.toHaveBeenCalled();
   });
 });
+
+describe('replaced counts the occurrences changed, as it does outside a table', () => {
+  const MIDDLE = { contentAlignment: 'MIDDLE' } as const;
+  const tulum = (text: string): TableSpec => ({ rows: [{ cells: [{ text: 'Day', style: MIDDLE }, { text: 'Stop', style: MIDDLE }] }, { cells: [{ text: 'Tue', style: MIDDLE }, { text, style: MIDDLE }] }, { cells: [{ text: 'Wed', style: MIDDLE }, { text, style: MIDDLE }] }] });
+
+  it('one table, two matching cells: 2, not the one batch that wrote them', async () => {
+    const doc = bodyDocWithTable(tulum('Tulum'));
+    const { clients, batchUpdate } = clientsFor(doc);
+    expect(renderMarkdown(doc)).toContain('<td>Tulum</td>');
+    const result = await editDoc(clients, 'd', '<td>Tulum</td>', '<td>Cobá</td>', { replaceAll: true });
+    expect(result).toMatchObject({ status: 'ok', replaced: 2 });
+    expect(batchUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('two tables, two matching cells in each: 4, not the 2 tables', async () => {
+    const one = bodyDocWithTable(tulum('Tulum'));
+    const second = tableElement(tulum('Tulum'), one.body!.content![1].endIndex! + 1);
+    one.body!.content!.splice(2, 0, second, { startIndex: second.endIndex!, endIndex: second.endIndex! + 1, paragraph: { elements: [{ textRun: { content: '\n' } }] } });
+    const { clients } = clientsFor(one);
+    const result = await editDoc(clients, 'd', '<td>Tulum</td>', '<td>Cobá</td>', { replaceAll: true });
+    expect(result).toMatchObject({ status: 'ok', replaced: 4 });
+  });
+
+  it('one match in one table: 1', async () => {
+    const doc = bodyDocWithTable(tulum('Tulum'));
+    const { clients } = clientsFor(doc);
+    const result = await editDoc(clients, 'd', '<td>Wed</td>', '<td>Thu</td>');
+    expect(result).toMatchObject({ status: 'ok', replaced: 1 });
+  });
+});

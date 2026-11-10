@@ -402,7 +402,7 @@ export async function editTableMarkup(clients: GoogleClients, documentId: string
   };
   if (edits.length > 1) {
     await send(edits.flatMap(({ match, before, after }) => surgicalRequests(match.found, before, after, tabId, segmentId)));
-    return { status: 'ok', replaced: edits.length };
+    return { status: 'ok', replaced: changed ? total : 0 };
   }
   for (const { match, around, before, after, comparison } of edits) {
     const { found } = match;
@@ -425,5 +425,5 @@ export async function editTableMarkup(clients: GoogleClients, documentId: string
     }
     await insertNextToTable('before', found, around.before);
   }
-  return { status: 'ok', replaced: changed };
+  return { status: 'ok', replaced: changed ? total : 0 };
 }
