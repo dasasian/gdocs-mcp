@@ -390,6 +390,11 @@ How far each rule reaches, where the issue left room:
   Each of these makes the added lines a new block instead: the anchor is a
   heading, Title or Subtitle; a blank line between; a line that is a block (list
   item, table row, quote, fence, image) or a page break; a `<p>` or `<h>` line.
+- The first line `edit_doc` writes where `old_string` starts mid-paragraph
+  continues that paragraph, so a list marker, `#`, `>` or fence at its start is
+  text, as on a CommonMark continuation line: in `Valladolid 4. Three hotels.`,
+  `4. Three hotels.` → `4. Three hotles.` changes one word, not the paragraph.
+  A later line starts its own line and keeps its markdown.
 
 ### 2f. Every element in a paragraph shows in the read
 
