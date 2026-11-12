@@ -138,6 +138,7 @@ const LAST_PLACEHOLDER = 0xf8ff;
 export class TokenTable {
   private readonly charByToken = new Map<string, string>();
   private readonly tokenByChar = new Map<string, string>();
+  private readonly imageChars = new Set<string>();
 
   charFor(token: string): string {
     const known = this.charByToken.get(token);
@@ -150,6 +151,26 @@ export class TokenTable {
     return char;
   }
 
+  /**
+   * An image of the doc, as the read shows it. No pattern finds an image, since a new one
+   * in new_string is block markdown for the writer, so `encode` takes this one only where
+   * it is spelled exactly as read.
+   */
+  charForImage(tag: string): string {
+    const char = this.charFor(tag);
+    this.imageChars.add(char);
+    return char;
+  }
+
+  isImage(char: string): boolean {
+    return this.imageChars.has(char);
+  }
+
+  /** The doc's images: each one's tag as read, and the character that stands for it. */
+  images(): { tag: string; char: string }[] {
+    return [...this.imageChars].map((char) => ({ tag: this.tokenByChar.get(char) ?? '', char }));
+  }
+
   tokenOf(char: string): string | undefined {
     return this.tokenByChar.get(char);
   }
@@ -159,7 +180,8 @@ export class TokenTable {
   }
 
   encode(markup: string, withRule = false): string {
-    return markup.replace(tokenPattern(withRule), (token) => this.charFor(token));
+    const withImages = this.images().reduce((text, { tag, char }) => text.split(tag).join(char), markup);
+    return withImages.replace(tokenPattern(withRule), (token) => this.charFor(token));
   }
 
   decode(text: string): string {

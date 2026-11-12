@@ -19,7 +19,7 @@ import { explainingCommentOnlyAccess, MUST_SUGGEST_MESSAGE } from './access.js';
 import { parseInlineWithElements } from './inline.js';
 import { splitAtKeptElements, type Gap } from './element-diff.js';
 import { elementRequests, noteTextRequests, creationIssuesIn, listRequest, batchUpdateWithElements, ElementRefusal, type ListSpec, type PlacedElement } from './element-write.js';
-import { unsuggestableDropdownIssues, refuseUnwritableTableEdit } from './element-checks.js';
+import { unsuggestableDropdownIssues, refuseUnwritableTableEdit, refuseUnwritableImageEdit, refuseImagesToWrite } from './element-checks.js';
 import { chipTextChange, parseElement, type DropdownDefinition, type TokenTable } from './elements.js';
 import { renderDatalists } from './transformer.js';
 import { listSpecOfLine } from './write.js';
@@ -614,6 +614,7 @@ async function applyEdit(clients: GoogleClients, documentId: string, oldString: 
   const definitions = definitionsIn(tokens.encode(newString, true));
   const oldText = tokens.encode(oldString, true);
   const newText = definitions.text;
+  refuseUnwritableImageEdit(oldText, newText, tokens);
   const located = locate(projection.text, oldText);
   const { needle, positions } = located;
   if (positions.length === 0) {
@@ -658,6 +659,7 @@ async function applyEdit(clients: GoogleClients, documentId: string, oldString: 
     if (opts.suggest) refuseColumnWidthsIn(markdown);
     const context: BlockEditContext = { clients, documentId, doc: fetched.data, markdown, tabId, segmentId, baseDir: opts.baseDir };
     const keptGaps = insertsOnly || highestIndexFirst.length > 1 ? [] : gapsAroundKeptElements(projection, shared, highestIndexFirst[0], needle.length, writesNothing, written, tokens);
+    refuseImagesToWrite(keptGaps.length > 0 ? keptGaps.map((gap) => gap.written) : [written], tokens);
     if (keptGaps.length > 0) {
       const results = [];
       for (const [k, gap] of [...keptGaps].reverse().entries()) {
@@ -702,11 +704,13 @@ async function applyEdit(clients: GoogleClients, documentId: string, oldString: 
 
   const requests = highestIndexFirst.flatMap((matchStart) => {
     if (insertsOnly) {
+      refuseImagesToWrite([written], tokens);
       const { side, matched } = insertionPoint(projection, shared, matchStart, needle.length);
       return replacementRequestsFor(fetched.data, pointAt(side, matched), replacementFor(written), tabId, segmentId);
     }
     const span = middleSpan(shared, matchStart, needle.length, writesNothing);
     const gaps = splitAtKeptElements(shared.middleOld, projection.text.slice(span.from, span.to), written, tokens);
+    refuseImagesToWrite(gaps.map((gap) => gap.written), tokens);
     return [...gaps].reverse().flatMap((gap) => {
       const from = span.from + gap.plainFrom;
       const to = span.from + gap.plainTo;
@@ -775,7 +779,7 @@ function refuseElementsThatCannotBeWritten(
   tokens: TokenTable,
   where: { doc: docs_v1.Schema$Document; tabId: string | undefined; segmentId: string | undefined; suggest: boolean | undefined },
 ): void {
-  const tokensOf = (text: string): string[] => [...text].flatMap((char) => tokens.tokenOf(char) ?? []);
+  const tokensOf = (text: string): string[] => [...text].flatMap((char) => (tokens.isImage(char) ? [] : (tokens.tokenOf(char) ?? [])));
   const was = new Set(tokensOf(oldMiddle));
   const made = [...new Set(tokensOf(written))].filter((token) => !was.has(token));
   const stillThere = new Set(tokensOf(written));

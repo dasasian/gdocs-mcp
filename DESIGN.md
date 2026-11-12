@@ -433,6 +433,7 @@ list's title is `title`, a date's language is `lang`.
 | column break | `<span style="break-after:column"></span>` | refused: the API cannot make one |
 | equation | `<span class="equation" title="Google's API does not expose this equation; edit it in Google Docs"></span>` | refused: the API cannot make one |
 | page-number field | `<span class="page-number" title="Docs fills in the page number on each page"></span>` | refused: the API cannot make one |
+| image | `<img src="image:kix.…" alt="…" width="432" height="281.57">`, the tag `write_doc` takes for a new one | kept when quoted exactly as read; a new one from a file or URL is `insertInlineImage`; a changed alt, width or height, or a copy, is refused: no request sets an image's alt text or size, and its bytes cannot be inserted again |
 
 The writer's rules for all of them are the editing contract's (§4): **an element
 that comes back unchanged is kept**, so an edit around it, or across it, leaves
