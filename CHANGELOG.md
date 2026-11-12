@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `edit_doc` finds an image as `read_doc` prints it. An `old_string` holding `<img src="image:…">` exactly as read returned `not_found`, even when `new_string` gave it back unchanged, because the text an edit matches left images out. Each image is now one element of that text, kept like a chip when both strings hold it as read and deleted when `new_string` drops it. An image in a table cell, which the read does not show, is still left out.
+- `edit_doc` refuses, before anything is sent, a change to an image it cannot make: a changed `alt` (no Docs API request sets an image's title or description, so change alt text in Docs via right-click > Alt text), a changed `width` or `height`, a copy of an image already in the doc, or an `image:` src that `old_string` does not hold. An `image:` src used to be skipped with a warning after the text it replaced had been deleted.
+
 ## [1.0.0] — 2026-10-30
 
 ### Added

@@ -41,6 +41,7 @@ export function project(doc: docs_v1.Schema$Document, tabId?: string, segmentId?
   const chars: string[] = [];
   const map: number[] = [];
   const tokens = new TokenTable();
+  const objects = inlineObjectsOf(doc, tabId);
   const pushText = (text: string, indexOfChar: (i: number) => number): void => {
     for (let i = 0; i < text.length; i++) {
       chars.push(text[i]);
@@ -48,7 +49,7 @@ export function project(doc: docs_v1.Schema$Document, tabId?: string, segmentId?
     }
   };
   const endsLine = (): boolean => chars.length === 0 || chars[chars.length - 1] === '\n';
-  const projectParagraph = (paragraph: docs_v1.Schema$Paragraph): void => {
+  const projectParagraph = (paragraph: docs_v1.Schema$Paragraph, inTableCell: boolean): void => {
     let afterLineElement = false;
     if (isRuleParagraph(paragraph)) {
       const start = paragraph.elements?.[0]?.startIndex ?? 0;
@@ -66,10 +67,12 @@ export function project(doc: docs_v1.Schema$Document, tabId?: string, segmentId?
         continue;
       }
       const token = elementTokenOf(pe);
-      if (token !== undefined) {
+      // An image is one character, as the read shows it; in a table cell the read leaves it out, and so does this.
+      const imageId = inTableCell ? undefined : pe.inlineObjectElement?.inlineObjectId;
+      if (token !== undefined || imageId) {
         if (afterLineElement) pushText('\n', () => start - 1);
         afterLineElement = false;
-        pushText(tokens.charFor(token), () => start);
+        pushText(imageId ? tokens.charForImage(renderImage(imageId, objects)) : tokens.charFor(token as string), () => start);
         continue;
       }
       const content = pe.textRun?.content;
@@ -79,14 +82,14 @@ export function project(doc: docs_v1.Schema$Document, tabId?: string, segmentId?
       pushText(content, (i) => start + i);
     }
   };
-  const walk = (content: docs_v1.Schema$StructuralElement[] | undefined): void => {
+  const walk = (content: docs_v1.Schema$StructuralElement[] | undefined, inTableCell = false): void => {
     for (const el of content ?? []) {
       if (el.paragraph) {
-        projectParagraph(el.paragraph);
+        projectParagraph(el.paragraph, inTableCell);
       } else if (el.table) {
         for (const row of el.table.tableRows ?? []) {
           for (const cell of row.tableCells ?? []) {
-            walk(cell.content ?? undefined);
+            walk(cell.content ?? undefined, true);
           }
         }
       }

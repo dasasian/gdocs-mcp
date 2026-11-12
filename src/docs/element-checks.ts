@@ -1,6 +1,7 @@
 import type { docs_v1 } from 'googleapis';
 import { tabContainer } from './structure.js';
-import { creationIssue, parseElement, tokensIn, chipTextChange, elementTokenOf, type DocumentTabWithElements, type ParagraphElement } from './elements.js';
+import { creationIssue, parseElement, tokensIn, chipTextChange, elementTokenOf, unescapeAttribute, type DocumentTabWithElements, type ParagraphElement, type TokenTable } from './elements.js';
+import { resolveImageSource } from '../drive/images.js';
 import { creationIssuesIn, ElementRefusal } from './element-write.js';
 import { listSpecOfLine } from './write.js';
 
@@ -90,5 +91,66 @@ export function refuseUnwritableTableEdit(oldString: string, newString: string, 
     }),
     ...(opts.suggest ? unsuggestableDropdownIssues([...made, ...lists].join('\n'), doc, opts.tabId).map((issue) => `Docs cannot suggest this: ${issue}`) : []),
   ];
+  if (issues.length) throw new ElementRefusal(issues);
+}
+
+// An image already in the doc: `<img src="image:kix.…">` as read_doc shows it, or `![alt](image:kix.…)`.
+const EMBEDDED_IMAGE_IN_MARKUP = /<img\b[^>]*\bsrc="image:[^"]*"[^>]*>|!\[[^\]]*\]\(image:[^)\s]*\)/gi;
+
+interface ImageAttributes {
+  src: string;
+  alt: string;
+  width: string;
+  height: string;
+}
+
+function imageAttributesOf(tag: string): ImageAttributes {
+  const markdown = /^!\[([^\]]*)\]\(([^)\s]*)\)$/.exec(tag);
+  if (markdown) return { src: markdown[2], alt: markdown[1], width: '', height: '' };
+  const attribute = (name: string): string => unescapeAttribute(new RegExp(`\\s${name}\\s*=\\s*"([^"]*)"`, 'i').exec(tag)?.[1] ?? '');
+  return { src: attribute('src'), alt: attribute('alt'), width: attribute('width'), height: attribute('height') };
+}
+
+/** Why `written` cannot become `read`, an image already in the doc: the API cannot change an image's alt text or size. */
+function imageChangeIssue(read: string, written: string): string {
+  const before = imageAttributesOf(read);
+  const after = imageAttributesOf(written);
+  const issues: string[] = [];
+  if (before.alt !== after.alt) {
+    issues.push(`alt text can't be changed through the API (no Docs API request sets an image's title or description): change it in Docs via right-click > Alt text. Give ${before.src} back with alt="${before.alt}" as read.`);
+  }
+  if (before.width !== after.width || before.height !== after.height) {
+    issues.push(`an image's size can't be changed through the API (no Docs API request resizes an image already in a doc): resize it in Docs, or insert the image file again at the new size. Give ${before.src} back with width="${before.width}" height="${before.height}" as read.`);
+  }
+  return issues.length ? issues.join(' ') : `write ${before.src} exactly as read_doc shows it, ${read}, to keep it.`;
+}
+
+const notInsertedAgain = (tag: string): string =>
+  `${tag} is already in the doc, and an image already embedded in a document cannot be inserted again: its bytes are not re-fetchable. Keep it where it is (quote it unchanged in old_string and new_string), or use download_images and point at the local file.`;
+
+const occurrences = (text: string, char: string): number => text.split(char).length - 1;
+
+/**
+ * Refuses, before anything is sent, an edit that would write an image already in the doc: one given another alt or
+ * size, or one copied. Its bytes are Google's, so it cannot be inserted again. `oldText` and `newText` are encoded by
+ * `tokens`, so an image quoted exactly as read is one character in each.
+ */
+export function refuseUnwritableImageEdit(oldText: string, newText: string, tokens: TokenTable): void {
+  const images = tokens.images();
+  const changed = [...newText.matchAll(EMBEDDED_IMAGE_IN_MARKUP)].map(([written]) => {
+    const { src } = imageAttributesOf(written);
+    const quoted = images.find(({ tag, char }) => oldText.includes(char) && imageAttributesOf(tag).src === src);
+    if (quoted) return imageChangeIssue(quoted.tag, written);
+    const source = resolveImageSource(src);
+    return 'error' in source ? source.error : `${src} cannot be written`;
+  });
+  const copied = images.filter(({ char }) => occurrences(newText, char) > occurrences(oldText, char)).map(({ tag }) => notInsertedAgain(tag));
+  const issues = [...changed, ...copied];
+  if (issues.length) throw new ElementRefusal(issues);
+}
+
+/** Refuses an image of the doc in text the writer would make: an image the edit does not keep in place (one moved past another element, say) would have to be inserted again. */
+export function refuseImagesToWrite(written: string[], tokens: TokenTable): void {
+  const issues = tokens.images().flatMap(({ tag, char }) => (written.some((piece) => piece.includes(char)) ? [notInsertedAgain(tag)] : []));
   if (issues.length) throw new ElementRefusal(issues);
 }
